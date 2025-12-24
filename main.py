@@ -5,7 +5,7 @@ import logging
 import sys
 from pathlib import Path
 
-# from assets.assets_manager import AssetInitResult, asset_init, _clean_markdown_file
+# from assets_manager import AssetInitResult, asset_init, _clean_markdown_file
 
 # DEFAULT_PDF = Path("A Chebyshev Semi-Iterative Approach for Accelerating.pdf")
 

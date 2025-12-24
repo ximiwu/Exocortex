@@ -34,7 +34,7 @@ from . import markdown_helper
 
 logger = logging.getLogger(__name__)
 
-from assets.assets_manager import (
+from assets_manager import (
     BlockData,
     BlockRecord,
     BlockRect,

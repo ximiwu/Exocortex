@@ -7,7 +7,7 @@ from PySide6 import QtCore, QtGui
 
 from codex.pdf2img import convert_pdf_to_images
 
-from assets.assets_manager import ask_tutor, asset_init, group_dive_in, integrate
+from assets_manager import ask_tutor, asset_init, group_dive_in, integrate
 from ..pymupdf_compat import fitz
 from ..renderer import PdfRenderer
 
