@@ -1,4 +1,6 @@
 assets/
+input/
+output/
 *.pdf
 *.png
 
