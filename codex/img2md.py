@@ -46,7 +46,10 @@ def build_prompt(image: Path) -> str:
 
 
 def main() -> int:
-    repo_root = Path(__file__).resolve().parent.parent
+    if "__compiled__" in globals():
+        repo_root = Path(sys.argv[0]).resolve().parent
+    else:
+        repo_root = Path(__file__).resolve().parent.parent
     codex_dir = repo_root / "codex" / "img2md"
     input_dir = codex_dir / "input"
     output_dir = codex_dir / "output"

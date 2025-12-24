@@ -20,7 +20,11 @@ def _ensure_file(source: Path, destination: Path) -> None:
 
 
 def main() -> int:
-    codex_root = Path(__file__).resolve().parent / "enhancer"
+    if "__compiled__" in globals():
+        codex_base_dir = Path(sys.argv[0]).resolve().parent / "codex"
+    else:
+        codex_base_dir = Path(__file__).resolve().parent
+    codex_root = codex_base_dir / "enhancer"
     if not codex_root.is_dir():
         logging.error("codex/enhancer directory not found: %s", codex_root)
         return 1

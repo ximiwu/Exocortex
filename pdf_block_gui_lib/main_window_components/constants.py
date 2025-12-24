@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6 import QtCore, QtGui
+
+from ..paths import lib_dir, static_path
 
 # Layout defaults
 DEFAULT_SPLITTER_RATIO_LEFT = 1
@@ -15,9 +15,11 @@ MAX_RENDER_DPI = 1200  # cap to avoid excessive memory usage at very high zoom l
 
 KATEX_VERSION = "0.16.9"
 KATEX_CDN_BASE = f"https://cdn.jsdelivr.net/npm/katex@{KATEX_VERSION}/dist"
-_LIB_DIR = Path(__file__).resolve().parents[1]
-KATEX_LOCAL_DIR = _LIB_DIR / "static" / "katex"
-KATEX_RENDER_SCRIPT = _LIB_DIR / "static" / "katex_render.js"
+
+_LIB_DIR = lib_dir()
+
+KATEX_LOCAL_DIR = static_path("katex")
+KATEX_RENDER_SCRIPT = static_path("katex_render.js")
 
 BLOCK_STYLE_DEFAULT = {
     "pen_color": QtGui.QColor(0, 160, 0),

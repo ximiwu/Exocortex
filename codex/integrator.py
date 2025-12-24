@@ -9,7 +9,11 @@ from pathlib import Path
 from codex.run_codex import run_codex
 
 def main(question: str) -> int:
-    codex_root = Path(__file__).resolve().parent / "integrator"
+    if "__compiled__" in globals():
+        codex_base_dir = Path(sys.argv[0]).resolve().parent / "codex"
+    else:
+        codex_base_dir = Path(__file__).resolve().parent
+    codex_root = codex_base_dir / "integrator"
     if not codex_root.is_dir():
         logging.error("codex/integrator directory not found: %s", codex_root)
         return 1

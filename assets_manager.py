@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import stat
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, List
@@ -42,7 +43,13 @@ def _detect_repo_root(module_dir: Path) -> Path:
     return module_dir
 
 
-REPO_ROOT = _detect_repo_root(Path(__file__).resolve().parent)
+def _runtime_start_dir() -> Path:
+    if "__compiled__" in globals():
+        return Path(sys.argv[0]).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+REPO_ROOT = _detect_repo_root(_runtime_start_dir())
 CODEX_DIR = REPO_ROOT / "codex"
 PDF2IMG_OUTPUT_DIR = CODEX_DIR / "img2md" / "input"
 IMG2MD_OUTPUT_DIR = CODEX_DIR / "img2md" / "output"

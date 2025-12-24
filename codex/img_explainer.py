@@ -47,7 +47,11 @@ def _launch_runner(
 
 
 def main(*, on_gemini_ready: Callable[[Path], None] | None = None) -> int:
-    codex_root = Path(__file__).resolve().parent / "img_explainer"
+    if "__compiled__" in globals():
+        codex_base_dir = Path(sys.argv[0]).resolve().parent / "codex"
+    else:
+        codex_base_dir = Path(__file__).resolve().parent
+    codex_root = codex_base_dir / "img_explainer"
     if not codex_root.is_dir():
         logging.error("codex/img_explainer directory not found: %s", codex_root)
         return 1
