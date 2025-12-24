@@ -43,7 +43,7 @@ Exocortex 不仅仅是一个阅读器，它是你大脑的延伸，帮你把复�
 ## 快速开始
 
 ### 1.gemini-cli与codex的准备
-* 确保 **[Codex](https://github.com/openai/codex) 和 **[Gemini-CLI](https://github.com/google-gemini/gemini-cli)** 在你的系统环境可以正常调用。
+* 确保 **[Codex](https://github.com/openai/codex)** 和 **[Gemini-CLI](https://github.com/google-gemini/gemini-cli)** 在你的系统环境可以正常调用。
 
 ### 2.下载[Exocortex](https://github.com/ximiwu/Exocortex/releases)
 
