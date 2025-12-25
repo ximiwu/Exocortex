@@ -1071,7 +1071,9 @@ def ask_tutor(question: str, asset_name: str, group_idx: int, tutor_idx: int) ->
     2) Invoke tutor agent with the question.
     3) Move output.md into ask_history as the next sequential markdown (1, 2, ...), clean it, and prefix with Q/A headings.
     """
-    normalized_question = question.strip()
+    normalized_question = (
+        question.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "").strip()
+    )
     if not normalized_question:
         raise ValueError("Question is required.")
 
