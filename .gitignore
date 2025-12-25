@@ -1,6 +1,7 @@
 assets/
 input/
 output/
+agent_workspace/
 *.pdf
 *.png
 

@@ -13,13 +13,15 @@ from typing import Callable, Iterable, List
 
 from PySide6 import QtGui, QtPrintSupport
 
-from codex.extractor import main as extractor_main
-from codex.img2md import main as img2md_main
-from codex.img_explainer import main as img_explainer_main
-from codex.pdf2img import convert_pdf_to_images
-from codex.integrator import main as integrator_main
-from codex.enhancer import main as enhancer_main
-from codex.tutor import main as tutor_main
+from agent_manager import (
+    AgentCallbacks,
+    AgentJob,
+    RunnerConfig,
+    clean_markdown_file as _agent_clean_markdown_file,
+    merge_outputs,
+    run_agent_job,
+    run_agent_jobs,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -37,8 +39,9 @@ except ImportError:  # pragma: no cover - optional dependency guard
     _ARITHMETEX_AVAILABLE = False
 
 def _detect_repo_root(module_dir: Path) -> Path:
+    markers = ("prompts", "assets", "agent_workspace", "README.md")
     for candidate in (module_dir, *module_dir.parents):
-        if (candidate / "codex").is_dir():
+        if any((candidate / marker).exists() for marker in markers):
             return candidate
     return module_dir
 
@@ -49,35 +52,49 @@ def _runtime_start_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def _relative_to_repo(path: Path) -> Path:
+    try:
+        return path.relative_to(REPO_ROOT)
+    except ValueError:
+        return path
+
+
 REPO_ROOT = _detect_repo_root(_runtime_start_dir())
-CODEX_DIR = REPO_ROOT / "codex"
-PDF2IMG_OUTPUT_DIR = CODEX_DIR / "img2md" / "input"
-IMG2MD_OUTPUT_DIR = CODEX_DIR / "img2md" / "output"
-IMG_EXPLAINER_DIR = CODEX_DIR / "img_explainer"
-IMG_EXPLAINER_INPUT_DIR = IMG_EXPLAINER_DIR / "input"
-IMG_EXPLAINER_OUTPUT_DIR = IMG_EXPLAINER_DIR / "output"
-IMG_EXPLAINER_REFERENCES_DIR = IMG_EXPLAINER_DIR / "references"
-EXTRACTOR_BASE_DIR = CODEX_DIR / "extractor"
-EXTRACTOR_AGENTS: tuple[str, ...] = ("background", "concept", "formula")
-EXTRACTOR_INPUT_DIRS = {
-    name: EXTRACTOR_BASE_DIR / name / "input" for name in EXTRACTOR_AGENTS
-}
-EXTRACTOR_OUTPUT_DIRS = {
-    name: EXTRACTOR_BASE_DIR / name / "output" for name in EXTRACTOR_AGENTS
-}
-TUTOR_DIR = CODEX_DIR / "tutor"
-TUTOR_INPUT_DIR = TUTOR_DIR / "input"
-TUTOR_OUTPUT_DIR = TUTOR_DIR / "output"
-TUTOR_REFERENCES_DIR = TUTOR_DIR / "references"
-INTEGRATOR_DIR = CODEX_DIR / "integrator"
-INTEGRATOR_INPUT_DIR = INTEGRATOR_DIR / "input"
-INTEGRATOR_OUTPUT_DIR = INTEGRATOR_DIR / "output"
-INTEGRATOR_REFERENCES_DIR = INTEGRATOR_DIR / "references"
-ENHANCER_DIR = CODEX_DIR / "enhancer"
-ENHANCER_INPUT_DIR = ENHANCER_DIR / "input"
-ENHANCER_OUTPUT_DIR = ENHANCER_DIR / "output"
+PROMPTS_DIR = REPO_ROOT / "prompts"
 ASSETS_ROOT = REPO_ROOT / "assets"
 REFERENCE_RENDER_DPI = 130  # Keep in sync with pdf_block_gui_lib.main_window.DEFAULT_RENDER_DPI
+
+EXTRACTOR_AGENTS: tuple[str, ...] = ("background", "concept", "formula")
+
+CODEX_MODEL = "gpt-5.2"
+CODEX_REASONING_HIGH = "high"
+CODEX_REASONING_MEDIUM = "medium"
+GEMINI_MODEL = "gemini-3-pro-preview"
+
+
+def _prompt_path(*parts: str) -> Path:
+    return PROMPTS_DIR.joinpath(*parts)
+
+
+IMG2MD_CODEX_PROMPT = _prompt_path("img2md", "codex", "AGENTS.md")
+IMG_EXPLAINER_CODEX_PROMPT = _prompt_path("img_explainer", "codex", "AGENTS.md")
+IMG_EXPLAINER_GEMINI_PROMPT = _prompt_path("img_explainer", "gemini", "GEMINI.md")
+ENHANCER_GEMINI_PROMPT = _prompt_path("enhancer", "gemini", "GEMINI.md")
+INTEGRATOR_CODEX_PROMPT = _prompt_path("integrator", "codex", "AGENTS.md")
+TUTOR_GEMINI_PROMPT = _prompt_path("tutor", "gemini", "GEMINI.md")
+LATEX_FIXER_GEMINI_PROMPT = _prompt_path("latex_fixer", "GEMINI.md")
+
+EXTRACTOR_PROMPTS = {
+    "background": _prompt_path("extractor", "background", "codex", "AGENTS.md"),
+    "concept": _prompt_path("extractor", "concept", "codex", "AGENTS.md"),
+    "formula": _prompt_path("extractor", "formula", "codex", "AGENTS.md"),
+}
+
+EXTRACTOR_OUTPUT_NAMES = {
+    "background": "background.md",
+    "concept": "concept.md",
+    "formula": "formula.md",
+}
 
 
 def get_asset_dir(asset_name: str) -> Path:
@@ -337,81 +354,8 @@ def _dir_has_content(path: Path) -> bool:
     """Return True if the directory exists and contains any entries."""
     return path.is_dir() and any(path.iterdir())
         
-def _clean_markdown_file(file_path: Path):
-    content = file_path.read_text(encoding="utf-8-sig")
-
-    # === 辅助函数：修复 LaTeX 语法 (去转义) ===
-    def _fix_latex_syntax(text):
-        # 将双反斜杠 \\ 替换为单反斜杠 \
-        # 注意：在 Python 字符串中，\\\\ 代表字面量的两个反斜杠
-        return text.replace('\\\\', '\\')
-
-    # 1. 统一转换 \[ \] 为 $$ $$
-    content = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', content, flags=re.DOTALL)
-
-    # 2. 统一转换 \( \) 为 $ $
-    # 先把 \( ... \) 这种格式转成 $ ... $，后续统一在步骤3处理内容
-    content = re.sub(r'\\\((.*?)\\\)', r'$\1$', content, flags=re.DOTALL)
-
-    # 3. 处理行内公式 $...$ (修复 \\epsilon 为 \epsilon，并去除多余空格)
-    # 正则解释：(?<!\$) 表示前面不能是 $，(?!\$) 表示后面不能是 $，确保只匹配单个 $ 包裹的内容
-    def clean_inline(match):
-        inner = match.group(1)
-        # 修复转义字符
-        inner = _fix_latex_syntax(inner)
-        # 清洗特殊空格
-        inner = inner.replace('\u00A0', ' ').replace('\u3000', ' ').strip()
-        return f"${inner}$"
-    
-    content = re.sub(r'(?<!\$)\$(?!\$)(.*?)(?<!\$)\$(?!\$)', clean_inline, content, flags=re.DOTALL)
-
-    # 4. 处理块级公式 $$...$$ (修复语法 + 重新排版)
-    pattern = re.compile(r'\$\$(.*?)\$\$', re.DOTALL)
-    def reform_block(match):
-        math_content = match.group(1)
-        
-        # 修复转义字符 (例如 \\epsilon -> \epsilon)
-        math_content = _fix_latex_syntax(math_content)
-        
-        lines = math_content.splitlines()
-        clean_lines = []
-        for line in lines:
-            stripped = line.strip().replace("\u00A0", " ").replace("\u3000", " ").replace("\u200b", " ").replace("\ufeff", " ")
-            if stripped:
-                clean_lines.append(stripped)
-        
-        cleaned_math_body = "\n".join(clean_lines)
-        return f"\n\n$$\n{cleaned_math_body}\n$$\n\n"
-    
-    new_content = pattern.sub(reform_block, content)
-
-    # ================= [缩进清洗功能] =================
-    lines = new_content.splitlines()
-    processed_lines = []
-    in_code_block = False
-    strip_chars = ' \t\u00A0\u3000'
-
-    for line in lines:
-        # 检测代码块标记
-        if re.match(r'^\s*```', line):
-            in_code_block = not in_code_block
-            processed_lines.append(line.lstrip(strip_chars))
-            continue
-        
-        if in_code_block:
-            processed_lines.append(line)
-        else:
-            # 非代码块，强制去除左侧缩进，解决公式不渲染问题
-            processed_lines.append(line.lstrip(strip_chars))
-            
-    new_content = "\n".join(processed_lines)
-    # =================================================
-
-    # 5. 规范化换行符
-    new_content = re.sub(r'\n{3,}', '\n\n', new_content)
-
-    with open(file_path, 'w', encoding='utf-8', newline='\n') as f:
-        f.write(new_content)
+def _clean_markdown_file(file_path: Path) -> None:
+    _agent_clean_markdown_file(file_path)
 
 
 def _clean_directory(directory: Path) -> None:
@@ -475,6 +419,56 @@ thead th { background: #f5f5f5; font-weight: 600; }
     return output_pdf
 
 
+def convert_pdf_to_images(
+    pdf_path: str | Path,
+    output_dir: str | Path,
+    *,
+    dpi: int = 300,
+    prefix: str | None = None,
+) -> list[Path]:
+    """
+    Render a PDF into page-level PNG images.
+
+    Args:
+        pdf_path: PDF file to render.
+        output_dir: Directory where images will be saved.
+        dpi: Target resolution for the rendered images.
+        prefix: Optional file name prefix (defaults to the PDF stem).
+
+    Returns:
+        List of saved image paths in page order.
+    """
+    import pypdfium2 as pdfium
+
+    pdf_path = Path(pdf_path)
+    output_dir = Path(output_dir)
+
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"PDF not found: {pdf_path}")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    base_name = prefix or pdf_path.stem
+    scale = dpi / 72
+    image_paths: list[Path] = []
+
+    with pdfium.PdfDocument(pdf_path) as pdf:
+        for page_index in range(len(pdf)):
+            page = pdf.get_page(page_index)
+            bitmap = page.render(scale=scale)
+            image = bitmap.to_pil()
+            image_path = output_dir / f"{base_name}_page_{page_index + 1:03d}.png"
+            image.save(image_path)
+
+            image_paths.append(image_path)
+
+            image.close()
+            bitmap.close()
+            page.close()
+
+    return image_paths
+
+
 def _next_markdown_index(directory: Path) -> int:
     """Return the next numeric filename (1-based) under directory for *.md files."""
     if not directory.is_dir():
@@ -527,13 +521,8 @@ def _safe_rmtree(path: Path) -> None:
 
 
 def _prepare_working_directories() -> None:
-    """Ensure intermediate working directories start empty."""
-    _clean_directory(PDF2IMG_OUTPUT_DIR)
-    _clean_directory(IMG2MD_OUTPUT_DIR)
-    for directory in EXTRACTOR_INPUT_DIRS.values():
-        _clean_directory(directory)
-    for directory in EXTRACTOR_OUTPUT_DIRS.values():
-        _clean_directory(directory)
+    """Deprecated: workspaces are now isolated per agent run."""
+    return
 
 
 def _copy_raw_pdf(pdf_path: Path, asset_dir: Path) -> Path:
@@ -823,37 +812,24 @@ def _resolve_asset_img2md_output_markdown(asset_name: str) -> Path:
     )
 
 
-def _populate_agent_references(
+def _collect_reference_files(
     asset_name: str,
-    destination_dir: Path,
     *,
     reference_filenames: Iterable[str] | None = None,
     include_entire_content: bool = False,
     entire_content_filename: str = "entire_content.md",
-) -> list[Path]:
-    """
-    Populate an agent's /references directory from an asset.
-
-    By default this copies all files from `assets/<asset_name>/references`.
-    When `include_entire_content` is True, also copy the asset's
-    `img2md_output/output.md` as `entire_content.md`.
-    """
-    _clean_directory(destination_dir)
-
+) -> tuple[list[Path], dict[str, str]]:
     asset_reference_dir = ASSETS_ROOT / asset_name / "references"
     if not asset_reference_dir.is_dir():
         raise FileNotFoundError(
             f"References directory not found for asset '{asset_name}': {asset_reference_dir}"
         )
 
-    copied: list[Path] = []
+    sources: list[Path] = []
     if reference_filenames is None:
         for path in asset_reference_dir.iterdir():
-            if not path.is_file():
-                continue
-            destination = destination_dir / path.name
-            shutil.copy2(path, destination)
-            copied.append(destination)
+            if path.is_file():
+                sources.append(path)
     else:
         for filename in reference_filenames:
             source = asset_reference_dir / filename
@@ -861,21 +837,19 @@ def _populate_agent_references(
                 raise FileNotFoundError(
                     f"Missing reference file for asset '{asset_name}': {source}"
                 )
-            destination = destination_dir / source.name
-            shutil.copy2(source, destination)
-            copied.append(destination)
+            sources.append(source)
 
-    if not copied:
-        raise FileNotFoundError(f"No reference files found in {asset_reference_dir}")
-
+    rename: dict[str, str] = {}
     if include_entire_content:
         entire_content_source = _resolve_asset_img2md_output_markdown(asset_name)
-        entire_content_destination = destination_dir / entire_content_filename
-        shutil.copy2(entire_content_source, entire_content_destination)
-        _clean_markdown_file(entire_content_destination)
-        copied.append(entire_content_destination)
+        sources.append(entire_content_source)
+        if entire_content_source.name != entire_content_filename:
+            rename[entire_content_source.name] = entire_content_filename
 
-    return copied
+    if not sources:
+        raise FileNotFoundError(f"No reference files found in {asset_reference_dir}")
+
+    return sources, rename
 
 
 def group_dive_in(
@@ -894,25 +868,28 @@ def group_dive_in(
     initial_gemini_output = initial_dir / "output_gemini.md"
 
     def _run_enhancer() -> Path:
-        _clean_directory(ENHANCER_INPUT_DIR)
-        _clean_directory(ENHANCER_OUTPUT_DIR)
-        enhancer_base = ENHANCER_OUTPUT_DIR / "main.md"
-        enhancer_supplement = ENHANCER_INPUT_DIR / "supplement.md"
-        shutil.copy2(initial_output, enhancer_base)
-        shutil.copy2(initial_gemini_output, enhancer_supplement)
-
-        exit_code = enhancer_main()
-        if exit_code != 0:
-            raise RuntimeError(f"enhancer failed with exit code {exit_code}")
-
-        enhancer_output = ENHANCER_OUTPUT_DIR / "main.md"
-        if not enhancer_output.is_file():
-            raise FileNotFoundError(f"enhancer output not found: {enhancer_output}")
-
-        target_dir.mkdir(parents=True, exist_ok=True)
-        if enhanced_md.exists():
-            enhanced_md.unlink()
-        shutil.move(str(enhancer_output), str(enhanced_md))
+        job = AgentJob(
+            name="enhancer",
+            runners=[
+                RunnerConfig(
+                    runner="gemini",
+                    prompt_path=ENHANCER_GEMINI_PROMPT,
+                    model=GEMINI_MODEL,
+                    new_console=True,
+                    extra_message="以材料 @/output/main.md 的逻辑结构和数学深度 为主轴，将 @/input/supplement.md 中适合插入的片段增量式插入 @/output/main.md ，禁止删减 @/output/main.md的原有内容"
+                )
+            ],
+            input_files=[initial_gemini_output],
+            input_rename={initial_gemini_output.name: "supplement.md"},
+            output_seed_files=[initial_output],
+            output_rename={initial_output.name: "main.md"},
+            deliver_dir=_relative_to_repo(target_dir),
+            deliver_rename={"main.md": "enhanced.md"},
+            clean_markdown=True,
+        )
+        run_agent_job(job)
+        if not enhanced_md.is_file():
+            raise FileNotFoundError(f"enhancer output not found: {enhanced_md}")
         _clean_markdown_file(enhanced_md)
         return enhanced_md
 
@@ -960,12 +937,10 @@ def group_dive_in(
         )
 
     _clean_directory(target_dir)
-    _clean_directory(IMG_EXPLAINER_OUTPUT_DIR)
-    _clean_directory(IMG_EXPLAINER_INPUT_DIR)
     initial_dir.mkdir(parents=True, exist_ok=True)
-    _populate_agent_references(
+
+    reference_files, reference_rename = _collect_reference_files(
         asset_name,
-        IMG_EXPLAINER_REFERENCES_DIR,
         include_entire_content=True,
     )
 
@@ -977,14 +952,24 @@ def group_dive_in(
     images = _render_blocks_to_images(pdf_path, blocks, dpi=300)
     merged_image = _stack_images_vertically(images)
 
-    thesis_image_path = IMG_EXPLAINER_INPUT_DIR / "thesis.png"
+    thesis_image_path = target_dir / "thesis.png"
     thesis_image_path.parent.mkdir(parents=True, exist_ok=True)
     if not merged_image.save(str(thesis_image_path)):
         raise RuntimeError(f"Failed to save rendered image to {thesis_image_path}")
 
-    def _copy_gemini_output(path: Path) -> None:
+    def _on_runner_finish(job_name: str, runner: RunnerConfig, workspace: Path, error: Exception | None) -> None:
+        if runner.runner != "gemini":
+            return
+        gemini_output_path = workspace / "output" / "output_gemini.md"
+        if not gemini_output_path.is_file():
+            logger.warning(
+                "Gemini finished but output_gemini.md not found at %s",
+                gemini_output_path,
+            )
+            return
         try:
-            shutil.copy2(path, initial_gemini_output)
+            initial_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(gemini_output_path, initial_gemini_output)
             _clean_markdown_file(initial_gemini_output)
             if on_gemini_ready is not None:
                 on_gemini_ready(initial_gemini_output)
@@ -996,22 +981,48 @@ def group_dive_in(
                 exc,
             )
 
-    exit_code = img_explainer_main(on_gemini_ready=_copy_gemini_output)
-    if exit_code != 0:
-        raise RuntimeError(f"img_explainer failed with exit code {exit_code}")
+    callbacks = AgentCallbacks(on_finish=_on_runner_finish)
 
-    output_md = IMG_EXPLAINER_OUTPUT_DIR / "output.md"
-    if not output_md.is_file():
-        raise FileNotFoundError(f"img_explainer output not found: {output_md}")
+    job = AgentJob(
+        name="img_explainer",
+        runners=[
+            RunnerConfig(
+                runner="codex",
+                prompt_path=IMG_EXPLAINER_CODEX_PROMPT,
+                model=CODEX_MODEL,
+                reasoning_effort=CODEX_REASONING_HIGH,
+                new_console=True,
+                extra_message="开始讲解 input/thesis.png，保存到 output.md中"
+            ),
+            RunnerConfig(
+                runner="gemini",
+                prompt_path=IMG_EXPLAINER_GEMINI_PROMPT,
+                model=GEMINI_MODEL,
+                new_console=True,
+                extra_message="开始讲解 @input/thesis.png，保存到 output_gemini.md中"
+            ),
+        ],
+        input_files=[thesis_image_path],
+        input_rename={thesis_image_path.name: "thesis.png"},
+        reference_files=reference_files,
+        reference_rename=reference_rename,
+        deliver_dir=_relative_to_repo(initial_dir),
+        deliver_rename={
+            "output.md": "output.md",
+            "output_gemini.md": "output_gemini.md",
+        },
+        clean_markdown=True,
+        callbacks=callbacks,
+    )
+    run_agent_job(job)
 
-    shutil.copy2(output_md, initial_output)
-    _clean_markdown_file(initial_output)
-    gemini_output = IMG_EXPLAINER_OUTPUT_DIR / "output_gemini.md"
-    if not gemini_output.is_file():
-        raise FileNotFoundError(f"img_explainer Gemini output not found: {gemini_output}")
+    if not initial_output.is_file():
+        raise FileNotFoundError(f"img_explainer output not found: {initial_output}")
+    if not initial_gemini_output.is_file():
+        raise FileNotFoundError(
+            f"img_explainer Gemini output not found: {initial_gemini_output}"
+        )
 
-    shutil.copy2(gemini_output, initial_gemini_output)
-    _clean_markdown_file(initial_gemini_output)
     return _run_enhancer()
 
 
@@ -1056,18 +1067,13 @@ def ask_tutor(question: str, asset_name: str, group_idx: int, tutor_idx: int) ->
     Run the tutor agent for a given question and tutor session, archive the response, and return it.
 
     Steps:
-    1) Clear codex/tutor input & output.
-    2) Copy focus.md to codex/tutor/input/input.md.
-    3) If ask_history exists, append it to codex/tutor/input/input.md (after a "# 历史对话：" line).
-    4) Invoke tutor main(question).
-    5) Move output.md into ask_history as the next sequential markdown (1, 2, ...), clean it, and prefix with Q/A headings.
+    1) Build input.md from focus.md + ask_history.
+    2) Invoke tutor agent with the question.
+    3) Move output.md into ask_history as the next sequential markdown (1, 2, ...), clean it, and prefix with Q/A headings.
     """
     normalized_question = question.strip()
     if not normalized_question:
         raise ValueError("Question is required.")
-
-    if not TUTOR_DIR.is_dir():
-        raise FileNotFoundError(f"tutor directory not found: {TUTOR_DIR}")
 
     group_dir = get_group_data_dir(asset_name) / str(group_idx)
     if not group_dir.is_dir():
@@ -1082,15 +1088,12 @@ def ask_tutor(question: str, asset_name: str, group_idx: int, tutor_idx: int) ->
     if not focus_md.is_file():
         raise FileNotFoundError(f"tutor focus.md not found: {focus_md}")
 
-    _clean_directory(TUTOR_INPUT_DIR)
-    _clean_directory(TUTOR_OUTPUT_DIR)
-    _populate_agent_references(
-        asset_name,
-        TUTOR_REFERENCES_DIR,
-        include_entire_content=True,
+    tutor_input_path = tutor_session_dir / "input.md"
+    tutor_input_path.write_text(
+        focus_md.read_text(encoding="utf-8"),
+        encoding="utf-8",
+        newline="\n",
     )
-    tutor_input_path = TUTOR_INPUT_DIR / "input.md"
-    shutil.copy2(focus_md, tutor_input_path)
 
     ask_history_dir = tutor_session_dir / "ask_history"
     if ask_history_dir.is_dir():
@@ -1115,19 +1118,39 @@ def ask_tutor(question: str, asset_name: str, group_idx: int, tutor_idx: int) ->
                 handle.write("\n\n")
                 handle.write(history_text.rstrip())
 
-    exit_code = tutor_main(normalized_question)
-    if exit_code != 0:
-        raise RuntimeError(f"tutor failed with exit code {exit_code}")
-
-    tutor_output_path = TUTOR_OUTPUT_DIR / "output.md"
-    if not tutor_output_path.is_file():
-        raise FileNotFoundError(f"tutor output not found at {tutor_output_path}")
-
     ask_history_dir.mkdir(parents=True, exist_ok=True)
     next_idx = _next_markdown_index(ask_history_dir)
-    history_output = ask_history_dir / f"{next_idx}.md"
-    moved_output = Path(shutil.move(str(tutor_output_path), history_output))
-    _clean_markdown_file(moved_output)
+    output_name = f"{next_idx}.md"
+
+    reference_files, reference_rename = _collect_reference_files(
+        asset_name,
+        include_entire_content=True,
+    )
+
+    job = AgentJob(
+        name="tutor",
+        runners=[
+            RunnerConfig(
+                runner="gemini",
+                prompt_path=TUTOR_GEMINI_PROMPT,
+                model=GEMINI_MODEL,
+                new_console=True,
+                extra_message=f"{normalized_question}把讲解保存至 output/output.md",
+            )
+        ],
+        input_files=[tutor_input_path],
+        input_rename={tutor_input_path.name: "input.md"},
+        reference_files=reference_files,
+        reference_rename=reference_rename,
+        deliver_dir=_relative_to_repo(ask_history_dir),
+        deliver_rename={"output.md": output_name},
+        clean_markdown=True,
+    )
+    run_agent_job(job)
+
+    moved_output = ask_history_dir / output_name
+    if not moved_output.is_file():
+        raise FileNotFoundError(f"tutor output not found at {moved_output}")
 
     answer = moved_output.read_text(encoding="utf-8")
     header = f"## 提问：\n\n{normalized_question}\n\n## 回答：\n\n"
@@ -1135,21 +1158,18 @@ def ask_tutor(question: str, asset_name: str, group_idx: int, tutor_idx: int) ->
     return moved_output
 
 
+
 def integrate(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
     """
     Run the integrator agent for a tutor session, save a note, and insert it back into enhanced.md.
 
     Steps:
-    1) Clear codex/integrator input & output.
-    2) Concatenate focus.md + ask_history into codex/integrator/input/input.md.
-    3) Invoke integrator main.
-    4) Clean markdown output and move it to tutor_data/<tutor_idx>/note.md.
-    5) Wrap note.md in a <details class="note"> block.
-    6) Insert the wrapped note block into img_explainer_data/enhanced.md at the end of the focus region.
+    1) Concatenate focus.md + ask_history into input.md.
+    2) Invoke integrator agent.
+    3) Clean markdown output and move it to tutor_data/<tutor_idx>/note.md.
+    4) Wrap note.md in a <details class="note"> block.
+    5) Insert the wrapped note block into img_explainer_data/enhanced.md at the end of the focus region.
     """
-    if not INTEGRATOR_DIR.is_dir():
-        raise FileNotFoundError(f"integrator directory not found: {INTEGRATOR_DIR}")
-
     group_dir = get_group_data_dir(asset_name) / str(group_idx)
     if not group_dir.is_dir():
         raise FileNotFoundError(
@@ -1163,15 +1183,12 @@ def integrate(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
     if not focus_md.is_file():
         raise FileNotFoundError(f"tutor focus.md not found: {focus_md}")
 
-    _clean_directory(INTEGRATOR_INPUT_DIR)
-    _clean_directory(INTEGRATOR_OUTPUT_DIR)
-    _populate_agent_references(
-        asset_name,
-        INTEGRATOR_REFERENCES_DIR,
-        reference_filenames=("formula.md", "concept.md"),
+    integrator_input_path = tutor_session_dir / "integrator_input.md"
+    integrator_input_path.write_text(
+        focus_md.read_text(encoding="utf-8"),
+        encoding="utf-8",
+        newline="\n",
     )
-    integrator_input_path = INTEGRATOR_INPUT_DIR / "input.md"
-    shutil.copy2(focus_md, integrator_input_path)
 
     ask_history_dir = tutor_session_dir / "ask_history"
     if ask_history_dir.is_dir():
@@ -1203,15 +1220,10 @@ def integrate(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
         newline="\n",
     )
 
-    exit_code = integrator_main("finish_ask")
-    if exit_code != 0:
-        raise RuntimeError(f"integrator failed with exit code {exit_code}")
-
-    integrator_output_path = INTEGRATOR_OUTPUT_DIR / "output.md"
-    if not integrator_output_path.is_file():
-        raise FileNotFoundError(f"integrator output not found at {integrator_output_path}")
-
-    _clean_markdown_file(integrator_output_path)
+    reference_files, reference_rename = _collect_reference_files(
+        asset_name,
+        reference_filenames=("formula.md", "concept.md"),
+    )
 
     note_path = tutor_session_dir / "note.md"
     existing_note_wrapped = ""
@@ -1220,10 +1232,32 @@ def integrate(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
             existing_note_wrapped = note_path.read_text(encoding="utf-8").lstrip("\ufeff")
         except Exception:  # pragma: no cover - defensive
             existing_note_wrapped = ""
-    note_path.unlink(missing_ok=True)
-    moved_output = Path(shutil.move(str(integrator_output_path), note_path))
 
-    note_content = moved_output.read_text(encoding="utf-8").lstrip("\ufeff")
+    job = AgentJob(
+        name="integrator",
+        runners=[
+            RunnerConfig(
+                runner="codex",
+                prompt_path=INTEGRATOR_CODEX_PROMPT,
+                model=CODEX_MODEL,
+                reasoning_effort=CODEX_REASONING_HIGH,
+                new_console=True,
+            )
+        ],
+        input_files=[integrator_input_path],
+        input_rename={integrator_input_path.name: "input.md"},
+        reference_files=reference_files,
+        reference_rename=reference_rename,
+        deliver_dir=_relative_to_repo(tutor_session_dir),
+        deliver_rename={"output.md": "note.md"},
+        clean_markdown=True,
+    )
+    run_agent_job(job)
+
+    if not note_path.is_file():
+        raise FileNotFoundError(f"integrator output not found at {note_path}")
+
+    note_content = note_path.read_text(encoding="utf-8").lstrip("\ufeff")
     note_lines = note_content.splitlines(keepends=True)
     summary_line = ""
     summary_index = None
@@ -1246,7 +1280,7 @@ def integrate(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
         f"{note_body}"
         "\n\n</div> \n</details>\n\n"
     )
-    moved_output.write_text(note_wrapped, encoding="utf-8", newline="\n")
+    note_path.write_text(note_wrapped, encoding="utf-8", newline="\n")
 
     img_explainer_dir = group_dir / "img_explainer_data"
     enhanced_md = img_explainer_dir / "enhanced.md"
@@ -1279,6 +1313,37 @@ def integrate(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
     return enhanced_md
 
 
+def fix_latex(markdown_path: str | Path) -> Path:
+    path = Path(markdown_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Markdown not found: {path}")
+    if path.suffix.lower() != ".md":
+        raise ValueError(f"fix_latex only supports markdown files: {path}")
+
+    job = AgentJob(
+        name="latex_fixer",
+        runners=[
+            RunnerConfig(
+                runner="gemini",
+                prompt_path=LATEX_FIXER_GEMINI_PROMPT,
+                model=GEMINI_MODEL,
+                new_console=True,
+                extra_message="Fix latex in @output/output.md and save to output/output.md.",
+            )
+        ],
+        output_seed_files=[path],
+        output_rename={path.name: "output.md"},
+        deliver_dir=path.parent,
+        deliver_rename={"output.md": path.name},
+        clean_markdown=True,
+    )
+    run_agent_job(job)
+
+    if not path.is_file():
+        raise FileNotFoundError(f"Latex fixer output not found at {path}")
+    return path
+
+
 def asset_init(
     pdf_path: str | Path,
     asset_name: str | None = None,
@@ -1286,7 +1351,6 @@ def asset_init(
     *,
     rendered_pdf_path: str | Path | None = None,
 ) -> AssetInitResult:
-    # return
     """
     Run the PDF -> image -> markdown -> extractor pipeline for a given asset.
 
@@ -1307,6 +1371,8 @@ def asset_init(
     resolved_asset_name = asset_name or source_path.stem
     asset_dir = ASSETS_ROOT / resolved_asset_name
     references_dir = asset_dir / "references"
+    img2md_output_dir = asset_dir / "img2md_output"
+    img2md_output_dir.mkdir(parents=True, exist_ok=True)
 
     def _notify(message: str) -> None:
         if progress_callback:
@@ -1320,10 +1386,13 @@ def asset_init(
         logger.info("Preparing markdown asset '%s' from %s", resolved_asset_name, source_path)
         asset_dir.mkdir(parents=True, exist_ok=True)
         _clean_directory(references_dir)
-        _prepare_working_directories()
 
-        output_md = IMG2MD_OUTPUT_DIR / "output.md"
-        output_md.write_text(source_path.read_text(encoding="utf-8-sig"), encoding="utf-8", newline="\n")
+        output_md = img2md_output_dir / "output.md"
+        output_md.write_text(
+            source_path.read_text(encoding="utf-8-sig"),
+            encoding="utf-8",
+            newline="\n",
+        )
         _clean_markdown_file(output_md)
 
         if rendered_pdf_path is not None:
@@ -1340,68 +1409,113 @@ def asset_init(
         logger.info("Preparing asset '%s' from %s", resolved_asset_name, source_path)
         raw_pdf_path = _copy_raw_pdf(source_path, asset_dir)
         _clean_directory(references_dir)
-        _prepare_working_directories()
+
+        images_dir = asset_dir / "img2md_images"
+        _clean_directory(images_dir)
 
         _notify("Converting PDF pages to images...")
-        image_paths = convert_pdf_to_images(source_path, PDF2IMG_OUTPUT_DIR, dpi=300)
-        logger.info("Converted %d page(s) to %s", len(image_paths), PDF2IMG_OUTPUT_DIR)
+        image_paths = convert_pdf_to_images(source_path, images_dir, dpi=300)
+        if not image_paths:
+            raise RuntimeError(f"No images rendered from {source_path}")
+        logger.info("Converted %d page(s) to %s", len(image_paths), images_dir)
 
         _notify("Running img2md...")
-        img2md_exit_code = img2md_main()
-        if img2md_exit_code != 0:
-            raise RuntimeError(f"img2md failed with exit code {img2md_exit_code}")
+        img2md_output_dir.mkdir(parents=True, exist_ok=True)
+        stale_pattern = re.compile(r"output_(\d{3})\.md$", re.IGNORECASE)
+        for path in img2md_output_dir.iterdir():
+            if path.is_file() and stale_pattern.match(path.name):
+                path.unlink(missing_ok=True)
 
-        # Normalize markdown produced by img2md before it feeds other steps.
-        for path in IMG2MD_OUTPUT_DIR.iterdir():
-            if path.is_file():
-                _clean_markdown_file(path)
+        image_pattern = re.compile(r".*_(\d{3})\.png$", re.IGNORECASE)
+        def _image_sort_key(path: Path) -> tuple[int, int | str]:
+            match = image_pattern.match(path.name)
+            if match:
+                return 0, int(match.group(1))
+            return 1, path.name.lower()
 
-    _notify("Copying img2md output to asset directory...")
-    asset_img2md_dir = asset_dir / "img2md_output"
-    _clean_directory(asset_img2md_dir)
-    copied_img2md_files: list[Path] = []
-    for path in IMG2MD_OUTPUT_DIR.iterdir():
-        if not path.is_file():
-            continue
-        destination = asset_img2md_dir / path.name
-        shutil.copy2(path, destination)
-        copied_img2md_files.append(destination)
-        _clean_markdown_file(destination)
-    if not copied_img2md_files:
-        raise FileNotFoundError(f"No img2md outputs found in {IMG2MD_OUTPUT_DIR}")
+        sorted_images = sorted(image_paths, key=_image_sort_key)
 
-    _notify("Copying markdown to extractor inputs...")
-    copy_all_files(
-        IMG2MD_OUTPUT_DIR,
-        EXTRACTOR_INPUT_DIRS.values(),
-        rename={"output.md": "input.md"},
-    )
+        jobs: list[AgentJob] = []
+        for idx, image_path in enumerate(sorted_images):
+            match = image_pattern.match(image_path.name)
+            suffix = match.group(1) if match else f"{idx + 1:03d}"
+            output_name = f"output_{suffix}.md"
+            jobs.append(
+                AgentJob(
+                    name=f"img2md_{suffix}",
+                    runners=[
+                        RunnerConfig(
+                            runner="codex",
+                            prompt_path=IMG2MD_CODEX_PROMPT,
+                            model=CODEX_MODEL,
+                            reasoning_effort=CODEX_REASONING_MEDIUM,
+                            new_console=True,
+                        )
+                    ],
+                    input_files=[image_path],
+                    input_rename={image_path.name: "input.png"},
+                    deliver_dir=_relative_to_repo(img2md_output_dir),
+                    deliver_rename={"output.md": output_name},
+                    clean_markdown=True,
+                )
+            )
+
+        results = run_agent_jobs(jobs, max_workers=len(jobs))
+        delivered = [path for result in results for path in result.delivered]
+        if not delivered:
+            raise FileNotFoundError("img2md produced no outputs")
+
+        merged_output = merge_outputs(
+            img2md_output_dir,
+            r"output_(\d{3})\.md",
+            "output.md",
+        )
+        _clean_markdown_file(merged_output)
+
+        try:
+            _safe_rmtree(images_dir)
+        except Exception:
+            logger.warning("Failed to remove temp images directory: %s", images_dir)
+
+    output_md = img2md_output_dir / "output.md"
+    if not output_md.is_file():
+        raise FileNotFoundError(f"img2md output.md not found for asset '{resolved_asset_name}'")
 
     _notify("Running extractors...")
-    extractor_exit_code = extractor_main()
-    if extractor_exit_code != 0:
-        raise RuntimeError(f"extractor failed with exit code {extractor_exit_code}")
-
-    _notify("Collecting extractor outputs...")
-    reference_files: list[Path] = []
-    for agent in EXTRACTOR_AGENTS:
-        reference_files.extend(
-            move_all_files(EXTRACTOR_OUTPUT_DIRS[agent], references_dir)
+    extractor_jobs: list[AgentJob] = []
+    for agent_name in EXTRACTOR_AGENTS:
+        prompt_path = EXTRACTOR_PROMPTS.get(agent_name)
+        output_name = EXTRACTOR_OUTPUT_NAMES[agent_name]
+        if prompt_path is None:
+            raise FileNotFoundError(f"Missing extractor prompt for {agent_name}")
+        extractor_jobs.append(
+            AgentJob(
+                name=f"extractor_{agent_name}",
+                runners=[
+                    RunnerConfig(
+                        runner="codex",
+                        prompt_path=prompt_path,
+                        model=CODEX_MODEL,
+                        reasoning_effort=CODEX_REASONING_HIGH,
+                        new_console=True,
+                    )
+                ],
+                input_files=[output_md],
+                input_rename={output_md.name: "input.md"},
+                deliver_dir=_relative_to_repo(references_dir),
+                deliver_rename={output_name: output_name},
+                clean_markdown=True,
+            )
         )
-    for ref in reference_files:
-        _clean_markdown_file(ref)
 
-    _notify("Cleaning working directories...")
-    _clean_directory(PDF2IMG_OUTPUT_DIR)
-    _clean_directory(IMG2MD_OUTPUT_DIR)
-    for directory in EXTRACTOR_INPUT_DIRS.values():
-        _clean_directory(directory)
-    for directory in EXTRACTOR_OUTPUT_DIRS.values():
-        _clean_directory(directory)
+    extractor_results = run_agent_jobs(extractor_jobs, max_workers=len(extractor_jobs))
+    reference_files: list[Path] = [
+        path for result in extractor_results for path in result.delivered
+    ]
+    if not reference_files:
+        raise FileNotFoundError("Extractor produced no reference files")
 
-    logger.info(
-        "Moved %d file(s) to %s", len(reference_files), references_dir
-    )
+    logger.info("Moved %d file(s) to %s", len(reference_files), references_dir)
     return AssetInitResult(
         asset_dir=asset_dir,
         references_dir=references_dir,

@@ -5,9 +5,9 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui
 
-from codex.pdf2img import convert_pdf_to_images
+from assets_manager import convert_pdf_to_images
 
-from assets_manager import ask_tutor, asset_init, group_dive_in, integrate
+from assets_manager import ask_tutor, asset_init, fix_latex, group_dive_in, integrate
 from ..pymupdf_compat import fitz
 from ..renderer import PdfRenderer
 
@@ -412,11 +412,32 @@ class _IntegrateTask(QtCore.QRunnable):
         self.signals.finished.emit(str(output_path))
 
 
+class _FixLatexSignals(QtCore.QObject):
+    finished = QtCore.Signal(str)
+    failed = QtCore.Signal(str)
+
+
+class _FixLatexTask(QtCore.QRunnable):
+    def __init__(self, markdown_path: Path) -> None:
+        super().__init__()
+        self._markdown_path = markdown_path
+        self.signals = _FixLatexSignals()
+
+    def run(self) -> None:
+        try:
+            output_path = fix_latex(self._markdown_path)
+        except Exception as exc:  # pragma: no cover - GUI runtime path
+            self.signals.failed.emit(str(exc))
+            return
+        self.signals.finished.emit(str(output_path))
+
+
 __all__ = [
     "_AskTutorTask",
     "_AssetInitTask",
     "_CompressPreviewTask",
     "_CompressTask",
+    "_FixLatexTask",
     "_GroupDiveTask",
     "_IntegrateTask",
     "_RenderTask",

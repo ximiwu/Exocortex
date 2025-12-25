@@ -12,7 +12,7 @@ from typing import Callable, Dict, List, Set
 
 from PySide6 import QtCore, QtGui, QtWidgets, QtWebEngineCore, QtWebEngineWidgets
 
-from codex.pdf2img import convert_pdf_to_images
+from assets_manager import convert_pdf_to_images
 from ..pymupdf_compat import fitz
 from .constants import (
     BLOCK_STYLE_DEFAULT,
@@ -67,6 +67,7 @@ from .tasks import (
     _AssetInitTask,
     _CompressPreviewTask,
     _CompressTask,
+    _FixLatexTask,
     _GroupDiveTask,
     _IntegrateTask,
     _RenderTask,
@@ -125,6 +126,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._integrate_pool.setMaxThreadCount(1)
         self._group_dive_pool = QtCore.QThreadPool(self)
         self._group_dive_pool.setMaxThreadCount(1)
+        self._fix_latex_pool = QtCore.QThreadPool(self)
+        self._fix_latex_pool.setMaxThreadCount(1)
         self._drag_active = False
         self._asset_init_in_progress = False
         self._asset_progress_dialog: _AssetProgressDialog | None = None
@@ -138,6 +141,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._group_dive_in_progress = False
         self._ask_in_progress = False
         self._integrate_in_progress = False
+        self._fix_latex_in_progress = False
         self._block_action_proxy: QtWidgets.QGraphicsProxyWidget | None = None
         self._block_action_block_id: int | None = None
         self._current_markdown_path: Path | None = None
@@ -167,6 +171,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tutor_focus_button = QtWidgets.QPushButton("history ask tutor")
         self._integrate_button = QtWidgets.QPushButton("finish_ask")
         self._show_initial_button = QtWidgets.QPushButton("show initial")
+        self._fix_latex_button = QtWidgets.QPushButton("fix latex")
         self._crop_head_button = QtWidgets.QPushButton("crop head")
         self._crop_tail_button = QtWidgets.QPushButton("crop tail")
         self._reveal_button = QtWidgets.QPushButton("reveal in file explorer")
@@ -245,6 +250,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tutor_focus_button.clicked.connect(self._show_tutor_focus_list)
         self._integrate_button.clicked.connect(self._handle_integrate)
         self._show_initial_button.clicked.connect(self._show_initial_markdown)
+        self._fix_latex_button.clicked.connect(self._handle_fix_latex)
         self._crop_head_button.clicked.connect(self._crop_focus_head)
         self._crop_tail_button.clicked.connect(self._crop_focus_tail)
         self._reveal_button.clicked.connect(self._reveal_in_explorer)
@@ -260,6 +266,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tutor_focus_button.setVisible(False)
         self._integrate_button.setVisible(False)
         self._show_initial_button.setVisible(False)
+        self._fix_latex_button.setEnabled(False)
         self._crop_head_button.setVisible(False)
         self._crop_tail_button.setVisible(False)
         self._reveal_button.setEnabled(False)
@@ -274,6 +281,7 @@ class MainWindow(QtWidgets.QMainWindow):
         top_bar.addWidget(self._show_info_button)
         top_bar.addWidget(self._reveal_button)
         top_bar.addWidget(self._show_initial_button)
+        top_bar.addWidget(self._fix_latex_button)
         top_bar.addWidget(self._history_button)
         top_bar.addWidget(self._tutor_focus_button)
         top_bar.addWidget(self._integrate_button)
@@ -305,6 +313,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._markdown_tabs = QtWidgets.QTabWidget()
         self._markdown_tabs.setDocumentMode(True)
+        self._markdown_tabs.setMovable(True)
         self._markdown_tabs.setTabsClosable(True)
         self._markdown_tabs.tabCloseRequested.connect(self._close_markdown_tab)
         self._markdown_tabs.currentChanged.connect(self._on_markdown_tab_changed)
@@ -1145,6 +1154,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_focus_crop_visibility()
         self._update_tutor_focus_visibility()
         self._update_reveal_button_state()
+        self._update_fix_latex_button_state()
         self._persist_asset_ui_state()
 
     def _serialize_asset_markdown_path(self, asset_name: str, path: Path) -> str:
@@ -1370,6 +1380,14 @@ class MainWindow(QtWidgets.QMainWindow):
         enabled = bool(self._current_markdown_path and self._current_markdown_path.is_file())
         self._reveal_button.setEnabled(enabled)
 
+    def _update_fix_latex_button_state(self) -> None:
+        enabled = bool(
+            self._current_markdown_path
+            and self._current_markdown_path.is_file()
+            and not self._fix_latex_in_progress
+        )
+        self._fix_latex_button.setEnabled(enabled)
+
     def _reveal_in_explorer(self) -> None:
         if not self._current_markdown_path or not self._current_markdown_path.is_file():
             self.statusBar().showMessage("No markdown selected.")
@@ -1408,6 +1426,39 @@ class MainWindow(QtWidgets.QMainWindow):
 
         dialog.setLayout(layout)
         dialog.exec()
+
+    def _handle_fix_latex(self) -> None:
+        if self._fix_latex_in_progress:
+            self.statusBar().showMessage("Latex fix already in progress.")
+            return
+        if not self._current_markdown_path or not self._current_markdown_path.is_file():
+            self.statusBar().showMessage("No markdown selected.")
+            return
+        self._fix_latex_in_progress = True
+        self._update_fix_latex_button_state()
+        self.statusBar().showMessage(f"Fixing latex in {self._current_markdown_path.name}...")
+        task = _FixLatexTask(self._current_markdown_path)
+        task.signals.finished.connect(self._on_fix_latex_finished)
+        task.signals.failed.connect(self._on_fix_latex_failed)
+        self._fix_latex_pool.start(task)
+
+    @QtCore.Slot(str)
+    def _on_fix_latex_finished(self, output_path: str) -> None:
+        self._fix_latex_in_progress = False
+        self._update_fix_latex_button_state()
+        path = Path(output_path)
+        if path.is_file():
+            if self._find_markdown_tab(path) is not None:
+                self._open_markdown_file(path)
+            self.statusBar().showMessage(f"Latex fixed: {path.name}")
+            return
+        self.statusBar().showMessage(f"Latex fix output not found: {output_path}")
+
+    @QtCore.Slot(str)
+    def _on_fix_latex_failed(self, error: str) -> None:
+        self._fix_latex_in_progress = False
+        self._update_fix_latex_button_state()
+        self.statusBar().showMessage(f"Latex fix failed: {error}")
 
     def _crop_focus_head(self) -> None:
         if not self._current_markdown_path or not self._is_tutor_focus_markdown(self._current_markdown_path):

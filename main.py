@@ -1,164 +1,113 @@
-from __future__ import annotations
-
-import argparse
-import logging
+import re
 import sys
 from pathlib import Path
 
-# from assets_manager import AssetInitResult, asset_init, _clean_markdown_file
-
-# DEFAULT_PDF = Path("A Chebyshev Semi-Iterative Approach for Accelerating.pdf")
-
-
-# def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-#     parser = argparse.ArgumentParser(description="Initialize an asset from a PDF.")
-#     parser.add_argument(
-#         "pdf",
-#         nargs="?",
-#         default=DEFAULT_PDF,
-#         type=Path,
-#         help=f"Path to the PDF to process (default: {DEFAULT_PDF})",
-#     )
-#     parser.add_argument(
-#         "--asset-name",
-#         "-a",
-#         help="Target asset name (default: PDF file name without extension).",
-#     )
-#     return parser.parse_args(argv)
-
-
-# def main(argv: list[str] | None = None) -> int:
-#     args = parse_args(argv)
-#     try:
-#         result: AssetInitResult = asset_init(args.pdf, args.asset_name)
-#     except Exception:
-#         logging.exception("Asset initialization failed.")
-#         return 1
-
-#     print(f"Asset directory: {result.asset_dir.resolve()}")
-#     print(f"Raw PDF: {result.raw_pdf_path.resolve()}")
-#     print(
-#         f"References ({len(result.reference_files)} file(s)): "
-#         f"{result.references_dir.resolve()}"
-#     )
-#     return 0
-
-
-# if __name__ == "__main__":
-#     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-#     sys.exit(main())
-
-
-# import re
-
-# def _clean_markdown_file(file_path: Path):
-#     content = file_path.read_text(encoding="utf-8-sig")
-#     content = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', content, flags=re.DOTALL)
-#     def clean_inline(match):
-#         inner = match.group(1).replace('\u00A0', ' ').replace('\u3000', ' ').strip()
-#         return f"${inner}$"
-#     content = re.sub(r'\\\((.*?)\\\)', clean_inline, content, flags=re.DOTALL)
-#     pattern = re.compile(r'\$\$(.*?)\$\$', re.DOTALL)
-
-#     def reform_block(match):
-#         math_content = match.group(1)
-#         lines = math_content.splitlines()
-#         clean_lines = []
-#         for line in lines:
-#             stripped = line.strip().replace("\u00A0", " ").replace("\u3000", " ").replace("\u200b", " ").replace("\ufeff", " ")
-#             if stripped:
-#                 clean_lines.append(stripped)
-        
-#         cleaned_math_body = "\n".join(clean_lines)
-#         return f"\n\n$$\n{cleaned_math_body}\n$$\n\n"
-#     new_content = pattern.sub(reform_block, content)
-
-#     new_content = re.sub(r'\n{3,}', '\n\n', new_content)
-
-#     with open(file_path, 'w', encoding='utf-8', newline='\n') as f:
-#         f.write(new_content)
-
-
-
-import re
-from pathlib import Path
-
-def _clean_markdown_file(file_path: Path):
-    content = file_path.read_text(encoding="utf-8-sig")
-
-    # === 辅助函数：修复 LaTeX 语法 (去转义) ===
-    def _fix_latex_syntax(text):
-        # 将双反斜杠 \\ 替换为单反斜杠 \
-        # 注意：在 Python 字符串中，\\\\ 代表字面量的两个反斜杠
-        return text.replace('\\\\', '\\')
-
-    # 1. 统一转换 \[ \] 为 $$ $$
-    content = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', content, flags=re.DOTALL)
-
-    # 2. 统一转换 \( \) 为 $ $
-    # 先把 \( ... \) 这种格式转成 $ ... $，后续统一在步骤3处理内容
-    content = re.sub(r'\\\((.*?)\\\)', r'$\1$', content, flags=re.DOTALL)
-
-    # 3. 处理行内公式 $...$ (修复 \\epsilon 为 \epsilon，并去除多余空格)
-    # 正则解释：(?<!\$) 表示前面不能是 $，(?!\$) 表示后面不能是 $，确保只匹配单个 $ 包裹的内容
-    def clean_inline(match):
-        inner = match.group(1)
-        # 修复转义字符
-        inner = _fix_latex_syntax(inner)
-        # 清洗特殊空格
-        inner = inner.replace('\u00A0', ' ').replace('\u3000', ' ').strip()
-        return f"${inner}$"
+def read_file_content(file_path: Path) -> str:
+    """
+    尝试以不同编码读取文件，返回解码后的字符串。
+    解决 'UnicodeDecodeError' 和中文乱码问题。
+    """
+    # 按照优先级尝试编码
+    # 1. utf-8: 标准格式
+    # 2. gb18030: 包含 GBK 和 GB2312，Windows 常见中文编码
+    # 3. latin-1: 最后的兜底，但中文会变成乱码，仅防止程序崩溃
+    candidate_encodings = ["utf-8", "gb18030"]
     
-    content = re.sub(r'(?<!\$)\$(?!\$)(.*?)(?<!\$)\$(?!\$)', clean_inline, content, flags=re.DOTALL)
+    raw_bytes = file_path.read_bytes()
+    
+    for enc in candidate_encodings:
+        try:
+            content = raw_bytes.decode(enc)
+            return content
+        except UnicodeDecodeError:
+            continue
+            
+    # 如果以上都失败，抛出异常或使用 replace 策略
+    print(f"⚠️  警告: 无法识别 {file_path.name} 的编码，尝试强制读取...")
+    return raw_bytes.decode("utf-8", errors="replace")
 
-    # 4. 处理块级公式 $$...$$ (修复语法 + 重新排版)
-    pattern = re.compile(r'\$\$(.*?)\$\$', re.DOTALL)
-    def reform_block(match):
-        math_content = match.group(1)
-        
-        # 修复转义字符 (例如 \\epsilon -> \epsilon)
-        math_content = _fix_latex_syntax(math_content)
-        
+def clean_markdown_file(file_path: Path) -> None:
+    # 1. 读取 (智能解码)
+    content = read_file_content(file_path)
+
+    # --- 你的原始清洗逻辑 (保持不变) ---
+    def fix_latex_syntax(text: str) -> str:
+        return text.replace("\\\\", "\\")
+
+    content = re.sub(r"\\\[(.*?)\\\]", r"$$\1$$", content, flags=re.DOTALL)
+    content = re.sub(r"\\\((.*?)\\\)", r"$\1$", content, flags=re.DOTALL)
+
+    def clean_inline(match: re.Match[str]) -> str:
+        inner = fix_latex_syntax(match.group(1))
+        inner = inner.replace("\u00A0", " ").replace("\u3000", " ").strip()
+        return f"${inner}$"
+
+    content = re.sub(
+        r"(?<!\$)\$(?!\$)(.*?)(?<!\$)\$(?!\$)", clean_inline, content, flags=re.DOTALL
+    )
+
+    pattern = re.compile(r"\$\$(.*?)\$\$", re.DOTALL)
+
+    def reform_block(match: re.Match[str]) -> str:
+        math_content = fix_latex_syntax(match.group(1))
         lines = math_content.splitlines()
         clean_lines = []
         for line in lines:
-            stripped = line.strip().replace("\u00A0", " ").replace("\u3000", " ").replace("\u200b", " ").replace("\ufeff", " ")
+            stripped = line.strip().replace("\u00A0", " ").replace("\u3000", " ")
+            stripped = stripped.replace("\u200b", " ").replace("\ufeff", " ")
             if stripped:
                 clean_lines.append(stripped)
-        
         cleaned_math_body = "\n".join(clean_lines)
         return f"\n\n$$\n{cleaned_math_body}\n$$\n\n"
-    
+
     new_content = pattern.sub(reform_block, content)
 
-    # ================= [缩进清洗功能] =================
     lines = new_content.splitlines()
     processed_lines = []
     in_code_block = False
-    strip_chars = ' \t\u00A0\u3000'
+    strip_chars = " \t\u00A0\u3000"
 
     for line in lines:
-        # 检测代码块标记
-        if re.match(r'^\s*```', line):
+        if re.match(r"^\s*```", line):
             in_code_block = not in_code_block
             processed_lines.append(line.lstrip(strip_chars))
             continue
-        
         if in_code_block:
             processed_lines.append(line)
         else:
-            # 非代码块，强制去除左侧缩进，解决公式不渲染问题
             processed_lines.append(line.lstrip(strip_chars))
-            
+
     new_content = "\n".join(processed_lines)
-    # =================================================
+    new_content = re.sub(r"\n{3,}", "\n\n", new_content)
 
-    # 5. 规范化换行符
-    new_content = re.sub(r'\n{3,}', '\n\n', new_content)
+    # --- 关键修改 ---
+    # encoding="utf-8": 默认就是无 BOM 的 UTF-8
+    # 确保 newline 为 \n，防止 Windows 自动转为 \r\n 导致某些 Linux 工具处理异常
+    file_path.write_text(new_content, encoding="utf-8", newline="\n")
+    
+    print(f"✅ 已清洗并转为 UTF-8 (No BOM): {file_path.name}")
 
-    with open(file_path, 'w', encoding='utf-8', newline='\n') as f:
-        f.write(new_content)
+def process_folder(folder_path_str: str) -> None:
+    folder = Path(folder_path_str)
+    if not folder.exists():
+        print(f"❌ 路径不存在: {folder}")
+        return
 
-_clean_markdown_file(Path("codex/integrator/output/output.md"))
+    print(f"📂 正在处理: {folder.resolve()}")
+    md_files = list(folder.rglob("*.md"))
+    
+    if not md_files:
+        print("ℹ️  未找到 .md 文件")
+        return
 
-print("cleaned")
+    for file_path in md_files:
+        try:
+            clean_markdown_file(file_path)
+        except Exception as e:
+            print(f"❌ 处理失败 {file_path.name}: {e}")
+
+    print("-" * 30)
+    print("处理完成。")
+
+# 请替换为你的实际路径
+process_folder("prompts")
