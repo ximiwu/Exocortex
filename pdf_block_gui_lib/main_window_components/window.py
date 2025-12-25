@@ -84,6 +84,9 @@ from .graphics_items import _BlockGraphicsItem
 
 
 class MainWindow(QtWidgets.QMainWindow):
+    _PROMPT_MIN_HEIGHT = 35
+    _PROMPT_MAX_HEIGHT = 150
+
     def __init__(self) -> None:
         super().__init__()
         self._base_title = "Exocortex"
@@ -168,6 +171,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._page_label = QtWidgets.QLabel("Page: -/-")
         self._show_info_button = QtWidgets.QPushButton("show info")
         self._history_button = QtWidgets.QPushButton("history question")
+        self._delete_question_button = QtWidgets.QPushButton("delete question")
         self._tutor_focus_button = QtWidgets.QPushButton("history ask tutor")
         self._integrate_button = QtWidgets.QPushButton("finish_ask")
         self._show_initial_button = QtWidgets.QPushButton("show initial")
@@ -247,6 +251,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._about_button.clicked.connect(self._show_about_dialog)
         self._show_info_button.clicked.connect(self._show_reference_info)
         self._history_button.clicked.connect(self._show_history_questions)
+        self._delete_question_button.clicked.connect(self._delete_current_question)
         self._tutor_focus_button.clicked.connect(self._show_tutor_focus_list)
         self._integrate_button.clicked.connect(self._handle_integrate)
         self._show_initial_button.clicked.connect(self._show_initial_markdown)
@@ -263,6 +268,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for button in self._reference_buttons:
             button.setVisible(False)
         self._history_button.setVisible(False)
+        self._delete_question_button.setVisible(False)
         self._tutor_focus_button.setVisible(False)
         self._integrate_button.setVisible(False)
         self._show_initial_button.setVisible(False)
@@ -283,6 +289,7 @@ class MainWindow(QtWidgets.QMainWindow):
         top_bar.addWidget(self._show_initial_button)
         top_bar.addWidget(self._fix_latex_button)
         top_bar.addWidget(self._history_button)
+        top_bar.addWidget(self._delete_question_button)
         top_bar.addWidget(self._tutor_focus_button)
         top_bar.addWidget(self._integrate_button)
         top_bar.addWidget(self._crop_head_button)
@@ -1131,25 +1138,35 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _update_prompt_height(self) -> None:
         doc = self._prompt_input.document()
-        text = self._prompt_input.toPlainText()
-        line_count = max(1, math.ceil(len(text) / 150))
-        line_height = max(1.0, float(self._prompt_input.fontMetrics().lineSpacing()))
-        visible_lines = min(line_count, 5)
-        margin_height = doc.documentMargin() * 2
+        last_block = doc.lastBlock()
+        if last_block.isValid():
+            last_geometry = self._prompt_input.blockBoundingGeometry(last_block)
+            doc_height = float(last_geometry.y() + last_geometry.height())
+        else:
+            doc_height = 0.0
+
+        doc_margin_height = float(doc.documentMargin()) * 2.0
         margins = self._prompt_input.contentsMargins()
         frame = int(self._prompt_input.frameWidth()) * 2
-        total_height = int(
-            math.ceil(visible_lines * line_height + margin_height + margins.top() + margins.bottom() + frame)
-        )
-        self._prompt_input.setFixedHeight(total_height)
-        self._prompt_input.setVerticalScrollBarPolicy(
-            QtCore.Qt.ScrollBarAsNeeded if line_count > 5 else QtCore.Qt.ScrollBarAlwaysOff
-        )
+        needed_height = doc_height + doc_margin_height + margins.top() + margins.bottom() + frame
+
+        if needed_height < self._PROMPT_MIN_HEIGHT:
+            new_height = self._PROMPT_MIN_HEIGHT
+            self._prompt_input.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        elif needed_height > self._PROMPT_MAX_HEIGHT:
+            new_height = self._PROMPT_MAX_HEIGHT
+            self._prompt_input.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        else:
+            new_height = int(math.ceil(needed_height))
+            self._prompt_input.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+
+        self._prompt_input.setFixedHeight(int(new_height))
 
     def _set_current_markdown_path(self, path: Path | None) -> None:
         self._current_markdown_path = path
         self._update_prompt_visibility()
         self._update_history_button_visibility()
+        self._update_delete_question_visibility()
         self._update_initial_button_visibility()
         self._update_focus_crop_visibility()
         self._update_tutor_focus_visibility()
@@ -1345,6 +1362,24 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             return False
 
+    def _is_tutor_history_markdown(self, path: Path) -> bool:
+        context = self._tutor_context_from_markdown(path)
+        if not context:
+            return False
+        _asset_name, _group_index, _tutor_idx, tutor_session_dir = context
+        ask_history_dir = tutor_session_dir / "ask_history"
+        try:
+            resolved = path.resolve()
+        except Exception:
+            resolved = path
+        if resolved.suffix.lower() != ".md" or not resolved.is_file():
+            return False
+        try:
+            resolved.relative_to(ask_history_dir.resolve())
+        except Exception:
+            return resolved.name.lower() == "ask_history.md"
+        return True
+
     def _update_history_button_visibility(self) -> None:
         history_visible = False
         integrate_visible = False
@@ -1356,6 +1391,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._integrate_button.setEnabled(
             integrate_visible and not self._integrate_in_progress
         )
+
+    def _update_delete_question_visibility(self) -> None:
+        visible = False
+        if self._current_markdown_path:
+            visible = self._is_tutor_history_markdown(self._current_markdown_path)
+        self._delete_question_button.setVisible(visible)
 
     def _update_initial_button_visibility(self) -> None:
         visible = False
@@ -1586,6 +1627,32 @@ class MainWindow(QtWidgets.QMainWindow):
         for path in selected:
             self._open_markdown_file(path)
 
+    def _delete_current_question(self) -> None:
+        if not self._current_markdown_path:
+            self.statusBar().showMessage("No markdown selected.")
+            return
+        path = self._current_markdown_path
+        if not self._is_tutor_history_markdown(path):
+            self.statusBar().showMessage("delete question is only available for tutor ask_history markdown.")
+            return
+        confirm = QtWidgets.QMessageBox.question(
+            self,
+            "Delete Question",
+            f"Delete this question markdown?\n{path.name}",
+        )
+        if confirm != QtWidgets.QMessageBox.Yes:
+            return
+
+        tab_index = self._find_markdown_tab(path)
+        try:
+            path.unlink(missing_ok=True)
+        except Exception as exc:  # pragma: no cover - GUI runtime path
+            self.statusBar().showMessage(f"Failed to delete {path.name}: {exc}")
+            return
+        if tab_index is not None:
+            self._close_markdown_tab(tab_index)
+        self.statusBar().showMessage(f"Deleted {path.name}")
+
     def _show_history_questions(self) -> None:
         if not self._current_markdown_path:
             self.statusBar().showMessage("No markdown selected.")
@@ -1744,8 +1811,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"Ask failed: {error}")
 
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
-        if obj is self._prompt_input and event.type() == QtCore.QEvent.Resize:
-            self._update_prompt_height()
+        if obj is self._prompt_input:
+            if event.type() == QtCore.QEvent.KeyPress:
+                if isinstance(event, QtGui.QKeyEvent) and event.key() in (
+                    QtCore.Qt.Key_Return,
+                    QtCore.Qt.Key_Enter,
+                ):
+                    if event.modifiers() & QtCore.Qt.ShiftModifier:
+                        return False
+                    self._ask_button.click()
+                    return True
+            if event.type() == QtCore.QEvent.Resize:
+                self._update_prompt_height()
         return super().eventFilter(obj, event)
 
     def _find_markdown_tab(self, path: Path) -> int | None:
