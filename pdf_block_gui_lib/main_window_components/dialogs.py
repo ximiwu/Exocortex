@@ -5,6 +5,193 @@ from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 
 
+class _ManuscriptDropList(QtWidgets.QListWidget):
+    files_dropped = QtCore.Signal(list)
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:  # noqa: N802
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dragMoveEvent(self, event: QtGui.QDragMoveEvent) -> None:  # noqa: N802
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dropEvent(self, event: QtGui.QDropEvent) -> None:  # noqa: N802
+        if not event.mimeData().hasUrls():
+            event.ignore()
+            return
+
+        paths: list[Path] = []
+        for url in event.mimeData().urls():
+            if url.isLocalFile():
+                path = Path(url.toLocalFile())
+                if path.exists():
+                    paths.append(path)
+
+        if paths:
+            self.files_dropped.emit(paths)
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+
+class _FeynmanManuscriptDialog(QtWidgets.QDialog):
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Upload deduction images")
+        self.setModal(True)
+        self.setMinimumSize(520, 420)
+        self.setAcceptDrops(True)
+
+        self._paths: list[Path] = []
+        self._icon_size = QtCore.QSize(96, 96)
+
+        hint = QtWidgets.QLabel("Drag & drop images here, or click \"add image\" to pick one.")
+        hint.setWordWrap(True)
+
+        self._list = _ManuscriptDropList(self)
+        self._list.setIconSize(self._icon_size)
+        self._list.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self._list.files_dropped.connect(self._add_images)
+
+        self._add_button = QtWidgets.QPushButton("add image", self)
+        self._add_button.clicked.connect(self._on_add_clicked)
+
+        self._remove_button = QtWidgets.QPushButton("remove selected", self)
+        self._remove_button.clicked.connect(self._remove_selected)
+
+        toolbar = QtWidgets.QHBoxLayout()
+        toolbar.addWidget(self._add_button)
+        toolbar.addWidget(self._remove_button)
+        toolbar.addStretch(1)
+
+        self._buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel, parent=self
+        )
+        self._buttons.accepted.connect(self.accept)
+        self._buttons.rejected.connect(self.reject)
+        ok_button = self._buttons.button(QtWidgets.QDialogButtonBox.Ok)
+        if ok_button:
+            ok_button.setEnabled(False)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(hint)
+        layout.addLayout(toolbar)
+        layout.addWidget(self._list, 1)
+        layout.addWidget(self._buttons)
+
+    def selected_paths(self) -> list[Path]:
+        return list(self._paths)
+
+    def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:  # noqa: N802
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dragMoveEvent(self, event: QtGui.QDragMoveEvent) -> None:  # noqa: N802
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dropEvent(self, event: QtGui.QDropEvent) -> None:  # noqa: N802
+        if not event.mimeData().hasUrls():
+            event.ignore()
+            return
+
+        paths: list[Path] = []
+        for url in event.mimeData().urls():
+            if url.isLocalFile():
+                path = Path(url.toLocalFile())
+                if path.exists():
+                    paths.append(path)
+
+        if paths:
+            self._add_images(paths)
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def _set_ok_enabled(self) -> None:
+        ok_button = self._buttons.button(QtWidgets.QDialogButtonBox.Ok)
+        if ok_button:
+            ok_button.setEnabled(bool(self._paths))
+
+    def _on_add_clicked(self) -> None:
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select an image of your deduction",
+            "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff);;All Files (*.*)",
+        )
+        if not file_path:
+            return
+        self._add_images([Path(file_path)])
+
+    @QtCore.Slot(list)
+    def _add_images(self, paths: list[Path]) -> None:
+        failed: list[str] = []
+        for path in paths:
+            if path in self._paths:
+                continue
+            image = QtGui.QImage(str(path))
+            if image.isNull():
+                failed.append(str(path))
+                continue
+
+            pixmap = QtGui.QPixmap.fromImage(image)
+            if not pixmap.isNull():
+                pixmap = pixmap.scaled(
+                    self._icon_size,
+                    QtCore.Qt.KeepAspectRatio,
+                    QtCore.Qt.SmoothTransformation,
+                )
+            item = QtWidgets.QListWidgetItem(path.name)
+            item.setData(QtCore.Qt.UserRole, str(path))
+            item.setToolTip(str(path))
+            if not pixmap.isNull():
+                item.setIcon(QtGui.QIcon(pixmap))
+            self._list.addItem(item)
+            self._paths.append(path)
+
+        self._set_ok_enabled()
+
+        if failed:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Skipped files",
+                "Some files could not be loaded as images:\n" + "\n".join(failed[:10]),
+            )
+
+    def _remove_selected(self) -> None:
+        selected = list(self._list.selectedItems())
+        if not selected:
+            return
+
+        for item in selected:
+            path_raw = item.data(QtCore.Qt.UserRole)
+            if path_raw:
+                try:
+                    path = Path(path_raw)
+                except Exception:
+                    path = None
+                if path and path in self._paths:
+                    self._paths.remove(path)
+            row = self._list.row(item)
+            self._list.takeItem(row)
+
+        self._set_ok_enabled()
+
+
 class _TutorHistoryDialog(QtWidgets.QDialog):
     def __init__(self, items: list[tuple[str, Path]], parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -262,4 +449,3 @@ __all__ = [
     "_TutorFocusDialog",
     "_TutorHistoryDialog",
 ]
-

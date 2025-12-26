@@ -82,6 +82,8 @@ IMG_EXPLAINER_GEMINI_PROMPT = _prompt_path("img_explainer", "gemini", "GEMINI.md
 ENHANCER_GEMINI_PROMPT = _prompt_path("enhancer", "gemini", "GEMINI.md")
 INTEGRATOR_CODEX_PROMPT = _prompt_path("integrator", "codex", "AGENTS.md")
 TUTOR_GEMINI_PROMPT = _prompt_path("tutor", "gemini", "GEMINI.md")
+BUG_FINDER_GEMINI_PROMPT = _prompt_path("bug_finder", "gemini", "GEMINI.md")
+MANUSCRIPT_GEMINI_PROMPT = _prompt_path("manuscript2md", "gemini", "GEMINI.md")
 LATEX_FIXER_GEMINI_PROMPT = _prompt_path("latex_fixer", "GEMINI.md")
 
 EXTRACTOR_PROMPTS = {
@@ -1228,12 +1230,6 @@ def integrate(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
     )
 
     note_path = tutor_session_dir / "note.md"
-    existing_note_wrapped = ""
-    if note_path.is_file():
-        try:
-            existing_note_wrapped = note_path.read_text(encoding="utf-8").lstrip("\ufeff")
-        except Exception:  # pragma: no cover - defensive
-            existing_note_wrapped = ""
 
     job = AgentJob(
         name="integrator",
@@ -1290,9 +1286,6 @@ def integrate(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
         raise FileNotFoundError(f"enhanced.md not found at {enhanced_md}")
 
     enhanced_content = enhanced_md.read_text(encoding="utf-8")
-    if existing_note_wrapped:
-        if existing_note_wrapped in enhanced_content:
-            enhanced_content = enhanced_content.replace(existing_note_wrapped, "", 1)
     focus_content = focus_md.read_text(encoding="utf-8")
     if not focus_content.strip():
         raise ValueError(f"focus.md is empty: {focus_md}")
@@ -1311,6 +1304,366 @@ def integrate(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
 
     insert_at = match_start + len(match_text)
     updated_enhanced = enhanced_content[:insert_at] + note_wrapped + enhanced_content[insert_at:]
+    enhanced_md.write_text(updated_enhanced, encoding="utf-8", newline="\n")
+    return enhanced_md
+
+
+_MANUSCRIPT_IMAGE_RE = re.compile(r"^manuscript_(\d+)\.png$", re.IGNORECASE)
+
+
+def _list_tutor_manuscript_images(tutor_session_dir: Path) -> list[Path]:
+    indexed: list[tuple[int, Path]] = []
+    if tutor_session_dir.is_dir():
+        for entry in tutor_session_dir.iterdir():
+            if not entry.is_file():
+                continue
+            match = _MANUSCRIPT_IMAGE_RE.match(entry.name)
+            if not match:
+                continue
+            try:
+                idx = int(match.group(1))
+            except (TypeError, ValueError):
+                continue
+            indexed.append((idx, entry))
+
+    if indexed:
+        indexed.sort(key=lambda item: item[0])
+        return [path for _, path in indexed]
+
+    single = tutor_session_dir / "manuscript.png"
+    if single.is_file():
+        return [single]
+
+    legacy = tutor_session_dir / "student.png"
+    if legacy.is_file():
+        return [legacy]
+
+    return []
+
+
+def bug_finder(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
+    """
+    Review manuscript images against note.md for a tutor session and write bugs.md.
+
+    Uses prompts/bug_finder with:
+    - input/manuscript_1.png (and manuscript_2.png, ...)
+    - references/original.md (renamed from note.md)
+    - output/bugs.md (delivered to tutor_data/<tutor_idx>/bugs.md)
+    """
+    group_dir = get_group_data_dir(asset_name) / str(group_idx)
+    tutor_session_dir = group_dir / "tutor_data" / str(tutor_idx)
+    if not tutor_session_dir.is_dir():
+        raise FileNotFoundError(f"tutor session directory not found: {tutor_session_dir}")
+
+    manuscript_images = _list_tutor_manuscript_images(tutor_session_dir)
+    if not manuscript_images:
+        raise FileNotFoundError(
+            f"No manuscript images found in {tutor_session_dir} (expected manuscript_*.png)"
+        )
+
+    note_path = tutor_session_dir / "note.md"
+    if not note_path.is_file():
+        raise FileNotFoundError(f"note.md not found: {note_path}")
+
+    bugs_path = tutor_session_dir / "bugs.md"
+
+    manuscript_refs = " ".join(
+        f"@input/manuscript_{idx}.png" for idx in range(1, len(manuscript_images) + 1)
+    )
+    extra_message = f"{manuscript_refs} 是手稿笔记，开始"
+    input_rename = {
+        image.name: f"manuscript_{idx}.png" for idx, image in enumerate(manuscript_images, start=1)
+    }
+
+    job = AgentJob(
+        name="bug_finder",
+        runners=[
+            RunnerConfig(
+                runner="gemini",
+                prompt_path=BUG_FINDER_GEMINI_PROMPT,
+                model=GEMINI_MODEL,
+                new_console=True,
+                extra_message=extra_message,
+            )
+        ],
+        input_files=manuscript_images,
+        input_rename=input_rename,
+        reference_files=[note_path],
+        reference_rename={note_path.name: "original.md"},
+        deliver_dir=_relative_to_repo(tutor_session_dir),
+        deliver_rename={"bugs.md": "bugs.md"},
+        clean_markdown=True,
+    )
+    run_agent_job(job)
+
+    if not bugs_path.is_file():
+        raise FileNotFoundError(f"bug_finder output not found at {bugs_path}")
+    return bugs_path
+
+
+def insert_feynman_original_image(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
+    """
+    Insert a "student original image" note block into img_explainer_data/enhanced.md for the given tutor session.
+
+    Copies tutor_data/<tutor_idx>/manuscript_*.png to img_explainer_data/manuscript_<tutor_idx>*.png and references
+    them from the inserted markdown block.
+    """
+    group_dir = get_group_data_dir(asset_name) / str(group_idx)
+    if not group_dir.is_dir():
+        raise FileNotFoundError(
+            f"Group data directory not found for asset '{asset_name}', group {group_idx}: {group_dir}"
+        )
+
+    tutor_session_dir = group_dir / "tutor_data" / str(tutor_idx)
+    if not tutor_session_dir.is_dir():
+        raise FileNotFoundError(f"tutor session directory not found: {tutor_session_dir}")
+
+    manuscript_images = _list_tutor_manuscript_images(tutor_session_dir)
+    if not manuscript_images:
+        raise FileNotFoundError(
+            f"No manuscript images found in {tutor_session_dir} (expected manuscript_*.png)"
+        )
+
+    focus_md = tutor_session_dir / "focus.md"
+    if not focus_md.is_file():
+        raise FileNotFoundError(f"tutor focus.md not found: {focus_md}")
+
+    img_explainer_dir = group_dir / "img_explainer_data"
+    enhanced_md = img_explainer_dir / "enhanced.md"
+    if not enhanced_md.is_file():
+        raise FileNotFoundError(f"enhanced.md not found at {enhanced_md}")
+
+    target_names: list[str] = []
+    for idx, source in enumerate(manuscript_images, start=1):
+        target_name = (
+            f"manuscript_{tutor_idx}.png" if idx == 1 else f"manuscript_{tutor_idx}_{idx}.png"
+        )
+        target_image = img_explainer_dir / target_name
+        target_image.unlink(missing_ok=True)
+        shutil.copy2(source, target_image)
+        target_names.append(target_name)
+
+    image_markdown = "\n\n".join(f"![你的推导]({name})" for name in target_names)
+    original_block = (
+        "\n\n<details class=\"note\">\n"
+        "<summary>原图</summary> \n"
+        "<div markdown=\"1\">\n\n"
+        f"{image_markdown}\n\n\n"
+        "</div>\n"
+        "</details>\n\n"
+    )
+    legacy_image_markdown = "\n\n".join(
+        f"![你的推导](./img_explainer_data/{name})" for name in target_names
+    )
+    legacy_original_block = (
+        "\n\n<details class=\"note\">\n"
+        "<summary>原图</summary> \n"
+        "<div markdown=\"1\">\n\n"
+        f"{legacy_image_markdown}\n\n\n"
+        "</div>\n"
+        "</details>\n\n"
+    )
+
+    enhanced_content = enhanced_md.read_text(encoding="utf-8")
+
+    focus_content = focus_md.read_text(encoding="utf-8")
+    if not focus_content.strip():
+        raise ValueError(f"focus.md is empty: {focus_md}")
+
+    match_start = -1
+    match_text = ""
+    for candidate in (focus_content, focus_content.rstrip("\n"), focus_content.strip()):
+        if not candidate:
+            continue
+        match_start = enhanced_content.find(candidate)
+        if match_start >= 0:
+            match_text = candidate
+            break
+    if match_start < 0:
+        raise ValueError("focus.md content not found in enhanced.md for insertion.")
+
+    insert_at = match_start + len(match_text)
+
+    note_path = tutor_session_dir / "note.md"
+    note_wrapped = ""
+    if note_path.is_file():
+        try:
+            note_wrapped = note_path.read_text(encoding="utf-8").lstrip("\ufeff")
+        except Exception:  # pragma: no cover - defensive
+            note_wrapped = ""
+    if note_wrapped:
+        note_pos = enhanced_content.find(note_wrapped, insert_at)
+        if note_pos >= 0:
+            insert_at = note_pos + len(note_wrapped)
+        else:
+            enhanced_content = (
+                enhanced_content[:insert_at] + note_wrapped + enhanced_content[insert_at:]
+            )
+            insert_at += len(note_wrapped)
+
+    updated_enhanced = (
+        enhanced_content[:insert_at] + original_block + enhanced_content[insert_at:]
+    )
+    enhanced_md.write_text(updated_enhanced, encoding="utf-8", newline="\n")
+    return enhanced_md
+
+
+def create_student_note(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
+    """
+    Convert tutor_data/<tutor_idx>/manuscript_1.png (and manuscript_2.png, ...) into note_student.md via the
+    manuscript prompt, then insert it into
+    img_explainer_data/enhanced.md.
+    """
+    group_dir = get_group_data_dir(asset_name) / str(group_idx)
+    if not group_dir.is_dir():
+        raise FileNotFoundError(
+            f"Group data directory not found for asset '{asset_name}', group {group_idx}: {group_dir}"
+        )
+
+    tutor_session_dir = group_dir / "tutor_data" / str(tutor_idx)
+    if not tutor_session_dir.is_dir():
+        raise FileNotFoundError(f"tutor session directory not found: {tutor_session_dir}")
+
+    manuscript_images = _list_tutor_manuscript_images(tutor_session_dir)
+    if not manuscript_images:
+        raise FileNotFoundError(
+            f"No manuscript images found in {tutor_session_dir} (expected manuscript_*.png)"
+        )
+
+    focus_md = tutor_session_dir / "focus.md"
+    if not focus_md.is_file():
+        raise FileNotFoundError(f"tutor focus.md not found: {focus_md}")
+
+    img_explainer_dir = group_dir / "img_explainer_data"
+    enhanced_md = img_explainer_dir / "enhanced.md"
+    if not enhanced_md.is_file():
+        raise FileNotFoundError(f"enhanced.md not found at {enhanced_md}")
+
+    note_student_path = tutor_session_dir / "note_student.md"
+
+    job = AgentJob(
+        name="manuscript",
+        runners=[
+            RunnerConfig(
+                runner="gemini",
+                prompt_path=MANUSCRIPT_GEMINI_PROMPT,
+                model=GEMINI_MODEL,
+                new_console=True,
+                extra_message=(
+                    " ".join(
+                        f"@input/manuscript_{idx}.png"
+                        for idx in range(1, len(manuscript_images) + 1)
+                    )
+                    + " 是手稿笔记，开始"
+                ),
+            )
+        ],
+        input_files=manuscript_images,
+        input_rename={
+            image.name: f"manuscript_{idx}.png"
+            for idx, image in enumerate(manuscript_images, start=1)
+        },
+        deliver_dir=_relative_to_repo(tutor_session_dir),
+        deliver_rename={"output.md": "note_student.md"},
+        clean_markdown=True,
+    )
+    run_agent_job(job)
+
+    if not note_student_path.is_file():
+        raise FileNotFoundError(f"manuscript output not found at {note_student_path}")
+
+    raw_note_student = note_student_path.read_text(encoding="utf-8").lstrip("\ufeff")
+    note_student_wrapped = (
+        '\n\n<details class="note"> \n'
+        "<summary>你的推导</summary>\n"
+        '<div markdown="1">\n\n'
+        f"{raw_note_student}"
+        "\n\n</div> \n</details>\n\n"
+    )
+    note_student_path.write_text(note_student_wrapped, encoding="utf-8", newline="\n")
+
+    enhanced_content = enhanced_md.read_text(encoding="utf-8")
+
+    focus_content = focus_md.read_text(encoding="utf-8")
+    if not focus_content.strip():
+        raise ValueError(f"focus.md is empty: {focus_md}")
+
+    match_start = -1
+    match_text = ""
+    for candidate in (focus_content, focus_content.rstrip("\n"), focus_content.strip()):
+        if not candidate:
+            continue
+        match_start = enhanced_content.find(candidate)
+        if match_start >= 0:
+            match_text = candidate
+            break
+    if match_start < 0:
+        raise ValueError("focus.md content not found in enhanced.md for insertion.")
+
+    insert_at = match_start + len(match_text)
+
+    note_path = tutor_session_dir / "note.md"
+    note_wrapped = ""
+    if note_path.is_file():
+        try:
+            note_wrapped = note_path.read_text(encoding="utf-8").lstrip("\ufeff")
+        except Exception:  # pragma: no cover - defensive
+            note_wrapped = ""
+    if note_wrapped:
+        note_pos = enhanced_content.find(note_wrapped, insert_at)
+        if note_pos >= 0:
+            insert_at = note_pos + len(note_wrapped)
+        else:
+            enhanced_content = (
+                enhanced_content[:insert_at] + note_wrapped + enhanced_content[insert_at:]
+            )
+            insert_at += len(note_wrapped)
+
+    target_names = [
+        f"manuscript_{tutor_idx}.png" if idx == 1 else f"manuscript_{tutor_idx}_{idx}.png"
+        for idx in range(1, len(manuscript_images) + 1)
+    ]
+
+    image_markdown = "\n\n".join(f"![你的推导]({name})" for name in target_names)
+    original_block = (
+        "\n\n<details class=\"note\">\n"
+        "<summary>原图</summary> \n"
+        "<div markdown=\"1\">\n\n"
+        f"{image_markdown}\n\n\n"
+        "</div>\n"
+        "</details>\n\n"
+    )
+    legacy_image_markdown = "\n\n".join(
+        f"![你的推导](./img_explainer_data/{name})" for name in target_names
+    )
+    legacy_original_block = (
+        "\n\n<details class=\"note\">\n"
+        "<summary>原图</summary> \n"
+        "<div markdown=\"1\">\n\n"
+        f"{legacy_image_markdown}\n\n\n"
+        "</div>\n"
+        "</details>\n\n"
+    )
+
+    def _find_last_end(content: str, block: str, start: int) -> int | None:
+        pos = content.find(block, start)
+        if pos < 0:
+            return None
+        last_end = pos + len(block)
+        while True:
+            next_pos = content.find(block, last_end)
+            if next_pos < 0:
+                return last_end
+            last_end = next_pos + len(block)
+
+    for block in (original_block, legacy_original_block):
+        end_pos = _find_last_end(enhanced_content, block, insert_at)
+        if end_pos is not None:
+            insert_at = max(insert_at, end_pos)
+
+    updated_enhanced = (
+        enhanced_content[:insert_at] + note_student_wrapped + enhanced_content[insert_at:]
+    )
     enhanced_md.write_text(updated_enhanced, encoding="utf-8", newline="\n")
     return enhanced_md
 

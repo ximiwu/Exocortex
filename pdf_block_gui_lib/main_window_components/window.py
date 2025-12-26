@@ -46,6 +46,7 @@ from assets_manager import (
     create_group_record,
     delete_group_record,
     integrate,
+    insert_feynman_original_image,
     group_dive_in,
     get_asset_dir,
     get_asset_pdf_path,
@@ -65,16 +66,19 @@ from ..widgets import PdfPageView
 from .tasks import (
     _AskTutorTask,
     _AssetInitTask,
+    _BugFinderTask,
     _CompressPreviewTask,
     _CompressTask,
     _FixLatexTask,
     _GroupDiveTask,
     _IntegrateTask,
+    _StudentNoteTask,
     _RenderTask,
 )
 from .dialogs import (
     _AssetProgressDialog,
     _AssetSelectionDialog,
+    _FeynmanManuscriptDialog,
     _NewAssetDialog,
     _PreviewDialog,
     _TutorFocusDialog,
@@ -127,6 +131,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._ask_pool.setMaxThreadCount(1)
         self._integrate_pool = QtCore.QThreadPool(self)
         self._integrate_pool.setMaxThreadCount(1)
+        self._bug_finder_pool = QtCore.QThreadPool(self)
+        self._bug_finder_pool.setMaxThreadCount(1)
+        self._student_note_pool = QtCore.QThreadPool(self)
+        self._student_note_pool.setMaxThreadCount(1)
         self._group_dive_pool = QtCore.QThreadPool(self)
         self._group_dive_pool.setMaxThreadCount(1)
         self._fix_latex_pool = QtCore.QThreadPool(self)
@@ -144,7 +152,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._group_dive_in_progress = False
         self._ask_in_progress = False
         self._integrate_in_progress = False
+        self._bug_finder_in_progress = False
+        self._student_note_in_progress = False
         self._fix_latex_in_progress = False
+        self._feynman_mode_active = False
+        self._feynman_locked_tab_index: int | None = None
+        self._feynman_view: QtWebEngineWidgets.QWebEngineView | None = None
+        self._feynman_context: tuple[str, int, int, Path] | None = None
+        self._feynman_pending_review = False
         self._block_action_proxy: QtWidgets.QGraphicsProxyWidget | None = None
         self._block_action_block_id: int | None = None
         self._current_markdown_path: Path | None = None
@@ -173,7 +188,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._history_button = QtWidgets.QPushButton("history question")
         self._delete_question_button = QtWidgets.QPushButton("delete question")
         self._tutor_focus_button = QtWidgets.QPushButton("history ask tutor")
-        self._integrate_button = QtWidgets.QPushButton("finish_ask")
+        self._integrate_button = QtWidgets.QPushButton("start feynman")
+        self._skip_feynman_button = QtWidgets.QPushButton("skip feynman")
         self._show_initial_button = QtWidgets.QPushButton("show initial")
         self._fix_latex_button = QtWidgets.QPushButton("fix latex")
         self._crop_head_button = QtWidgets.QPushButton("crop head")
@@ -254,6 +270,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._delete_question_button.clicked.connect(self._delete_current_question)
         self._tutor_focus_button.clicked.connect(self._show_tutor_focus_list)
         self._integrate_button.clicked.connect(self._handle_integrate)
+        self._skip_feynman_button.clicked.connect(self._handle_skip_feynman)
         self._show_initial_button.clicked.connect(self._show_initial_markdown)
         self._fix_latex_button.clicked.connect(self._handle_fix_latex)
         self._crop_head_button.clicked.connect(self._crop_focus_head)
@@ -271,6 +288,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._delete_question_button.setVisible(False)
         self._tutor_focus_button.setVisible(False)
         self._integrate_button.setVisible(False)
+        self._skip_feynman_button.setVisible(False)
         self._show_initial_button.setVisible(False)
         self._fix_latex_button.setEnabled(False)
         self._crop_head_button.setVisible(False)
@@ -292,6 +310,7 @@ class MainWindow(QtWidgets.QMainWindow):
         top_bar.addWidget(self._delete_question_button)
         top_bar.addWidget(self._tutor_focus_button)
         top_bar.addWidget(self._integrate_button)
+        top_bar.addWidget(self._skip_feynman_button)
         top_bar.addWidget(self._crop_head_button)
         top_bar.addWidget(self._crop_tail_button)
         top_bar.addStretch(1)
@@ -306,6 +325,21 @@ class MainWindow(QtWidgets.QMainWindow):
         prompt_bar.addWidget(self._ask_button)
         self._prompt_container = QtWidgets.QWidget()
         self._prompt_container.setLayout(prompt_bar)
+
+        self._feynman_submit_button = QtWidgets.QPushButton("submit my deduction")
+        self._feynman_finish_button = QtWidgets.QPushButton("finish improvement")
+        self._feynman_finish_button.setVisible(False)
+        self._feynman_submit_button.clicked.connect(self._handle_feynman_submit)
+        self._feynman_finish_button.clicked.connect(self._handle_feynman_finish)
+
+        feynman_bar = QtWidgets.QHBoxLayout()
+        feynman_bar.setContentsMargins(0, 0, 0, 0)
+        feynman_bar.addStretch(1)
+        feynman_bar.addWidget(self._feynman_submit_button)
+        feynman_bar.addWidget(self._feynman_finish_button)
+        self._feynman_controls = QtWidgets.QWidget()
+        self._feynman_controls.setLayout(feynman_bar)
+        self._feynman_controls.setVisible(False)
 
         self._scene = QtWidgets.QGraphicsScene(self)
         self._view = PdfPageView()
@@ -360,6 +394,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._splitter, 1)
         layout.addWidget(self._compress_controls)
         layout.addWidget(self._prompt_container)
+        layout.addWidget(self._feynman_controls)
         self.setCentralWidget(central)
 
         self._update_prompt_height()
@@ -1267,6 +1302,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._open_markdown_file(active_markdown)
 
     def _update_prompt_visibility(self) -> None:
+        if self._feynman_mode_active:
+            self._prompt_container.setVisible(False)
+            self._ask_button.setEnabled(False)
+            self._prompt_input.setEnabled(False)
+            return
+
         visible = False
         if self._current_markdown_path:
             visible = self._tutor_context_from_markdown(self._current_markdown_path) is not None
@@ -1386,9 +1427,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._current_markdown_path:
             history_visible = self._tutor_context_from_markdown(self._current_markdown_path) is not None
             integrate_visible = history_visible
+        if self._feynman_mode_active:
+            history_visible = False
+            integrate_visible = False
         self._history_button.setVisible(history_visible)
         self._integrate_button.setVisible(integrate_visible)
+        self._skip_feynman_button.setVisible(integrate_visible)
         self._integrate_button.setEnabled(
+            integrate_visible and not self._integrate_in_progress
+        )
+        self._skip_feynman_button.setEnabled(
             integrate_visible and not self._integrate_in_progress
         )
 
@@ -1720,25 +1768,112 @@ class MainWindow(QtWidgets.QMainWindow):
             self._show_markdown_placeholder()
         self._set_current_markdown_path(self._resolve_current_markdown_path())
 
-    def _on_markdown_tab_changed(self, _index: int) -> None:
+    def _on_markdown_tab_changed(self, index: int) -> None:
+        if self._feynman_mode_active and self._feynman_locked_tab_index is not None:
+            locked = self._feynman_locked_tab_index
+            if locked != index and 0 <= locked < self._markdown_tabs.count():
+                self._markdown_tabs.blockSignals(True)
+                try:
+                    self._markdown_tabs.setCurrentIndex(locked)
+                finally:
+                    self._markdown_tabs.blockSignals(False)
+                return
         self._set_current_markdown_path(self._resolve_current_markdown_path())
 
     def _handle_integrate(self) -> None:
+        if self._feynman_mode_active:
+            self.statusBar().showMessage("Feynman mode is already active.")
+            return
         if self._integrate_in_progress:
-            self.statusBar().showMessage("finish_ask already in progress.")
+            self.statusBar().showMessage("start feynman already in progress.")
             return
         if not self._current_markdown_path:
             self.statusBar().showMessage("Open a tutor markdown first.")
             return
         context = self._tutor_context_from_markdown(self._current_markdown_path)
         if not context:
-            self.statusBar().showMessage("finish_ask is only available in tutor_data.")
+            self.statusBar().showMessage("start feynman is only available in tutor_data.")
             return
-        asset_name, group_idx, tutor_idx, _tutor_session_dir = context
+
+        asset_name, group_idx, tutor_idx, tutor_session_dir = context
+        prompt = (
+            "Are you sure you want to enter Feynman mode?\n"
+            "You will not be able to view AI-generated content.\n"
+            "You must independently write on paper a full explanation and derivation of everything you just learned from Ask Tutor."
+        )
+        confirm = QtWidgets.QMessageBox.question(
+            self,
+            "Enter Feynman Mode",
+            prompt,
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if confirm != QtWidgets.QMessageBox.Yes:
+            return
+
+        note_path = tutor_session_dir / "note.md"
+        if note_path.is_file():
+            try:
+                existing_note = note_path.read_text(encoding="utf-8").lstrip("\ufeff")
+            except Exception:  # pragma: no cover - defensive
+                existing_note = ""
+            try:
+                group_dir = get_group_data_dir(asset_name) / str(group_idx)
+                enhanced_md = group_dir / "img_explainer_data" / "enhanced.md"
+                if existing_note and enhanced_md.is_file():
+                    enhanced_content = enhanced_md.read_text(encoding="utf-8")
+                    if existing_note in enhanced_content:
+                        enhanced_md.write_text(
+                            enhanced_content.replace(existing_note, "", 1),
+                            encoding="utf-8",
+                            newline="\n",
+                        )
+            except Exception:  # pragma: no cover - GUI runtime path
+                pass
+            note_path.unlink(missing_ok=True)
+
+        self._enter_feynman_mode(asset_name, group_idx, tutor_idx, tutor_session_dir)
+
         self._integrate_in_progress = True
         self._update_prompt_visibility()
         self._update_history_button_visibility()
-        self.statusBar().showMessage(f"finish_ask (group {group_idx}, tutor {tutor_idx})")
+        self.statusBar().showMessage(f"start feynman (group {group_idx}, tutor {tutor_idx})")
+        task = _IntegrateTask(asset_name, group_idx, tutor_idx)
+        task.signals.finished.connect(self._on_integrate_finished)
+        task.signals.failed.connect(self._on_integrate_failed)
+        self._integrate_pool.start(task)
+
+    def _handle_skip_feynman(self) -> None:
+        if self._feynman_mode_active:
+            self.statusBar().showMessage("Feynman mode is already active.")
+            return
+        if self._integrate_in_progress:
+            self.statusBar().showMessage("Integrator already in progress.")
+            return
+        if not self._current_markdown_path:
+            self.statusBar().showMessage("Open a tutor markdown first.")
+            return
+        context = self._tutor_context_from_markdown(self._current_markdown_path)
+        if not context:
+            self.statusBar().showMessage("skip feynman is only available in tutor_data.")
+            return
+
+        asset_name, group_idx, tutor_idx, _tutor_session_dir = context
+        prompt = "Are you sure you want to skip Feynman mode and let the AI generate the notes directly?"
+        confirm = QtWidgets.QMessageBox.question(
+            self,
+            "Skip Feynman Mode",
+            prompt,
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if confirm != QtWidgets.QMessageBox.Yes:
+            return
+
+        self._integrate_in_progress = True
+        self._update_prompt_visibility()
+        self._update_history_button_visibility()
+        self.statusBar().showMessage(f"Integrating (group {group_idx}, tutor {tutor_idx})")
         task = _IntegrateTask(asset_name, group_idx, tutor_idx)
         task.signals.finished.connect(self._on_integrate_finished)
         task.signals.failed.connect(self._on_integrate_failed)
@@ -1752,16 +1887,241 @@ class MainWindow(QtWidgets.QMainWindow):
 
         path = Path(output_path)
         if path.is_file():
-            self.statusBar().showMessage(f"finish_ask updated {path.name}")
-            return
-        self.statusBar().showMessage(f"finish_ask updated {output_path}")
+            self.statusBar().showMessage(f"Integrator updated {path.name}")
+        else:
+            self.statusBar().showMessage(f"Integrator updated {output_path}")
+
+        self._maybe_start_feynman_bug_review()
 
     @QtCore.Slot(str)
     def _on_integrate_failed(self, error: str) -> None:
         self._integrate_in_progress = False
         self._update_prompt_visibility()
         self._update_history_button_visibility()
-        self.statusBar().showMessage(f"finish_ask failed: {error}")
+        self.statusBar().showMessage(f"Integrator failed: {error}")
+
+        if self._feynman_pending_review:
+            self._feynman_pending_review = False
+            self._feynman_submit_button.setEnabled(True)
+
+    def _enter_feynman_mode(
+        self,
+        asset_name: str,
+        group_idx: int,
+        tutor_idx: int,
+        tutor_session_dir: Path,
+    ) -> None:
+        view = self._ensure_feynman_view()
+        tab_index = self._markdown_tabs.indexOf(view)
+
+        self._feynman_mode_active = True
+        self._feynman_context = (asset_name, group_idx, tutor_idx, tutor_session_dir)
+        self._feynman_pending_review = False
+        self._feynman_locked_tab_index = tab_index
+
+        tab_bar = self._markdown_tabs.tabBar()
+        tab_bar.setEnabled(False)
+        tab_bar.setVisible(False)
+
+        self._feynman_finish_button.setVisible(False)
+        self._feynman_controls.setVisible(True)
+        self._feynman_submit_button.setEnabled(True)
+        self._update_prompt_visibility()
+
+        feiman_html = Path(__file__).resolve().parents[1] / "feiman.html"
+        if feiman_html.is_file():
+            view.load(QtCore.QUrl.fromLocalFile(str(feiman_html)))
+        else:
+            view.setHtml("<html><body><h2>Feynman mode</h2><p>Missing feiman.html</p></body></html>")
+
+    def _exit_feynman_mode(self) -> None:
+        self._feynman_mode_active = False
+        self._feynman_locked_tab_index = None
+        self._feynman_context = None
+        self._feynman_pending_review = False
+
+        tab_bar = self._markdown_tabs.tabBar()
+        tab_bar.setEnabled(True)
+        tab_bar.setVisible(True)
+
+        self._feynman_controls.setVisible(False)
+        self._feynman_finish_button.setVisible(False)
+        self._bug_finder_in_progress = False
+        self._update_prompt_visibility()
+        self._update_history_button_visibility()
+
+    def _ensure_feynman_view(self) -> QtWebEngineWidgets.QWebEngineView:
+        view = self._feynman_view
+        if view is not None and self._markdown_tabs.indexOf(view) >= 0:
+            self._markdown_tabs.blockSignals(True)
+            try:
+                self._markdown_tabs.setCurrentWidget(view)
+            finally:
+                self._markdown_tabs.blockSignals(False)
+            return view
+
+        self._remove_markdown_placeholder()
+
+        view = QtWebEngineWidgets.QWebEngineView()
+        view.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
+        index = self._markdown_tabs.addTab(view, "Feynman")
+        self._markdown_tabs.setCurrentIndex(index)
+        self._markdown_tabs.setTabsClosable(True)
+        self._feynman_view = view
+        return view
+
+    def _handle_feynman_finish(self) -> None:
+        if not self._feynman_mode_active or not self._feynman_context:
+            return
+
+        if self._bug_finder_in_progress:
+            self.statusBar().showMessage("Bug review is still running.")
+            return
+
+        asset_name, group_idx, tutor_idx, _tutor_session_dir = self._feynman_context
+        try:
+            enhanced_md = insert_feynman_original_image(asset_name, group_idx, tutor_idx)
+        except Exception as exc:  # pragma: no cover - GUI runtime path
+            self.statusBar().showMessage(f"finish improvement failed: {exc}")
+            return
+
+        self.statusBar().showMessage("Inserted manuscript image into enhanced.md.")
+        self._exit_feynman_mode()
+        self._open_markdown_file(enhanced_md, tab_label=f"Group {group_idx}: enhanced.md")
+
+        if self._student_note_in_progress:
+            self.statusBar().showMessage("Student note generation already in progress.")
+            return
+        self._student_note_in_progress = True
+        task = _StudentNoteTask(asset_name, group_idx, tutor_idx)
+        task.signals.finished.connect(self._on_student_note_finished)
+        task.signals.failed.connect(self._on_student_note_failed)
+        self._student_note_pool.start(task)
+
+    def _handle_feynman_submit(self) -> None:
+        if not self._feynman_mode_active or not self._feynman_context:
+            self.statusBar().showMessage("Start Feynman mode first.")
+            return
+        if self._feynman_pending_review:
+            self.statusBar().showMessage("A deduction review is already queued.")
+            return
+        if self._bug_finder_in_progress:
+            self.statusBar().showMessage("Bug review already in progress.")
+            return
+
+        dialog = _FeynmanManuscriptDialog(self)
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            return
+
+        source_paths = dialog.selected_paths()
+        if not source_paths:
+            return
+
+        _asset_name, _group_idx, _tutor_idx, tutor_session_dir = self._feynman_context
+        tutor_session_dir.mkdir(parents=True, exist_ok=True)
+
+        manuscript_name_re = re.compile(r"^manuscript(?:_\\d+)?\\.png$", re.IGNORECASE)
+        for entry in tutor_session_dir.iterdir():
+            if entry.is_file() and manuscript_name_re.match(entry.name):
+                entry.unlink(missing_ok=True)
+        (tutor_session_dir / "student.png").unlink(missing_ok=True)
+
+        for idx, source_path in enumerate(source_paths, start=1):
+            image = QtGui.QImage(str(source_path))
+            if image.isNull():
+                self.statusBar().showMessage(f"Failed to load image: {source_path}")
+                return
+            target = tutor_session_dir / f"manuscript_{idx}.png"
+            target.unlink(missing_ok=True)
+            if not image.save(str(target), "PNG"):
+                self.statusBar().showMessage(f"Failed to save {target.name}.")
+                return
+
+        self._feynman_submit_button.setEnabled(False)
+        self._feynman_pending_review = True
+        self._maybe_start_feynman_bug_review()
+
+    def _maybe_start_feynman_bug_review(self) -> None:
+        if not self._feynman_mode_active or not self._feynman_context:
+            return
+        if self._bug_finder_in_progress or not self._feynman_pending_review:
+            return
+
+        asset_name, group_idx, tutor_idx, tutor_session_dir = self._feynman_context
+        has_manuscript = any(tutor_session_dir.glob("manuscript_*.png"))
+        has_manuscript |= (tutor_session_dir / "manuscript.png").is_file()
+        has_manuscript |= (tutor_session_dir / "student.png").is_file()
+        if not has_manuscript:
+            return
+
+        note_path = tutor_session_dir / "note.md"
+        if not note_path.is_file():
+            if self._integrate_in_progress:
+                self.statusBar().showMessage("Waiting for note.md...")
+                return
+            self.statusBar().showMessage("note.md not found. Please start Feynman mode again.")
+            return
+
+        self._feynman_pending_review = False
+        self._bug_finder_in_progress = True
+        self._feynman_submit_button.setEnabled(False)
+        self.statusBar().showMessage(f"Reviewing deduction (group {group_idx}, tutor {tutor_idx})...")
+
+        task = _BugFinderTask(asset_name, group_idx, tutor_idx)
+        task.signals.finished.connect(self._on_bug_finder_finished)
+        task.signals.failed.connect(self._on_bug_finder_failed)
+        self._bug_finder_pool.start(task)
+
+    @QtCore.Slot(str)
+    def _on_bug_finder_finished(self, output_path: str) -> None:
+        self._bug_finder_in_progress = False
+        self._feynman_submit_button.setEnabled(True)
+        self._feynman_finish_button.setVisible(True)
+
+        path = Path(output_path)
+        if path.is_file():
+            self.statusBar().showMessage(f"Updated {path.name}")
+            self._show_feynman_markdown(path)
+        else:
+            self.statusBar().showMessage(f"Updated {output_path}")
+
+    @QtCore.Slot(str)
+    def _on_bug_finder_failed(self, error: str) -> None:
+        self._bug_finder_in_progress = False
+        self._feynman_submit_button.setEnabled(True)
+        self.statusBar().showMessage(f"Bug review failed: {error}")
+
+    @QtCore.Slot(str)
+    def _on_student_note_finished(self, output_path: str) -> None:
+        self._student_note_in_progress = False
+        path = Path(output_path)
+        if path.is_file():
+            self.statusBar().showMessage(f"Inserted note_student into {path.name}")
+            self._refresh_open_markdown_file(path)
+            return
+        self.statusBar().showMessage(f"Inserted note_student into {output_path}")
+
+    @QtCore.Slot(str)
+    def _on_student_note_failed(self, error: str) -> None:
+        self._student_note_in_progress = False
+        self.statusBar().showMessage(f"Student note failed: {error}")
+
+    def _show_feynman_markdown(self, path: Path) -> None:
+        view = self._feynman_view
+        if not view or not path.is_file():
+            return
+        try:
+            content = path.read_text(encoding="utf-8")
+        except Exception as exc:  # pragma: no cover - GUI runtime path
+            self.statusBar().showMessage(f"Failed to read {path.name}: {exc}")
+            return
+        try:
+            html = markdown_helper.render_markdown_content(content)
+        except Exception as exc:  # pragma: no cover - GUI runtime path
+            self.statusBar().showMessage(f"Failed to render markdown: {exc}")
+            return
+        base_url = QtCore.QUrl.fromLocalFile(str(path.parent))
+        view.setHtml(html, baseUrl=base_url)
 
     def _handle_ask(self) -> None:
         text = self._prompt_input.toPlainText().strip()
@@ -1837,6 +2197,10 @@ class MainWindow(QtWidgets.QMainWindow):
         return index
 
     def _open_markdown_file(self, path: Path, *, tab_label: str | None = None) -> None:
+        if self._feynman_mode_active:
+            self.statusBar().showMessage("Feynman mode is active; opening other markdown is disabled.")
+            return
+
         resolved = path.resolve()
         if not resolved.is_file():
             self.statusBar().showMessage(f"Markdown not found: {resolved.name}")
@@ -1876,6 +2240,29 @@ class MainWindow(QtWidgets.QMainWindow):
         self._markdown_views[resolved] = view
         self._set_current_markdown_path(resolved)
         self.statusBar().showMessage(f"Opened {title}")
+
+    def _refresh_open_markdown_file(self, path: Path) -> None:
+        if self._feynman_mode_active:
+            return
+        resolved = path.resolve()
+        existing_index = self._find_markdown_tab(resolved)
+        if existing_index is None:
+            return
+        widget = self._markdown_tabs.widget(existing_index)
+        if not isinstance(widget, QtWebEngineWidgets.QWebEngineView):
+            return
+        try:
+            content = resolved.read_text(encoding="utf-8")
+        except Exception as exc:  # pragma: no cover - GUI runtime path
+            self.statusBar().showMessage(f"Failed to read {resolved.name}: {exc}")
+            return
+        try:
+            html = markdown_helper.render_markdown_content(content)
+        except Exception as exc:  # pragma: no cover - GUI runtime path
+            self.statusBar().showMessage(f"Failed to render markdown: {exc}")
+            return
+        self._configure_markdown_view(widget, resolved)
+        widget.setHtml(html, baseUrl=QtCore.QUrl.fromLocalFile(str(resolved.parent)))
 
     def _configure_markdown_view(self, view: QtWebEngineWidgets.QWebEngineView, path: Path) -> None:
         view.setProperty("markdown_path", str(path))

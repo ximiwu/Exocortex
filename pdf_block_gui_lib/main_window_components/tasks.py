@@ -7,7 +7,7 @@ from PySide6 import QtCore, QtGui
 
 from assets_manager import convert_pdf_to_images
 
-from assets_manager import ask_tutor, asset_init, fix_latex, group_dive_in, integrate
+from assets_manager import ask_tutor, asset_init, bug_finder, create_student_note, fix_latex, group_dive_in, integrate
 from ..pymupdf_compat import fitz
 from ..renderer import PdfRenderer
 
@@ -412,6 +412,50 @@ class _IntegrateTask(QtCore.QRunnable):
         self.signals.finished.emit(str(output_path))
 
 
+class _BugFinderSignals(QtCore.QObject):
+    finished = QtCore.Signal(str)
+    failed = QtCore.Signal(str)
+
+
+class _BugFinderTask(QtCore.QRunnable):
+    def __init__(self, asset_name: str, group_idx: int, tutor_idx: int) -> None:
+        super().__init__()
+        self._asset_name = asset_name
+        self._group_idx = group_idx
+        self._tutor_idx = tutor_idx
+        self.signals = _BugFinderSignals()
+
+    def run(self) -> None:
+        try:
+            output_path = bug_finder(self._asset_name, self._group_idx, self._tutor_idx)
+        except Exception as exc:  # pragma: no cover - GUI runtime path
+            self.signals.failed.emit(str(exc))
+            return
+        self.signals.finished.emit(str(output_path))
+
+
+class _StudentNoteSignals(QtCore.QObject):
+    finished = QtCore.Signal(str)
+    failed = QtCore.Signal(str)
+
+
+class _StudentNoteTask(QtCore.QRunnable):
+    def __init__(self, asset_name: str, group_idx: int, tutor_idx: int) -> None:
+        super().__init__()
+        self._asset_name = asset_name
+        self._group_idx = group_idx
+        self._tutor_idx = tutor_idx
+        self.signals = _StudentNoteSignals()
+
+    def run(self) -> None:
+        try:
+            output_path = create_student_note(self._asset_name, self._group_idx, self._tutor_idx)
+        except Exception as exc:  # pragma: no cover - GUI runtime path
+            self.signals.failed.emit(str(exc))
+            return
+        self.signals.finished.emit(str(output_path))
+
+
 class _FixLatexSignals(QtCore.QObject):
     finished = QtCore.Signal(str)
     failed = QtCore.Signal(str)
@@ -435,6 +479,8 @@ class _FixLatexTask(QtCore.QRunnable):
 __all__ = [
     "_AskTutorTask",
     "_AssetInitTask",
+    "_BugFinderTask",
+    "_StudentNoteTask",
     "_CompressPreviewTask",
     "_CompressTask",
     "_FixLatexTask",
