@@ -67,6 +67,7 @@ REFERENCE_RENDER_DPI = 130  # Keep in sync with pdf_block_gui_lib.main_window.DE
 EXTRACTOR_AGENTS: tuple[str, ...] = ("background", "concept", "formula")
 
 CODEX_MODEL = "gpt-5.2"
+CODEX_REASONING_XHIGH = "xhigh"
 CODEX_REASONING_HIGH = "high"
 CODEX_REASONING_MEDIUM = "medium"
 GEMINI_MODEL = "gemini-3-pro-preview"
@@ -77,12 +78,14 @@ def _prompt_path(*parts: str) -> Path:
 
 
 IMG2MD_CODEX_PROMPT = _prompt_path("img2md", "codex", "AGENTS.md")
+IMG2MD_GEMINI_PROMPT = _prompt_path("img2md", "gemini", "GEMINI.md")
 IMG_EXPLAINER_CODEX_PROMPT = _prompt_path("img_explainer", "codex", "AGENTS.md")
 IMG_EXPLAINER_GEMINI_PROMPT = _prompt_path("img_explainer", "gemini", "GEMINI.md")
 ENHANCER_GEMINI_PROMPT = _prompt_path("enhancer", "gemini", "GEMINI.md")
 INTEGRATOR_CODEX_PROMPT = _prompt_path("integrator", "codex", "AGENTS.md")
 TUTOR_GEMINI_PROMPT = _prompt_path("tutor", "gemini", "GEMINI.md")
 BUG_FINDER_GEMINI_PROMPT = _prompt_path("bug_finder", "gemini", "GEMINI.md")
+RE_TUTOR_GEMINI_PROMPT = _prompt_path("re_tutor", "gemini", "GEMINI.md")
 MANUSCRIPT_GEMINI_PROMPT = _prompt_path("manuscript2md", "gemini", "GEMINI.md")
 LATEX_FIXER_GEMINI_PROMPT = _prompt_path("latex_fixer", "GEMINI.md")
 
@@ -358,6 +361,11 @@ def _dir_has_content(path: Path) -> bool:
         
 def _clean_markdown_file(file_path: Path) -> None:
     _agent_clean_markdown_file(file_path)
+    content = file_path.read_text(encoding="utf-8-sig").lstrip("\ufeff")
+    pattern = re.compile(r"([^\n])\n(\s*(?:[-+*]|\d+\.)\s+)")
+    content = pattern.sub(r"\1\n\n\2", content)
+    content = re.sub(r"\n{3,}", "\n\n", content)
+    file_path.write_text(content, encoding="utf-8", newline="\n")
 
 
 def _clean_directory(directory: Path) -> None:
@@ -1401,6 +1409,86 @@ def bug_finder(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
     return bugs_path
 
 
+def ask_re_tutor(question: str, asset_name: str, group_idx: int, tutor_idx: int) -> Path:
+    """
+    Run the re_tutor agent in Feynman mode and append Q/A to tutor_data/<tutor_idx>/bugs.md.
+
+    Uses prompts/re_tutor with:
+    - input/manuscript_1.png (and manuscript_2.png, ...)
+    - input/bugs.md
+    - references/original.md (renamed from note.md)
+    - output/output.md (delivered as re_tutor_output.md)
+    """
+    normalized_question = (
+        question.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "").strip()
+    )
+    if not normalized_question:
+        raise ValueError("Question is required.")
+
+    group_dir = get_group_data_dir(asset_name) / str(group_idx)
+    tutor_session_dir = group_dir / "tutor_data" / str(tutor_idx)
+    if not tutor_session_dir.is_dir():
+        raise FileNotFoundError(f"tutor session directory not found: {tutor_session_dir}")
+
+    manuscript_images = _list_tutor_manuscript_images(tutor_session_dir)
+    if not manuscript_images:
+        raise FileNotFoundError(
+            f"No manuscript images found in {tutor_session_dir} (expected manuscript_*.png)"
+        )
+
+    note_path = tutor_session_dir / "note.md"
+    if not note_path.is_file():
+        raise FileNotFoundError(f"note.md not found: {note_path}")
+
+    bugs_path = tutor_session_dir / "bugs.md"
+    if not bugs_path.is_file():
+        raise FileNotFoundError(f"bugs.md not found: {bugs_path}")
+
+    input_rename = {
+        image.name: f"manuscript_{idx}.png" for idx, image in enumerate(manuscript_images, start=1)
+    }
+    input_rename[bugs_path.name] = "bugs.md"
+
+    re_tutor_output_name = "re_tutor_output.md"
+    job = AgentJob(
+        name="re_tutor",
+        runners=[
+            RunnerConfig(
+                runner="gemini",
+                prompt_path=RE_TUTOR_GEMINI_PROMPT,
+                model=GEMINI_MODEL,
+                new_console=True,
+                extra_message=f"{normalized_question}把解答保存至 output/output.md",
+            )
+        ],
+        input_files=[*manuscript_images, bugs_path],
+        input_rename=input_rename,
+        reference_files=[note_path],
+        reference_rename={note_path.name: "original.md"},
+        deliver_dir=_relative_to_repo(tutor_session_dir),
+        deliver_rename={"output.md": re_tutor_output_name},
+        clean_markdown=True,
+    )
+    run_agent_job(job)
+
+    answer_path = tutor_session_dir / re_tutor_output_name
+    if not answer_path.is_file():
+        raise FileNotFoundError(f"re_tutor output not found at {answer_path}")
+
+    bugs_text = bugs_path.read_text(encoding="utf-8-sig").lstrip("\ufeff").rstrip()
+    answer_text = answer_path.read_text(encoding="utf-8-sig").lstrip("\ufeff").lstrip()
+
+    separator = "\n\n" if bugs_text else ""
+    appended = (
+        f"{bugs_text}{separator}"
+        f"## 提问\n\n{normalized_question}\n\n"
+        f"## 回答\n\n{answer_text}\n"
+    )
+    bugs_path.write_text(appended, encoding="utf-8", newline="\n")
+    _clean_markdown_file(bugs_path)
+    return bugs_path
+
+
 def insert_feynman_original_image(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
     """
     Insert a "student original image" note block into img_explainer_data/enhanced.md for the given tutor session.
@@ -1443,7 +1531,9 @@ def insert_feynman_original_image(asset_name: str, group_idx: int, tutor_idx: in
         shutil.copy2(source, target_image)
         target_names.append(target_name)
 
-    image_markdown = "\n\n".join(f"![你的推导]({name})" for name in target_names)
+    image_markdown = "\n\n".join(
+        f"![你的推导](img_explainer_data/{name})" for name in target_names
+    )
     original_block = (
         "\n\n<details class=\"note\">\n"
         "<summary>原图</summary> \n"
@@ -1624,7 +1714,9 @@ def create_student_note(asset_name: str, group_idx: int, tutor_idx: int) -> Path
         for idx in range(1, len(manuscript_images) + 1)
     ]
 
-    image_markdown = "\n\n".join(f"![你的推导]({name})" for name in target_names)
+    image_markdown = "\n\n".join(
+        f"![你的推导](img_explainer_data/{name})" for name in target_names
+    )
     original_block = (
         "\n\n<details class=\"note\">\n"
         "<summary>原图</summary> \n"
@@ -1800,10 +1892,9 @@ def asset_init(
                     name=f"img2md_{suffix}",
                     runners=[
                         RunnerConfig(
-                            runner="codex",
-                            prompt_path=IMG2MD_CODEX_PROMPT,
-                            model=CODEX_MODEL,
-                            reasoning_effort=CODEX_REASONING_MEDIUM,
+                            runner="gemini",
+                            prompt_path=IMG2MD_GEMINI_PROMPT,
+                            model=GEMINI_MODEL,
                             new_console=True,
                         )
                     ],

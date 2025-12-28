@@ -3,4 +3,4 @@ input/manuscript_1.png（以及 manuscript_2.png, ...）是一份手稿笔记，
 
 ## 任务：
 
-把所有图片内容按顺序完完整整地写进同一份文档，存到 output/output.md 中。
+把所有图片内容按顺序完完整整地写进同一份文档，存到 output/output.md 中，使用markdown和latex语法，每一行文本间必须要间隔一行

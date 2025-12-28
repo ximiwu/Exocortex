@@ -7,7 +7,16 @@ from PySide6 import QtCore, QtGui
 
 from assets_manager import convert_pdf_to_images
 
-from assets_manager import ask_tutor, asset_init, bug_finder, create_student_note, fix_latex, group_dive_in, integrate
+from assets_manager import (
+    ask_re_tutor,
+    ask_tutor,
+    asset_init,
+    bug_finder,
+    create_student_note,
+    fix_latex,
+    group_dive_in,
+    integrate,
+)
 from ..pymupdf_compat import fitz
 from ..renderer import PdfRenderer
 
@@ -384,6 +393,31 @@ class _AskTutorTask(QtCore.QRunnable):
     def run(self) -> None:
         try:
             output_path = ask_tutor(self._question, self._asset_name, self._group_idx, self._tutor_idx)
+        except Exception as exc:  # pragma: no cover - GUI runtime path
+            self.signals.failed.emit(str(exc))
+            return
+        self.signals.finished.emit(str(output_path))
+
+
+class _ReTutorSignals(QtCore.QObject):
+    finished = QtCore.Signal(str)
+    failed = QtCore.Signal(str)
+
+
+class _ReTutorTask(QtCore.QRunnable):
+    def __init__(self, asset_name: str, group_idx: int, tutor_idx: int, question: str) -> None:
+        super().__init__()
+        self._asset_name = asset_name
+        self._group_idx = group_idx
+        self._tutor_idx = tutor_idx
+        self._question = question
+        self.signals = _ReTutorSignals()
+
+    def run(self) -> None:
+        try:
+            output_path = ask_re_tutor(
+                self._question, self._asset_name, self._group_idx, self._tutor_idx
+            )
         except Exception as exc:  # pragma: no cover - GUI runtime path
             self.signals.failed.emit(str(exc))
             return

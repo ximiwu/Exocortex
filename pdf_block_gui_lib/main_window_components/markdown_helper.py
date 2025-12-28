@@ -24,6 +24,9 @@ _DETAILS_TAG_PATTERN = re.compile(r"<details\b([^>]*)>", re.IGNORECASE)
 _CLASS_ATTR_PATTERN = re.compile(r"\bclass\s*=\s*(\"([^\"]*)\"|'([^']*)')", re.IGNORECASE)
 _MARKDOWN_ATTR_PATTERN = re.compile(r"\bmarkdown\s*=", re.IGNORECASE)
 _DETAILS_BLOCK_PATTERN = re.compile(r"<details\b[^>]*>.*?</details>", re.IGNORECASE | re.DOTALL)
+_FENCE_PATTERN = re.compile(r"^\s*(`{3,}|~{3,})")
+_BLOCKQUOTE_PREFIX_PATTERN = re.compile(r"^(?:\s{0,3}>\s?)+")
+_LIST_START_PATTERN = re.compile(r"^(?:\s{0,3})(?:[*+-]\s+|\d+[.)]\s+)")
 
 
 def normalize_math_content(content: str) -> str:
@@ -98,6 +101,68 @@ def normalize_details_markdown(content: str) -> str:
         return block
 
     return _DETAILS_BLOCK_PATTERN.sub(replace_block, content)
+
+
+def normalize_paragraph_list_separation(content: str) -> str:
+    """Insert a blank line between a paragraph line and a following list item.
+
+    Python-Markdown requires a blank line between a paragraph and a list to parse
+    list blocks. Without it, list markers are treated as literal text.
+
+    This normalizes common "one line text then list" patterns like:
+        "条件如下：\n1. ..."
+        "对比：\n* ..."
+    """
+
+    lines = content.splitlines()
+    if len(lines) < 2:
+        return content
+
+    out: list[str] = []
+    in_fenced_code = False
+    fence_marker: str | None = None
+
+    for idx, line in enumerate(lines):
+        out.append(line)
+
+        fence_match = _FENCE_PATTERN.match(line)
+        if fence_match:
+            marker = fence_match.group(1)[0]
+            if not in_fenced_code:
+                in_fenced_code = True
+                fence_marker = marker
+            elif fence_marker == marker:
+                in_fenced_code = False
+                fence_marker = None
+
+        if in_fenced_code:
+            continue
+        if idx >= len(lines) - 1:
+            continue
+
+        next_line = lines[idx + 1]
+        if not line.strip():
+            continue
+        if not next_line.strip():
+            continue
+
+        current_prefix_match = _BLOCKQUOTE_PREFIX_PATTERN.match(line)
+        next_prefix_match = _BLOCKQUOTE_PREFIX_PATTERN.match(next_line)
+        current_prefix = current_prefix_match.group(0) if current_prefix_match else ""
+        next_prefix = next_prefix_match.group(0) if next_prefix_match else ""
+        if current_prefix != next_prefix:
+            continue
+
+        current_content = line[len(current_prefix) :]
+        next_content = next_line[len(next_prefix) :]
+        if _LIST_START_PATTERN.match(current_content):
+            continue
+        if not _LIST_START_PATTERN.match(next_content):
+            continue
+
+        out.append(current_prefix.rstrip())
+
+    return "\n".join(out)
 
 
 def katex_assets() -> str:
@@ -373,6 +438,7 @@ def render_markdown_content(content: str) -> str:
 
     normalized = normalize_math_content(content.lstrip("\ufeff"))
     normalized = normalize_details_markdown(normalized)
+    normalized = normalize_paragraph_list_separation(normalized)
     
     md = markdown.Markdown(extensions=extensions, extension_configs=extension_configs)
     

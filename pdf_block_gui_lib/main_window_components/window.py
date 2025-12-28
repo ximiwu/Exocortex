@@ -72,6 +72,7 @@ from .tasks import (
     _FixLatexTask,
     _GroupDiveTask,
     _IntegrateTask,
+    _ReTutorTask,
     _StudentNoteTask,
     _RenderTask,
 )
@@ -160,6 +161,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._feynman_view: QtWebEngineWidgets.QWebEngineView | None = None
         self._feynman_context: tuple[str, int, int, Path] | None = None
         self._feynman_pending_review = False
+        self._feynman_questions_enabled = False
         self._block_action_proxy: QtWidgets.QGraphicsProxyWidget | None = None
         self._block_action_block_id: int | None = None
         self._current_markdown_path: Path | None = None
@@ -1303,9 +1305,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _update_prompt_visibility(self) -> None:
         if self._feynman_mode_active:
-            self._prompt_container.setVisible(False)
-            self._ask_button.setEnabled(False)
-            self._prompt_input.setEnabled(False)
+            visible = self._feynman_questions_enabled
+            self._prompt_container.setVisible(visible)
+            enabled = visible and not self._ask_in_progress and not self._bug_finder_in_progress
+            self._ask_button.setEnabled(enabled)
+            self._prompt_input.setEnabled(enabled)
             return
 
         visible = False
@@ -1918,6 +1922,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._feynman_context = (asset_name, group_idx, tutor_idx, tutor_session_dir)
         self._feynman_pending_review = False
         self._feynman_locked_tab_index = tab_index
+        self._feynman_questions_enabled = False
 
         tab_bar = self._markdown_tabs.tabBar()
         tab_bar.setEnabled(False)
@@ -1939,6 +1944,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._feynman_locked_tab_index = None
         self._feynman_context = None
         self._feynman_pending_review = False
+        self._feynman_questions_enabled = False
 
         tab_bar = self._markdown_tabs.tabBar()
         tab_bar.setEnabled(True)
@@ -2065,6 +2071,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._feynman_pending_review = False
         self._bug_finder_in_progress = True
         self._feynman_submit_button.setEnabled(False)
+        self._update_prompt_visibility()
         self.statusBar().showMessage(f"Reviewing deduction (group {group_idx}, tutor {tutor_idx})...")
 
         task = _BugFinderTask(asset_name, group_idx, tutor_idx)
@@ -2077,6 +2084,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._bug_finder_in_progress = False
         self._feynman_submit_button.setEnabled(True)
         self._feynman_finish_button.setVisible(True)
+        self._feynman_questions_enabled = True
+        self._update_prompt_visibility()
 
         path = Path(output_path)
         if path.is_file():
@@ -2089,6 +2098,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_bug_finder_failed(self, error: str) -> None:
         self._bug_finder_in_progress = False
         self._feynman_submit_button.setEnabled(True)
+        self._update_prompt_visibility()
         self.statusBar().showMessage(f"Bug review failed: {error}")
 
     @QtCore.Slot(str)
@@ -2131,6 +2141,24 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._ask_in_progress:
             self.statusBar().showMessage("Ask already in progress.")
             return
+        if self._feynman_mode_active:
+            if not self._feynman_context or not self._feynman_questions_enabled:
+                self.statusBar().showMessage("Submit your deduction first.")
+                return
+            if self._bug_finder_in_progress:
+                self.statusBar().showMessage("Bug review is still running.")
+                return
+
+            asset_name, group_idx, tutor_idx, _tutor_session_dir = self._feynman_context
+            self._ask_in_progress = True
+            self._update_prompt_visibility()
+            preview = text if len(text) <= 60 else f"{text[:60]}..."
+            self.statusBar().showMessage(f"Ask (re_tutor, group {group_idx}, tutor {tutor_idx}): {preview}")
+            task = _ReTutorTask(asset_name, group_idx, tutor_idx, text)
+            task.signals.finished.connect(self._on_re_tutor_finished)
+            task.signals.failed.connect(self._on_re_tutor_failed)
+            self._ask_pool.start(task)
+            return
         if not self._current_markdown_path:
             self.statusBar().showMessage("Open a group explainer markdown first.")
             return
@@ -2148,6 +2176,26 @@ class MainWindow(QtWidgets.QMainWindow):
         task.signals.finished.connect(self._on_ask_finished)
         task.signals.failed.connect(self._on_ask_failed)
         self._ask_pool.start(task)
+
+    @QtCore.Slot(str)
+    def _on_re_tutor_finished(self, output_path: str) -> None:
+        self._ask_in_progress = False
+        self._update_prompt_visibility()
+        self._prompt_input.clear()
+
+        path = Path(output_path)
+        if self._feynman_mode_active and path.is_file():
+            self._show_feynman_markdown(path)
+        if path.is_file():
+            self.statusBar().showMessage(f"Updated {path.name}")
+            return
+        self.statusBar().showMessage(f"Updated {output_path}")
+
+    @QtCore.Slot(str)
+    def _on_re_tutor_failed(self, error: str) -> None:
+        self._ask_in_progress = False
+        self._update_prompt_visibility()
+        self.statusBar().showMessage(f"Ask (re_tutor) failed: {error}")
 
     @QtCore.Slot(str)
     def _on_ask_finished(self, output_path: str) -> None:
