@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import html
 import logging
 import math
 import os
@@ -33,6 +34,26 @@ from .constants import (
 from . import markdown_helper
 
 logger = logging.getLogger(__name__)
+
+_SIDEBAR_ACTION_SCHEME = "exocortex-sidebar"
+_SIDEBAR_ACTION_HOST = "action"
+
+
+class _MarkdownSidebarPage(QtWebEngineCore.QWebEnginePage):
+    def __init__(self, window: "MainWindow") -> None:
+        super().__init__(window)
+        self._window = window
+
+    def acceptNavigationRequest(  # noqa: N802
+        self,
+        url: QtCore.QUrl,
+        nav_type: QtWebEngineCore.QWebEnginePage.NavigationType,
+        is_main_frame: bool,
+    ) -> bool:
+        if url.scheme() == _SIDEBAR_ACTION_SCHEME and url.host() == _SIDEBAR_ACTION_HOST:
+            self._window._handle_markdown_sidebar_action_url(url)
+            return False
+        return super().acceptNavigationRequest(url, nav_type, is_main_frame)
 
 from assets_manager import (
     BlockData,
@@ -143,9 +164,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self._drag_active = False
         self._asset_init_in_progress = False
         self._asset_progress_dialog: _AssetProgressDialog | None = None
+        self._tutor_history_dialog: _TutorHistoryDialog | None = None
+        self._tutor_focus_dialog: _TutorFocusDialog | None = None
         self._current_references_dir: Path | None = None
         self._markdown_views: Dict[Path, QtWebEngineWidgets.QWebEngineView] = {}
         self._markdown_placeholder_index: int | None = None
+        self._markdown_sidebar_view: QtWebEngineWidgets.QWebEngineView | None = None
+        self._markdown_sidebar_splitter: QtWidgets.QSplitter | None = None
+        self._markdown_sidebar_collapsed = False
+        self._markdown_sidebar_restore_width: int | None = None
+        self._markdown_sidebar_collapsed_nodes: set[str] = set()
         self._markdown_warmup_view: QtWebEngineWidgets.QWebEngineView | None = None
         self._markdown_pdf_page: QtWebEngineCore.QWebEnginePage | None = None
         self._markdown_pdf_context: dict[str, object] | None = None
@@ -358,10 +386,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._markdown_tabs.setDocumentMode(True)
         self._markdown_tabs.setMovable(True)
         self._markdown_tabs.setTabsClosable(True)
+        self._markdown_tabs_reordering = False
         self._markdown_tabs.tabCloseRequested.connect(self._close_markdown_tab)
         self._markdown_tabs.currentChanged.connect(self._on_markdown_tab_changed)
+        self._markdown_tabs.tabBar().tabMoved.connect(self._on_markdown_tab_moved)
         self._reset_markdown_tabs()
         QtCore.QTimer.singleShot(0, self._warm_up_markdown_engine)
+        QtCore.QTimer.singleShot(0, self._warm_up_history_dialogs)
+
+        self._markdown_tabs.tabBar().setVisible(False)
 
         self._ask_tutor_action = QtGui.QAction("ask tutor", self)
         self._ask_tutor_action.setShortcut(QtGui.QKeySequence("Ctrl+Alt+T"))
@@ -372,7 +405,21 @@ class MainWindow(QtWidgets.QMainWindow):
         markdown_container = QtWidgets.QWidget()
         markdown_layout = QtWidgets.QVBoxLayout(markdown_container)
         markdown_layout.setContentsMargins(0, 0, 0, 0)
-        markdown_layout.addWidget(self._markdown_tabs)
+
+        self._markdown_sidebar_view = QtWebEngineWidgets.QWebEngineView(self)
+        self._markdown_sidebar_view.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
+        self._markdown_sidebar_view.setPage(_MarkdownSidebarPage(self))
+
+        self._markdown_sidebar_splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self._markdown_sidebar_splitter.addWidget(self._markdown_sidebar_view)
+        self._markdown_sidebar_splitter.addWidget(self._markdown_tabs)
+        self._markdown_sidebar_splitter.setCollapsible(0, False)
+        self._markdown_sidebar_splitter.setCollapsible(1, False)
+        self._markdown_sidebar_splitter.setStretchFactor(0, 0)
+        self._markdown_sidebar_splitter.setStretchFactor(1, 1)
+        self._markdown_sidebar_splitter.setSizes([240, 800])
+
+        markdown_layout.addWidget(self._markdown_sidebar_splitter)
 
         pdf_container = QtWidgets.QWidget()
         pdf_layout = QtWidgets.QVBoxLayout(pdf_container)
@@ -409,6 +456,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_dpi_label()
         self._update_window_title()
         self.statusBar().showMessage("Create or load an asset to start.")
+        QtCore.QTimer.singleShot(0, self._refresh_markdown_sidebar)
 
     def _new_asset(self) -> None:
         if self._asset_init_in_progress:
@@ -1074,6 +1122,1259 @@ class MainWindow(QtWidgets.QMainWindow):
         view.setHtml("<html><body></body></html>")
         self._markdown_warmup_view = view
 
+    def _warm_up_history_dialogs(self) -> None:
+        """Preload WebEngine history dialogs (with KaTeX) to avoid first-open lag."""
+        if not self._tutor_history_dialog:
+            self._tutor_history_dialog = _TutorHistoryDialog(parent=self)
+            self._tutor_history_dialog.set_items([])
+        if not self._tutor_focus_dialog:
+            self._tutor_focus_dialog = _TutorFocusDialog(parent=self)
+            self._tutor_focus_dialog.set_items([])
+
+    def _set_markdown_sidebar_collapsed(self, collapsed: bool) -> None:
+        splitter = self._markdown_sidebar_splitter
+        self._markdown_sidebar_collapsed = collapsed
+        if not splitter:
+            return
+
+        sizes = splitter.sizes()
+        if len(sizes) != 2:
+            return
+
+        collapsed_width = 44
+        total = max(1, sizes[0] + sizes[1])
+        if collapsed:
+            if sizes[0] > collapsed_width:
+                self._markdown_sidebar_restore_width = sizes[0]
+            splitter.setSizes([collapsed_width, max(1, total - collapsed_width)])
+        else:
+            restore_width = self._markdown_sidebar_restore_width or 240
+            restore_width = max(collapsed_width, min(restore_width, total - 1))
+            splitter.setSizes([restore_width, max(1, total - restore_width)])
+
+        self._refresh_markdown_sidebar()
+
+    @staticmethod
+    def _sidebar_node_id(kind: str, *parts: int) -> str:
+        if parts:
+            return f"{kind}:" + ":".join(str(part) for part in parts)
+        return kind
+
+    @staticmethod
+    def _parse_sidebar_node_id(node_id: str) -> tuple[str, tuple[int, ...]] | None:
+        if not node_id:
+            return None
+        parts = node_id.split(":")
+        if not parts:
+            return None
+        kind = parts[0].strip()
+        if not kind:
+            return None
+        if len(parts) == 1:
+            return kind, ()
+        numbers: list[int] = []
+        for raw in parts[1:]:
+            if not raw or not raw.isdigit():
+                return None
+            try:
+                numbers.append(int(raw))
+            except Exception:
+                return None
+        return kind, tuple(numbers)
+
+    @staticmethod
+    def _markdown_sidebar_preview_for_path(path: Path) -> str:
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                for _ in range(30):
+                    line = handle.readline()
+                    if not line:
+                        break
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    normalized = re.sub(r"\s+", " ", stripped)
+                    normalized = markdown_helper.normalize_math_content(normalized)
+                    return normalized[:180]
+        except Exception:
+            return ""
+        return ""
+
+    def _build_markdown_sidebar_tree_html(self) -> str:
+        head_assets = markdown_helper.katex_assets()
+        collapsed_class = "collapsed" if self._markdown_sidebar_collapsed else ""
+
+        active_path: Path | None = None
+        if self._current_markdown_path:
+            try:
+                active_path = self._current_markdown_path.resolve()
+            except Exception:
+                active_path = self._current_markdown_path
+
+        collapsed_nodes = self._markdown_sidebar_collapsed_nodes
+
+        def esc(value: object) -> str:
+            return html.escape(str(value), quote=True)
+
+        groups: dict[str, dict[str, object]] = {}
+        group_order: list[str] = []
+
+        def ensure_group(group_id: str, title: str) -> dict[str, object]:
+            group = groups.get(group_id)
+            if group is None:
+                group = {
+                    "id": group_id,
+                    "title": title,
+                    "active": False,
+                    "leaves": [],
+                    "tutors": {},
+                    "tutor_order": [],
+                }
+                groups[group_id] = group
+                group_order.append(group_id)
+            return group
+
+        def ensure_tutor(group: dict[str, object], tutor_id: str, tutor_title: str) -> dict[str, object]:
+            tutors: dict[str, dict[str, object]] = group["tutors"]  # type: ignore[assignment]
+            tutor = tutors.get(tutor_id)
+            if tutor is None:
+                tutor = {
+                    "id": tutor_id,
+                    "title": tutor_title,
+                    "active": False,
+                    "leaves": [],
+                    "focus": None,
+                }
+                tutors[tutor_id] = tutor
+                tutor_order: list[str] = group["tutor_order"]  # type: ignore[assignment]
+                tutor_order.append(tutor_id)
+            return tutor
+
+        for tab_index in range(self._markdown_tabs.count()):
+            widget = self._markdown_tabs.widget(tab_index)
+            if not isinstance(widget, QtWebEngineWidgets.QWebEngineView):
+                continue
+            markdown_path = self._markdown_path_for_view(widget)
+            if not markdown_path:
+                continue
+            try:
+                resolved = markdown_path.resolve()
+            except Exception:
+                resolved = markdown_path
+            if not resolved.is_file():
+                continue
+
+            title = (self._markdown_tabs.tabText(tab_index) or resolved.name).strip() or resolved.name
+            preview = self._markdown_sidebar_preview_for_path(resolved)
+            is_active = bool(active_path and resolved == active_path)
+
+            group_ctx = self._group_context_from_markdown(resolved)
+            if group_ctx:
+                group_idx = group_ctx[1]
+                group_id = self._sidebar_node_id("group", group_idx)
+                group_title = f"group_data/{group_idx}"
+            else:
+                group_id = "other"
+                group_title = "Other"
+            group = ensure_group(group_id, group_title)
+            if is_active:
+                group["active"] = True
+
+            tutor_ctx = self._tutor_context_from_markdown(resolved)
+            if tutor_ctx:
+                _asset_name, group_idx_int, tutor_idx, tutor_session_dir = tutor_ctx
+                tutor_id = self._sidebar_node_id("tutor", group_idx_int, tutor_idx)
+                tutor = ensure_tutor(group, tutor_id, f"tutor_data/{tutor_idx}")
+                if is_active:
+                    tutor["active"] = True
+
+                focus_path = tutor_session_dir / "focus.md"
+                try:
+                    focus_resolved = focus_path.resolve()
+                except Exception:
+                    focus_resolved = focus_path
+
+                ask_history_dir = tutor_session_dir / "ask_history"
+                try:
+                    ask_history_dir_resolved = ask_history_dir.resolve()
+                except Exception:
+                    ask_history_dir_resolved = ask_history_dir
+
+                is_focus = resolved == focus_resolved
+                is_history = False
+                if not is_focus:
+                    try:
+                        resolved.relative_to(ask_history_dir_resolved)
+                        is_history = True
+                    except Exception:
+                        is_history = False
+
+                if is_focus or is_history:
+                    focus = tutor.get("focus")
+                    if not isinstance(focus, dict):
+                        focus = {
+                            "id": self._sidebar_node_id("focus", group_idx_int, tutor_idx),
+                            "focus_path": focus_resolved,
+                            "focus_open": False,
+                            "active": False,
+                            "history": [],
+                        }
+                        tutor["focus"] = focus
+                    if is_active:
+                        focus["active"] = True
+                    if is_focus:
+                        focus["focus_open"] = True
+                    else:
+                        history: list[dict[str, object]] = focus["history"]  # type: ignore[assignment]
+                        history.append(
+                            {
+                                "path": resolved,
+                                "title": title,
+                                "preview": preview,
+                                "active": is_active,
+                                "parent": focus["id"],
+                            }
+                        )
+                    continue
+
+                tutor_leaves: list[dict[str, object]] = tutor["leaves"]  # type: ignore[assignment]
+                tutor_leaves.append(
+                    {
+                        "path": resolved,
+                        "title": title,
+                        "preview": preview,
+                        "active": is_active,
+                        "parent": tutor_id,
+                    }
+                )
+                continue
+
+            group_leaves: list[dict[str, object]] = group["leaves"]  # type: ignore[assignment]
+            group_leaves.append(
+                {
+                    "path": resolved,
+                    "title": title,
+                    "preview": preview,
+                    "active": is_active,
+                    "parent": group_id,
+                }
+            )
+
+        def leaf_html(item: dict[str, object]) -> str:
+            classes = "leaf active" if item.get("active") else "leaf"
+            path_attr = esc(item.get("path"))
+            parent_attr = esc(item.get("parent"))
+            title_html = html.escape(str(item.get("title", "")))
+            preview_html = html.escape(str(item.get("preview", "")))
+            return (
+                "<div class='"
+                + classes
+                + f"' data-path='{path_attr}' data-parent='{parent_attr}' draggable='true'>"
+                + "<div class='leaf-main'>"
+                + f"<div class='leaf-title'>{title_html}</div>"
+                + f"<div class='leaf-preview'>{preview_html}</div>"
+                + "</div>"
+                + f"<button class='close' data-action='close' data-path='{path_attr}'>x</button>"
+                + "</div>"
+            )
+
+        blocks: list[str] = []
+        for group_id in group_order:
+            group = groups[group_id]
+            node_id = str(group["id"])
+            classes = "node group"
+            if node_id in collapsed_nodes:
+                classes += " collapsed"
+            if group.get("active"):
+                classes += " active"
+
+            children: list[str] = []
+            for leaf in group.get("leaves", []):  # type: ignore[assignment]
+                children.append(leaf_html(leaf))
+
+            tutors: dict[str, dict[str, object]] = group.get("tutors", {})  # type: ignore[assignment]
+            tutor_order: list[str] = group.get("tutor_order", [])  # type: ignore[assignment]
+            for tutor_id in tutor_order:
+                tutor = tutors.get(tutor_id)
+                if not tutor:
+                    continue
+                tutor_node_id = str(tutor["id"])
+                tutor_classes = "node tutor"
+                if tutor_node_id in collapsed_nodes:
+                    tutor_classes += " collapsed"
+                if tutor.get("active"):
+                    tutor_classes += " active"
+
+                tutor_children: list[str] = []
+                for leaf in tutor.get("leaves", []):  # type: ignore[assignment]
+                    tutor_children.append(leaf_html(leaf))
+
+                focus = tutor.get("focus")
+                if isinstance(focus, dict):
+                    focus_node_id = str(focus["id"])
+                    focus_classes = "node focus"
+                    if focus_node_id in collapsed_nodes:
+                        focus_classes += " collapsed"
+                    if focus.get("active"):
+                        focus_classes += " active"
+                    focus_path_attr = esc(focus.get("focus_path"))
+                    focus_close = ""
+                    if focus.get("focus_open"):
+                        focus_close = (
+                            f"<button class='close' data-action='close' data-path='{focus_path_attr}'>x</button>"
+                        )
+                    history_html = "".join(
+                        leaf_html(item) for item in focus.get("history", [])  # type: ignore[arg-type]
+                    )
+                    tutor_children.append(
+                        f"<div class='{focus_classes}' data-node='{esc(focus_node_id)}'>"
+                        "<div class='node-header'>"
+                        f"<span class='twisty' data-action='toggle-node' data-node='{esc(focus_node_id)}'>&#9656;</span>"
+                        f"<span class='node-title focus-title' data-action='activate' data-path='{focus_path_attr}'>focus.md</span>"
+                        f"{focus_close}"
+                        "</div>"
+                        f"<div class='children'>{history_html}</div>"
+                        "</div>"
+                    )
+
+                children.append(
+                    f"<div class='{tutor_classes}' data-node='{esc(tutor_node_id)}'>"
+                    f"<div class='node-header' data-kind='tutor' data-node='{esc(tutor_node_id)}' draggable='true'>"
+                    f"<span class='twisty' data-action='toggle-node' data-node='{esc(tutor_node_id)}'>&#9656;</span>"
+                    f"<span class='node-title' data-action='toggle-node' data-node='{esc(tutor_node_id)}'>{html.escape(str(tutor.get('title', '')))}</span>"
+                    "</div>"
+                    f"<div class='children'>{''.join(tutor_children)}</div>"
+                    "</div>"
+                )
+
+            blocks.append(
+                f"<div class='{classes}' data-node='{esc(node_id)}'>"
+                f"<div class='node-header' data-kind='group' data-node='{esc(node_id)}' draggable='true'>"
+                f"<span class='twisty' data-action='toggle-node' data-node='{esc(node_id)}'>&#9656;</span>"
+                f"<span class='node-title' data-action='toggle-node' data-node='{esc(node_id)}'>{html.escape(str(group.get('title', '')))}</span>"
+                "</div>"
+                f"<div class='children'>{''.join(children)}</div>"
+                "</div>"
+            )
+
+        empty_html = "<div class='empty'>No markdown tabs open.</div>"
+        if blocks:
+            empty_html = "".join(blocks)
+
+        styles = """
+        *, *::before, *::after { box-sizing: border-box; }
+        html, body { height: 100%; width: 100%; }
+        body {
+            margin: 0;
+            font-family: Segoe UI, Arial, sans-serif;
+            font-size: 12px;
+            background: #f6f7fb;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        body.collapsed { font-size: 0; }
+        body.collapsed .content { display: none; }
+        .toolbar { flex: 0 0 auto; position: sticky; top: 0; padding: 8px; display: flex; gap: 8px; align-items: center; background: #ffffff; border-bottom: 1px solid #e5e7eb; }
+        .btn { width: 28px; height: 28px; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+        .btn:hover { background: #f9fafb; }
+        .toolbar-title { font-weight: 600; color: #374151; }
+        .toolbar-actions { display: flex; gap: 8px; align-items: center; }
+        body.collapsed .toolbar-title, body.collapsed .toolbar-actions { display: none; }
+        .spacer { flex: 1 1 auto; }
+        .content { flex: 1 1 auto; min-height: 0; padding: 8px; overflow-y: auto; overflow-x: hidden; }
+        .empty { padding: 10px; color: #6b7280; }
+        .node { margin: 6px 0; }
+        .node-header { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 8px; }
+        .node-header:hover { background: rgba(17, 24, 39, 0.05); }
+        .node.active > .node-header { background: rgba(37, 99, 235, 0.10); }
+        .node-header[draggable='true'] { cursor: grab; }
+        .twisty { width: 16px; text-align: center; cursor: pointer; user-select: none; }
+        .node-title { font-weight: 600; cursor: pointer; user-select: none; }
+        .children { padding-left: 14px; }
+        .node.collapsed > .children { display: none; }
+        .node.collapsed > .node-header .twisty { transform: rotate(-90deg); display: inline-block; }
+        .leaf { display: flex; gap: 6px; padding: 6px; border-radius: 10px; background: #fff; border: 1px solid #e5e7eb; margin: 4px 0; }
+        .leaf.active { border-color: #60a5fa; box-shadow: 0 0 0 2px rgba(37,99,235,0.10); }
+        .leaf-main { flex: 1 1 auto; min-width: 0; cursor: pointer; user-select: none; }
+        .leaf-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .leaf-preview { color: #6b7280; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .close { border: 0; background: transparent; cursor: pointer; color: #6b7280; width: 22px; height: 22px; border-radius: 6px; }
+        .close:hover { background: rgba(239,68,68,0.10); color: #ef4444; }
+        .drag-over { outline: 2px dashed rgba(37, 99, 235, 0.55); }
+        .dragging { opacity: 0.5; }
+        .focus-title { font-weight: 700; }
+        """
+
+        script = f"""
+        <script>
+        (function() {{
+            const ACTION_BASE = '{_SIDEBAR_ACTION_SCHEME}://{_SIDEBAR_ACTION_HOST}/';
+            function act(path) {{
+                const sep = path.includes('?') ? '&' : '?';
+                let url = ACTION_BASE + path + sep + '_=' + Date.now();
+                const el = document.querySelector('.content');
+                if (el) {{
+                    const max = Math.max(0, el.scrollHeight - el.clientHeight);
+                    url += '&st=' + encodeURIComponent(el.scrollTop || 0) + '&sm=' + encodeURIComponent(max);
+                }}
+                window.location.href = url;
+            }}
+
+            document.addEventListener('click', (e) => {{
+                const actionEl = e.target.closest('[data-action]');
+                if (actionEl) {{
+                    const action = actionEl.dataset.action;
+                    if (action === 'toggle-sidebar') {{ act('toggle'); return; }}
+                    if (action === 'open-all') {{ act('open-all'); return; }}
+                    if (action === 'toggle-node') {{
+                        const node = actionEl.dataset.node || '';
+                        if (node) act('toggle-node?node=' + encodeURIComponent(node));
+                        return;
+                    }}
+                    if (action === 'activate') {{
+                        const path = actionEl.dataset.path || '';
+                        if (path) act('activate?path=' + encodeURIComponent(path));
+                        return;
+                    }}
+                    if (action === 'close') {{
+                        const path = actionEl.dataset.path || '';
+                        if (path) act('close?path=' + encodeURIComponent(path));
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return;
+                    }}
+                }}
+                const leaf = e.target.closest('.leaf');
+                if (leaf && leaf.dataset.path) {{
+                    act('activate?path=' + encodeURIComponent(leaf.dataset.path));
+                }}
+            }});
+
+            function parseDragData(raw) {{
+                if (!raw) return null;
+                const parts = raw.split('|');
+                if (parts.length < 3) return null;
+                if (parts[0] === 'node') {{
+                    return {{ type: 'node', kind: parts[1], id: parts[2] }};
+                }}
+                if (parts[0] === 'leaf') {{
+                    return {{ type: 'leaf', path: parts[1], parent: parts[2] }};
+                }}
+                return null;
+            }}
+
+            document.addEventListener('dragstart', (e) => {{
+                const header = e.target.closest('.node-header[draggable=\"true\"]');
+                if (header && header.dataset.kind && header.dataset.node) {{
+                    e.dataTransfer.setData('text/plain', 'node|' + header.dataset.kind + '|' + header.dataset.node);
+                    e.dataTransfer.effectAllowed = 'move';
+                    header.classList.add('dragging');
+                    return;
+                }}
+                const leaf = e.target.closest('.leaf');
+                if (leaf && leaf.dataset.path) {{
+                    const parent = leaf.dataset.parent || '';
+                    e.dataTransfer.setData('text/plain', 'leaf|' + leaf.dataset.path + '|' + parent);
+                    e.dataTransfer.effectAllowed = 'move';
+                    leaf.classList.add('dragging');
+                }}
+            }});
+
+            document.addEventListener('dragend', () => {{
+                document.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
+                document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+            }});
+
+            document.addEventListener('dragover', (e) => {{
+                const header = e.target.closest('.node-header[draggable=\"true\"]');
+                const leaf = e.target.closest('.leaf');
+                if (!header && !leaf) return;
+                e.preventDefault();
+                if (header) header.classList.add('drag-over');
+                if (leaf) leaf.classList.add('drag-over');
+                e.dataTransfer.dropEffect = 'move';
+            }});
+
+            document.addEventListener('dragleave', (e) => {{
+                const header = e.target.closest('.node-header[draggable=\"true\"]');
+                const leaf = e.target.closest('.leaf');
+                if (header) header.classList.remove('drag-over');
+                if (leaf) leaf.classList.remove('drag-over');
+            }});
+
+            document.addEventListener('drop', (e) => {{
+                const header = e.target.closest('.node-header[draggable=\"true\"]');
+                const leaf = e.target.closest('.leaf');
+                if (!header && !leaf) return;
+                e.preventDefault();
+                if (header) header.classList.remove('drag-over');
+                if (leaf) leaf.classList.remove('drag-over');
+
+                const data = parseDragData(e.dataTransfer.getData('text/plain'));
+                if (!data) return;
+
+                if (header && data.type === 'node') {{
+                    const dstKind = header.dataset.kind || '';
+                    const dstId = header.dataset.node || '';
+                    if (!dstKind || !dstId) return;
+                    if (data.kind !== dstKind) return;
+                    if (data.id === dstId) return;
+                    act('move-node?src=' + encodeURIComponent(data.id) + '&dst=' + encodeURIComponent(dstId));
+                    return;
+                }}
+
+                if (leaf && data.type === 'leaf') {{
+                    const dstPath = leaf.dataset.path || '';
+                    const dstParent = leaf.dataset.parent || '';
+                    if (!dstPath || !dstParent) return;
+                    if (dstParent !== data.parent) return;
+                    if (dstPath === data.path) return;
+                    act('move?src=' + encodeURIComponent(data.path) + '&dst=' + encodeURIComponent(dstPath));
+                }}
+            }});
+        }})();
+        </script>
+        """
+
+        return (
+            "<!DOCTYPE html>"
+            "<html><head><meta charset='UTF-8'>"
+            f"<style>{styles}</style>{head_assets}"
+            "</head><body class='"
+            + collapsed_class
+            + "'>"
+            "<div class='toolbar'>"
+            "<button class='btn' data-action='toggle-sidebar' title='Toggle sidebar' aria-label='Toggle sidebar'>"
+            "<svg viewBox='0 0 16 16' width='14' height='14' aria-hidden='true'>"
+            "<path d='M2 3.5h12a1 1 0 0 1 0 2H2a1 1 0 0 1 0-2zm0 4h12a1 1 0 0 1 0 2H2a1 1 0 0 1 0-2zm0 4h12a1 1 0 0 1 0 2H2a1 1 0 0 1 0-2z'/>"
+            "</svg>"
+            "</button>"
+            "<div class='toolbar-title'>Markdown</div>"
+            "<div class='spacer'></div>"
+            "<div class='toolbar-actions'>"
+            "<button class='btn' data-action='open-all' title='Open all markdown under asset' aria-label='Open all markdown under asset'>"
+            "<svg viewBox='0 0 16 16' width='14' height='14' aria-hidden='true'>"
+            "<path d='M8 1.5a.75.75 0 0 1 .75.75v5.19l1.72-1.72a.75.75 0 1 1 1.06 1.06L8 10.31 4.47 6.78a.75.75 0 1 1 1.06-1.06l1.72 1.72V2.25A.75.75 0 0 1 8 1.5z'/>"
+            "<path d='M2.5 10.5a.75.75 0 0 1 .75.75v1.25c0 .55.45 1 1 1h7.5c.55 0 1-.45 1-1v-1.25a.75.75 0 0 1 1.5 0v1.25c0 1.38-1.12 2.5-2.5 2.5h-7.5c-1.38 0-2.5-1.12-2.5-2.5v-1.25a.75.75 0 0 1 .75-.75z'/>"
+            "</svg>"
+            "</button>"
+            "</div>"
+            "</div>"
+            "<div class='content'>"
+            + empty_html
+            + "</div>"
+            + script
+            + "</body></html>"
+        )
+
+    def _build_markdown_sidebar_html(self) -> str:
+        return self._build_markdown_sidebar_tree_html()
+        head_assets = markdown_helper.katex_assets()
+        collapsed_class = "collapsed" if self._markdown_sidebar_collapsed else ""
+
+        active_path: Path | None = None
+        if self._current_markdown_path:
+            try:
+                active_path = self._current_markdown_path.resolve()
+            except Exception:
+                active_path = self._current_markdown_path
+
+        items_in_order: list[tuple[str, str, str, Path, bool]] = []
+        for tab_index in range(self._markdown_tabs.count()):
+            widget = self._markdown_tabs.widget(tab_index)
+            if not isinstance(widget, QtWebEngineWidgets.QWebEngineView):
+                continue
+            markdown_path = self._markdown_path_for_view(widget)
+            if not markdown_path:
+                continue
+            try:
+                resolved = markdown_path.resolve()
+            except Exception:
+                resolved = markdown_path
+            if not resolved.is_file():
+                continue
+
+            group = self._markdown_sidebar_group_for_path(resolved)
+            title = (self._markdown_tabs.tabText(tab_index) or resolved.name).strip() or resolved.name
+            preview = self._markdown_sidebar_preview_for_path(resolved)
+            is_active = bool(active_path and resolved == active_path)
+            items_in_order.append((group, title, preview, resolved, is_active))
+
+        grouped: dict[str, list[tuple[str, str, Path, bool]]] = {}
+        for group, title, preview, path, is_active in items_in_order:
+            grouped.setdefault(group, []).append((title, preview, path, is_active))
+
+        groups_html: list[str] = []
+        for group, group_items in grouped.items():
+            rows: list[str] = []
+            for title, preview, path, is_active in group_items:
+                classes = "item active" if is_active else "item"
+                path_attr = html.escape(str(path), quote=True)
+                title_html = html.escape(title)
+                preview_html = html.escape(preview)
+                rows.append(
+                    f"""<div class="{classes}" draggable="true" data-path="{path_attr}">
+                        <div class="item-main">
+                            <div class="item-title">{title_html}</div>
+                            <div class="item-preview">{preview_html}</div>
+                        </div>
+                        <button class="icon-btn close" data-action="close" title="Close tab" aria-label="Close tab">
+                            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                                <path d="M3.3 3.3a1 1 0 0 1 1.4 0L8 6.6l3.3-3.3a1 1 0 1 1 1.4 1.4L9.4 8l3.3 3.3a1 1 0 0 1-1.4 1.4L8 9.4l-3.3 3.3a1 1 0 0 1-1.4-1.4L6.6 8 3.3 4.7a1 1 0 0 1 0-1.4z"/>
+                            </svg>
+                        </button>
+                    </div>"""
+                )
+
+            group_title = html.escape(group)
+            groups_html.append(
+                f"""<div class="group">
+                        <div class="group-header" role="button" tabindex="0" aria-label="Toggle group">
+                            <span class="chevron" aria-hidden="true"></span>
+                            <span class="group-title">{group_title}</span>
+                            <span class="count">{len(group_items)}</span>
+                        </div>
+                        <div class="group-items">
+                            {''.join(rows)}
+                        </div>
+                    </div>"""
+            )
+
+        empty_html = (
+            "<div class='empty'>No markdown tabs open.</div>"
+            if not items_in_order
+            else "".join(groups_html)
+        )
+
+        styles = """
+        html, body { height: 100%; }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            font-size: 13px;
+            color: #111827;
+            background: #f6f7fb;
+            user-select: none;
+        }
+        body.collapsed { font-size: 0; }
+        .toolbar {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 10px 8px 10px;
+            background: linear-gradient(to bottom, rgba(246,247,251,0.98), rgba(246,247,251,0.90));
+            backdrop-filter: blur(8px);
+            border-bottom: 1px solid rgba(17,24,39,0.08);
+        }
+        .toolbar-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #374151;
+            letter-spacing: 0.2px;
+        }
+        body.collapsed .toolbar-title { display: none; }
+        .spacer { flex: 1 1 auto; }
+        .icon-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+            border-radius: 8px;
+            border: 1px solid rgba(17,24,39,0.12);
+            background: #ffffff;
+            cursor: pointer;
+            padding: 0;
+        }
+        .icon-btn:hover { background: #f9fafb; }
+        .icon-btn svg { fill: #374151; }
+        .content {
+            padding: 8px 8px 12px 8px;
+            height: calc(100% - 49px);
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+        body.collapsed .content { display: none; }
+        .empty {
+            font-size: 13px;
+            color: #6b7280;
+            padding: 12px;
+        }
+        .group { margin-bottom: 10px; }
+        .group-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            border-radius: 8px;
+            color: #374151;
+            cursor: pointer;
+        }
+        .group-header:hover { background: rgba(17,24,39,0.04); }
+        .chevron {
+            width: 10px;
+            height: 10px;
+            border-right: 2px solid #6b7280;
+            border-bottom: 2px solid #6b7280;
+            transform: rotate(45deg);
+            margin-left: 2px;
+            transition: transform 0.12s ease;
+        }
+        .group.collapsed .chevron { transform: rotate(-45deg); }
+        .group-title {
+            font-size: 12px;
+            font-weight: 600;
+            flex: 1 1 auto;
+        }
+        .count {
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 999px;
+            background: rgba(37, 99, 235, 0.10);
+            color: #1d4ed8;
+        }
+        .group.collapsed .group-items { display: none; }
+        .item {
+            display: flex;
+            align-items: stretch;
+            gap: 8px;
+            padding: 8px 8px;
+            margin: 4px 0;
+            border-radius: 10px;
+            background: #ffffff;
+            border: 1px solid rgba(17,24,39,0.10);
+        }
+        .item:hover { border-color: rgba(37, 99, 235, 0.35); }
+        .item.active {
+            border-color: rgba(37, 99, 235, 0.75);
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.10);
+        }
+        .item.drag-over { outline: 2px dashed rgba(37, 99, 235, 0.55); }
+        .item.dragging { opacity: 0.5; }
+        .item-main { flex: 1 1 auto; min-width: 0; }
+        .item-title {
+            font-size: 12px;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 4px;
+        }
+        .item-preview {
+            font-size: 12px;
+            color: #6b7280;
+            line-height: 1.25;
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+        .icon-btn.close {
+            width: 28px;
+            height: 28px;
+            border-radius: 8px;
+            border: 1px solid transparent;
+            background: transparent;
+        }
+        .icon-btn.close:hover { background: rgba(239,68,68,0.10); }
+        .icon-btn.close svg { fill: rgba(17,24,39,0.65); }
+        .icon-btn.close:hover svg { fill: #ef4444; }
+        """
+
+        script = f"""
+        <script>
+        (function() {{
+            const ACTION_BASE = '{_SIDEBAR_ACTION_SCHEME}://{_SIDEBAR_ACTION_HOST}/';
+            function act(path) {{
+                const sep = path.includes('?') ? '&' : '?';
+                window.location.href = ACTION_BASE + path + sep + '_=' + Date.now();
+            }}
+
+            document.addEventListener('click', (e) => {{
+                const toggle = e.target.closest('[data-action=\"toggle-sidebar\"]');
+                if (toggle) {{
+                    act('toggle');
+                    return;
+                }}
+
+                const closeBtn = e.target.closest('[data-action=\"close\"]');
+                if (closeBtn) {{
+                    const item = closeBtn.closest('.item');
+                    if (item && item.dataset.path) {{
+                        e.preventDefault();
+                        e.stopPropagation();
+                        act('close?path=' + encodeURIComponent(item.dataset.path));
+                    }}
+                    return;
+                }}
+
+                const groupHeader = e.target.closest('.group-header');
+                if (groupHeader) {{
+                    const group = groupHeader.closest('.group');
+                    if (group) group.classList.toggle('collapsed');
+                    return;
+                }}
+
+                const item = e.target.closest('.item');
+                if (item && item.dataset.path) {{
+                    act('activate?path=' + encodeURIComponent(item.dataset.path));
+                }}
+            }});
+
+            document.addEventListener('keydown', (e) => {{
+                if (e.key !== 'Enter' && e.key !== ' ') return;
+                const header = e.target.closest('.group-header');
+                if (!header) return;
+                e.preventDefault();
+                const group = header.closest('.group');
+                if (group) group.classList.toggle('collapsed');
+            }});
+
+            document.addEventListener('dragstart', (e) => {{
+                const item = e.target.closest('.item');
+                if (!item || !item.dataset.path) return;
+                e.dataTransfer.setData('text/plain', item.dataset.path);
+                e.dataTransfer.effectAllowed = 'move';
+                item.classList.add('dragging');
+            }});
+
+            document.addEventListener('dragend', (e) => {{
+                document.querySelectorAll('.item.dragging').forEach(el => el.classList.remove('dragging'));
+                document.querySelectorAll('.item.drag-over').forEach(el => el.classList.remove('drag-over'));
+            }});
+
+            document.addEventListener('dragover', (e) => {{
+                const item = e.target.closest('.item');
+                if (!item) return;
+                e.preventDefault();
+                item.classList.add('drag-over');
+                e.dataTransfer.dropEffect = 'move';
+            }});
+
+            document.addEventListener('dragleave', (e) => {{
+                const item = e.target.closest('.item');
+                if (!item) return;
+                item.classList.remove('drag-over');
+            }});
+
+            document.addEventListener('drop', (e) => {{
+                const item = e.target.closest('.item');
+                if (!item || !item.dataset.path) return;
+                e.preventDefault();
+                item.classList.remove('drag-over');
+                const src = e.dataTransfer.getData('text/plain');
+                const dst = item.dataset.path;
+                if (!src || !dst || src === dst) return;
+                act('move?src=' + encodeURIComponent(src) + '&dst=' + encodeURIComponent(dst));
+            }});
+        }})();
+        </script>
+        """
+
+        html_text = (
+            "<!DOCTYPE html>"
+            f"<html><head><meta charset='UTF-8'><style>{styles}</style>{head_assets}"
+            "</head>"
+            f"<body class='{collapsed_class}'>"
+            "<div class='toolbar'>"
+            "<button class='icon-btn' data-action='toggle-sidebar' title='Toggle sidebar' aria-label='Toggle sidebar'>"
+            "<svg viewBox='0 0 16 16' width='14' height='14' aria-hidden='true'>"
+            "<path d='M2 3.5h12a1 1 0 0 1 0 2H2a1 1 0 0 1 0-2zm0 4h12a1 1 0 0 1 0 2H2a1 1 0 0 1 0-2zm0 4h12a1 1 0 0 1 0 2H2a1 1 0 0 1 0-2z'/>"
+            "</svg>"
+            "</button>"
+            "<div class='toolbar-title'>Markdown</div>"
+            "<div class='spacer'></div>"
+            "</div>"
+            f"<div class='content'>{empty_html}</div>"
+            f"{script}"
+            "</body></html>"
+        )
+        return html_text
+
+    def _refresh_markdown_sidebar(self) -> None:
+        view = self._markdown_sidebar_view
+        if view is None:
+            return
+        self._markdown_sidebar_refresh_seq = getattr(self, "_markdown_sidebar_refresh_seq", 0) + 1
+        refresh_seq = self._markdown_sidebar_refresh_seq
+        try:
+            html_text = self._build_markdown_sidebar_html()
+        except Exception as exc:  # pragma: no cover - GUI runtime path
+            logger.warning("Failed to build markdown sidebar: %s", exc)
+            html_text = "<html><body></body></html>"
+
+        base_url = QtCore.QUrl.fromLocalFile(str(Path(__file__).resolve().parent))
+        page = view.page()
+        if page is None:
+            view.setHtml(html_text, baseUrl=base_url)
+            return
+
+        if getattr(self, "_markdown_sidebar_scroll_asset", None) != self._current_asset_name:
+            self._markdown_sidebar_scroll_asset = self._current_asset_name
+            self._markdown_sidebar_saved_scroll_top = 0
+
+        if not self._open_markdown_paths():
+            self._markdown_sidebar_saved_scroll_top = 0
+
+        def _set_html_with_scroll(scroll_top: int | None) -> None:
+            if getattr(self, "_markdown_sidebar_refresh_seq", 0) != refresh_seq:
+                return
+            if scroll_top is not None:
+
+                def _restore_scroll(_ok: bool) -> None:
+                    try:
+                        view.loadFinished.disconnect(_restore_scroll)
+                    except Exception:
+                        pass
+                    if getattr(self, "_markdown_sidebar_refresh_seq", 0) != refresh_seq:
+                        return
+                    page = view.page()
+                    if page is None:
+                        return
+                    page.runJavaScript(
+                        "(function(){const el=document.querySelector('.content');"
+                        f"if(el) el.scrollTop={int(scroll_top)};"
+                        "})();"
+                    )
+
+                view.loadFinished.connect(_restore_scroll)
+            view.setHtml(html_text, baseUrl=base_url)
+
+        def _on_scroll_captured(value: object) -> None:
+            scroll_top: int | None = None
+            scroll_max: int | None = None
+            if isinstance(value, dict):
+                top_raw = value.get("top")
+                max_raw = value.get("max")
+                if isinstance(top_raw, (int, float)) and top_raw >= 0:
+                    scroll_top = int(top_raw)
+                if isinstance(max_raw, (int, float)) and max_raw >= 0:
+                    scroll_max = int(max_raw)
+            elif isinstance(value, (int, float)) and value >= 0:
+                scroll_top = int(value)
+
+            saved = int(getattr(self, "_markdown_sidebar_saved_scroll_top", 0) or 0)
+            if scroll_max is not None and scroll_max > 0:
+                if scroll_top is not None:
+                    saved = int(scroll_top)
+            elif scroll_top is not None and scroll_top > 0:
+                saved = int(scroll_top)
+
+            self._markdown_sidebar_saved_scroll_top = saved
+            _set_html_with_scroll(saved)
+
+        if getattr(self, "_markdown_sidebar_scroll_skip_capture", False):
+            self._markdown_sidebar_scroll_skip_capture = False
+            saved = int(getattr(self, "_markdown_sidebar_saved_scroll_top", 0) or 0)
+            _set_html_with_scroll(saved)
+            return
+
+        try:
+            page.runJavaScript(
+                "(function(){const el=document.querySelector('.content');"
+                "if(!el) return null;"
+                "const max=Math.max(0, el.scrollHeight - el.clientHeight);"
+                "return {top: el.scrollTop, max: max};})();",
+                0,
+                _on_scroll_captured,
+            )
+        except TypeError:
+            view.setHtml(html_text, baseUrl=base_url)
+
+    @staticmethod
+    def _decode_sidebar_query_path(raw: str) -> Path | None:
+        if not raw:
+            return None
+        try:
+            decoded = QtCore.QUrl.fromPercentEncoding(raw.encode("utf-8"))
+        except Exception:
+            decoded = raw
+        if not decoded:
+            decoded = raw
+        try:
+            return Path(decoded)
+        except Exception:
+            return None
+
+    def _open_all_markdown_under_current_asset(self) -> None:
+        if self._feynman_mode_active:
+            self.statusBar().showMessage("Feynman mode is active; opening markdown is disabled.")
+            return
+        asset_name = self._current_asset_name
+        if not asset_name:
+            self.statusBar().showMessage("Load an asset to open markdown.")
+            return
+
+        asset_dir = get_asset_dir(asset_name)
+        if not asset_dir.is_dir():
+            self.statusBar().showMessage(f"Asset directory not found: {asset_dir}")
+            return
+
+        try:
+            md_paths = sorted(asset_dir.rglob("*.md"), key=lambda p: str(p).lower())
+        except Exception as exc:  # pragma: no cover - GUI runtime path
+            self.statusBar().showMessage(f"Failed to scan markdown: {exc}")
+            return
+
+        if not md_paths:
+            self.statusBar().showMessage("No markdown found under asset.")
+            return
+
+        for path in md_paths:
+            self._open_markdown_file(path)
+
+    def _reorder_markdown_tabs_by_paths(self, desired_paths: list[Path]) -> None:
+        tab_bar = self._markdown_tabs.tabBar()
+        self._markdown_tabs_reordering = True
+        try:
+            for target_index, path in enumerate(desired_paths):
+                current_index = self._find_markdown_tab(path)
+                if current_index is None or current_index == target_index:
+                    continue
+                tab_bar.moveTab(current_index, target_index)
+        finally:
+            self._markdown_tabs_reordering = False
+
+    def _move_markdown_group_block(self, src_group: int, dst_group: int) -> None:
+        if src_group == dst_group:
+            return
+
+        order = self._open_markdown_paths()
+        if not order:
+            return
+
+        blocks: dict[str, list[Path]] = {}
+        node_order: list[str] = []
+        seen_nodes: set[str] = set()
+
+        for path in order:
+            context = self._group_context_from_markdown(path)
+            if context:
+                _asset_name, group_idx, _group_dir = context
+                node_id = self._sidebar_node_id("group", group_idx)
+            else:
+                node_id = "other"
+
+            blocks.setdefault(node_id, []).append(path)
+            if node_id not in seen_nodes:
+                seen_nodes.add(node_id)
+                node_order.append(node_id)
+
+        src_node = self._sidebar_node_id("group", src_group)
+        dst_node = self._sidebar_node_id("group", dst_group)
+        if src_node not in node_order or dst_node not in node_order:
+            return
+
+        src_pos = node_order.index(src_node)
+        dst_pos = node_order.index(dst_node)
+        if src_pos == dst_pos:
+            return
+
+        node_order.pop(src_pos)
+        if src_pos < dst_pos:
+            dst_pos -= 1
+            insert_pos = dst_pos + 1
+        else:
+            insert_pos = dst_pos
+        node_order.insert(insert_pos, src_node)
+
+        new_order: list[Path] = []
+        for node_id in node_order:
+            new_order.extend(blocks.get(node_id, []))
+        if new_order == order:
+            return
+
+        self._reorder_markdown_tabs_by_paths(new_order)
+        self._persist_asset_ui_state()
+
+    def _move_markdown_tab_block(self, src_paths: set[Path], dst_paths: set[Path]) -> None:
+        if not src_paths or not dst_paths:
+            return
+        if src_paths & dst_paths:
+            return
+
+        order = self._open_markdown_paths()
+        src_block = [path for path in order if path in src_paths]
+        if not src_block:
+            return
+        dst_block = [path for path in order if path in dst_paths]
+        if not dst_block:
+            return
+
+        src_first = next((idx for idx, path in enumerate(order) if path in src_paths), None)
+        dst_first = next((idx for idx, path in enumerate(order) if path in dst_paths), None)
+        if src_first is None or dst_first is None:
+            return
+
+        remaining = [path for path in order if path not in src_paths]
+        insert_index: int | None = None
+        if src_first < dst_first:
+            last_dst_index: int | None = None
+            for idx, path in enumerate(remaining):
+                if path in dst_paths:
+                    last_dst_index = idx
+            if last_dst_index is None:
+                return
+            insert_index = last_dst_index + 1
+        else:
+            for idx, path in enumerate(remaining):
+                if path in dst_paths:
+                    insert_index = idx
+                    break
+            if insert_index is None:
+                return
+
+        new_order = remaining[:insert_index] + src_block + remaining[insert_index:]
+        if new_order == order:
+            return
+        self._reorder_markdown_tabs_by_paths(new_order)
+        self._persist_asset_ui_state()
+
+    def _handle_markdown_sidebar_action_url(self, url: QtCore.QUrl) -> None:
+        action = url.path().lstrip("/")
+        query = QtCore.QUrlQuery(url)
+
+        self._markdown_sidebar_scroll_skip_capture = False
+        scroll_top: int | None = None
+        scroll_max: int | None = None
+        raw_scroll_top = query.queryItemValue("st")
+        raw_scroll_max = query.queryItemValue("sm")
+        if raw_scroll_top:
+            try:
+                scroll_top = max(0, int(raw_scroll_top))
+            except Exception:
+                scroll_top = None
+        if raw_scroll_max:
+            try:
+                scroll_max = max(0, int(raw_scroll_max))
+            except Exception:
+                scroll_max = None
+
+        if scroll_top is not None or scroll_max is not None:
+            saved = int(getattr(self, "_markdown_sidebar_saved_scroll_top", 0) or 0)
+            if scroll_max is not None and scroll_max > 0:
+                if scroll_top is not None:
+                    saved = int(scroll_top)
+            elif scroll_top is not None and scroll_top > 0:
+                saved = int(scroll_top)
+            self._markdown_sidebar_saved_scroll_top = saved
+            self._markdown_sidebar_scroll_skip_capture = True
+
+        if action == "toggle":
+            self._set_markdown_sidebar_collapsed(not self._markdown_sidebar_collapsed)
+            return
+
+        if action == "open-all":
+            self._open_all_markdown_under_current_asset()
+            self._refresh_markdown_sidebar()
+            return
+
+        if action == "toggle-node":
+            raw_node = query.queryItemValue("node")
+            if raw_node:
+                try:
+                    node_id = QtCore.QUrl.fromPercentEncoding(raw_node.encode("utf-8"))
+                except Exception:
+                    node_id = raw_node
+                if node_id:
+                    if node_id in self._markdown_sidebar_collapsed_nodes:
+                        self._markdown_sidebar_collapsed_nodes.discard(node_id)
+                    else:
+                        self._markdown_sidebar_collapsed_nodes.add(node_id)
+            self._refresh_markdown_sidebar()
+            return
+
+        if action == "activate":
+            path = self._decode_sidebar_query_path(query.queryItemValue("path"))
+            if path:
+                tab_index = self._find_markdown_tab(path)
+                if tab_index is not None:
+                    self._markdown_tabs.setCurrentIndex(tab_index)
+                elif path.is_file():
+                    self._open_markdown_file(path)
+            self._refresh_markdown_sidebar()
+            return
+
+        if action == "close":
+            path = self._decode_sidebar_query_path(query.queryItemValue("path"))
+            if path:
+                tab_index = self._find_markdown_tab(path)
+                if tab_index is not None:
+                    self._close_markdown_tab(tab_index)
+            self._refresh_markdown_sidebar()
+            return
+
+        if action == "move":
+            src_path = self._decode_sidebar_query_path(query.queryItemValue("src"))
+            dst_path = self._decode_sidebar_query_path(query.queryItemValue("dst"))
+            if src_path and dst_path and src_path != dst_path:
+                src_index = self._find_markdown_tab(src_path)
+                dst_index = self._find_markdown_tab(dst_path)
+                if src_index is not None and dst_index is not None:
+                    self._markdown_tabs.tabBar().moveTab(src_index, dst_index)
+                    self._persist_asset_ui_state()
+            self._refresh_markdown_sidebar()
+            return
+
+        if action == "move-node":
+            raw_src = query.queryItemValue("src")
+            raw_dst = query.queryItemValue("dst")
+            if raw_src and raw_dst:
+                try:
+                    src_id = QtCore.QUrl.fromPercentEncoding(raw_src.encode("utf-8"))
+                except Exception:
+                    src_id = raw_src
+                try:
+                    dst_id = QtCore.QUrl.fromPercentEncoding(raw_dst.encode("utf-8"))
+                except Exception:
+                    dst_id = raw_dst
+
+                parsed_src = self._parse_sidebar_node_id(src_id)
+                parsed_dst = self._parse_sidebar_node_id(dst_id)
+                if parsed_src and parsed_dst and parsed_src[0] == parsed_dst[0]:
+                    kind = parsed_src[0]
+                    src_nums = parsed_src[1]
+                    dst_nums = parsed_dst[1]
+                    if kind == "group" and len(src_nums) == 1 and len(dst_nums) == 1:
+                        src_group = src_nums[0]
+                        dst_group = dst_nums[0]
+                        self._move_markdown_group_block(src_group, dst_group)
+                    elif kind == "tutor" and len(src_nums) == 2 and len(dst_nums) == 2:
+                        src_group, src_tutor = src_nums
+                        dst_group, dst_tutor = dst_nums
+                        if src_group == dst_group:
+                            src_paths = set()
+                            dst_paths = set()
+                            for path in self._open_markdown_paths():
+                                context = self._tutor_context_from_markdown(path)
+                                if not context:
+                                    continue
+                                _asset_name, group_idx, tutor_idx, _tutor_dir = context
+                                if group_idx != src_group:
+                                    continue
+                                if tutor_idx == src_tutor:
+                                    src_paths.add(path)
+                                elif tutor_idx == dst_tutor:
+                                    dst_paths.add(path)
+                            self._move_markdown_tab_block(src_paths, dst_paths)
+            self._refresh_markdown_sidebar()
+            return
+
+        logger.debug("Unhandled markdown sidebar action: %s", action)
+        self._markdown_sidebar_scroll_skip_capture = False
+
+    @QtCore.Slot(int, int)
+    def _on_markdown_tab_moved(self, _from_index: int, _to_index: int) -> None:
+        if self._markdown_tabs_reordering:
+            return
+        self._persist_asset_ui_state()
+        self._refresh_markdown_sidebar()
+
     def _clear_current_asset_state(self) -> None:
         self._persist_asset_ui_state()
         self._reset_compress_state(clear_rect=True)
@@ -1210,6 +2511,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_reveal_button_state()
         self._update_fix_latex_button_state()
         self._persist_asset_ui_state()
+        self._refresh_markdown_sidebar()
 
     def _serialize_asset_markdown_path(self, asset_name: str, path: Path) -> str:
         try:
@@ -1597,7 +2899,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._open_markdown_file(path)
 
-    def _build_history_items(self, tutor_session_dir: Path) -> list[tuple[str, Path]]:
+    def _build_history_items(self, tutor_session_dir: Path) -> list[tuple[str, str, Path]]:
         ask_history_dir = tutor_session_dir / "ask_history"
         if not ask_history_dir.is_dir():
             return []
@@ -1609,20 +2911,21 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 return 1_000_000, stem
 
-        entries: list[tuple[str, Path]] = []
+        entries: list[tuple[str, str, Path]] = []
         for path in sorted(ask_history_dir.glob("*.md"), key=_order_key):
-            entries.append((path.name, path))
+            entries.append((path.name, self._markdown_preview(path), path))
         return entries
 
-    def _focus_preview(self, focus_path: Path) -> str:
+    def _markdown_preview(self, markdown_path: Path) -> str:
         try:
-            content = focus_path.read_text(encoding="utf-8")
+            content = markdown_path.read_text(encoding="utf-8")
         except Exception:  # pragma: no cover - GUI runtime path
             return ""
-        collapsed = " ".join(content.split())
-        return collapsed[:150]
+        return " ".join(content.split())
 
-    def _collect_tutor_focus_items(self, asset_name: str, group_idx: int | None = None) -> list[tuple[str, Path]]:
+    def _collect_tutor_focus_items(
+        self, asset_name: str, group_idx: int | None = None
+    ) -> list[tuple[str, str, Path]]:
         group_data_dir = get_group_data_dir(asset_name)
         if not group_data_dir.is_dir():
             return []
@@ -1634,7 +2937,7 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 return 1_000_000, name
 
-        items: list[tuple[str, Path]] = []
+        items: list[tuple[str, str, Path]] = []
         if group_idx is not None:
             target_dirs = [group_data_dir / str(group_idx)]
         else:
@@ -1652,8 +2955,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 focus_path = session_dir / "focus.md"
                 if not focus_path.is_file():
                     continue
-                preview = self._focus_preview(focus_path)
-                items.append((f"{session_dir.name} {preview}.....", focus_path))
+                preview = self._markdown_preview(focus_path)
+                items.append((session_dir.name, preview, focus_path))
         return items
 
     def _show_tutor_focus_list(self) -> None:
@@ -1669,7 +2972,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if not items:
             self.statusBar().showMessage("No tutor focus found for this group.")
             return
-        dialog = _TutorFocusDialog(items, parent=self)
+        dialog = self._tutor_focus_dialog
+        if not dialog:
+            dialog = _TutorFocusDialog(parent=self)
+            self._tutor_focus_dialog = dialog
+        dialog.set_items(items)
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
         selected = dialog.selected_paths()
@@ -1718,7 +3025,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if not entries:
             self.statusBar().showMessage("No tutor history found.")
             return
-        dialog = _TutorHistoryDialog(entries, parent=self)
+        dialog = self._tutor_history_dialog
+        if not dialog:
+            dialog = _TutorHistoryDialog(parent=self)
+            self._tutor_history_dialog = dialog
+        dialog.set_items(entries)
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
         for path in dialog.selected_paths():
@@ -1773,6 +3084,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_current_markdown_path(self._resolve_current_markdown_path())
 
     def _on_markdown_tab_changed(self, index: int) -> None:
+        if self._markdown_tabs_reordering:
+            return
         if self._feynman_mode_active and self._feynman_locked_tab_index is not None:
             locked = self._feynman_locked_tab_index
             if locked != index and 0 <= locked < self._markdown_tabs.count():
@@ -1927,6 +3240,8 @@ class MainWindow(QtWidgets.QMainWindow):
         tab_bar = self._markdown_tabs.tabBar()
         tab_bar.setEnabled(False)
         tab_bar.setVisible(False)
+        if self._markdown_sidebar_view:
+            self._markdown_sidebar_view.setEnabled(False)
 
         self._feynman_finish_button.setVisible(False)
         self._feynman_controls.setVisible(True)
@@ -1948,7 +3263,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         tab_bar = self._markdown_tabs.tabBar()
         tab_bar.setEnabled(True)
-        tab_bar.setVisible(True)
+        tab_bar.setVisible(False)
+        if self._markdown_sidebar_view:
+            self._markdown_sidebar_view.setEnabled(True)
 
         self._feynman_controls.setVisible(False)
         self._feynman_finish_button.setVisible(False)
