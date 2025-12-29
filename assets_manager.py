@@ -13,6 +13,8 @@ from typing import Callable, Iterable, List
 
 from PySide6 import QtGui, QtPrintSupport
 
+from exocortex_core.paths import exocortex_assets_root
+
 from agent_manager import (
     AgentCallbacks,
     AgentJob,
@@ -61,7 +63,7 @@ def _relative_to_repo(path: Path) -> Path:
 
 REPO_ROOT = _detect_repo_root(_runtime_start_dir())
 PROMPTS_DIR = REPO_ROOT / "prompts"
-ASSETS_ROOT = REPO_ROOT / "assets"
+ASSETS_ROOT = exocortex_assets_root()
 REFERENCE_RENDER_DPI = 130  # Keep in sync with pdf_block_gui_lib.main_window.DEFAULT_RENDER_DPI
 
 EXTRACTOR_AGENTS: tuple[str, ...] = ("background", "concept", "formula")

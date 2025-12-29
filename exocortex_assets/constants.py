@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from exocortex_core.paths import repo_root
+from exocortex_core.paths import exocortex_assets_root, repo_root
 
 
 REPO_ROOT = repo_root()
 PROMPTS_DIR = REPO_ROOT / "prompts"
-ASSETS_ROOT = REPO_ROOT / "assets"
+ASSETS_ROOT = exocortex_assets_root()
 
 REFERENCE_RENDER_DPI = 130  # Keep in sync with pdf_block_gui_lib.main_window.DEFAULT_RENDER_DPI
 
@@ -54,4 +54,3 @@ EXTRACTOR_OUTPUT_NAMES = {
     "concept": "concept.md",
     "formula": "formula.md",
 }
-

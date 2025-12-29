@@ -6,6 +6,9 @@ agent_workspace/
 *.png
 
 
+Output_Installers/
+setup_script.iss
+
 # Byte-compiled / cache
 __pycache__/
 *.py[cod]

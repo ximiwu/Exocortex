@@ -14,7 +14,7 @@ from typing import Callable, Iterable, List
 from exocortex_core.fs import move_all_files as _fs_move_all_files
 from exocortex_core.fs import safe_rmtree as _fs_safe_rmtree
 from exocortex_core.markdown import normalize_paragraph_list_separation
-from exocortex_core.paths import repo_root
+from exocortex_core.paths import exocortex_assets_root, repo_root
 
 try:
     from PySide6 import QtGui, QtPrintSupport
@@ -56,7 +56,7 @@ def _relative_to_repo(path: Path) -> Path:
 
 REPO_ROOT = repo_root()
 PROMPTS_DIR = REPO_ROOT / "prompts"
-ASSETS_ROOT = REPO_ROOT / "assets"
+ASSETS_ROOT = exocortex_assets_root()
 REFERENCE_RENDER_DPI = 130  # Keep in sync with pdf_block_gui_lib.main_window.DEFAULT_RENDER_DPI
 
 EXTRACTOR_AGENTS: tuple[str, ...] = ("background", "concept", "formula")

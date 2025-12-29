@@ -217,9 +217,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._page_input.setEnabled(False)
         self._page_label = QtWidgets.QLabel("Page: -/-")
         self._show_info_button = QtWidgets.QPushButton("show info")
-        self._history_button = QtWidgets.QPushButton("history question")
+        self._history_button = None
         self._delete_question_button = QtWidgets.QPushButton("delete question")
-        self._tutor_focus_button = QtWidgets.QPushButton("history ask tutor")
+        self._tutor_focus_button = None
         self._integrate_button = QtWidgets.QPushButton("start feynman")
         self._skip_feynman_button = QtWidgets.QPushButton("skip feynman")
         self._show_initial_button = QtWidgets.QPushButton("show initial")
@@ -298,9 +298,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._zoom_reset_button.clicked.connect(lambda: self._set_zoom(self._default_zoom))
         self._about_button.clicked.connect(self._show_about_dialog)
         self._show_info_button.clicked.connect(self._show_reference_info)
-        self._history_button.clicked.connect(self._show_history_questions)
         self._delete_question_button.clicked.connect(self._delete_current_question)
-        self._tutor_focus_button.clicked.connect(self._show_tutor_focus_list)
         self._integrate_button.clicked.connect(self._handle_integrate)
         self._skip_feynman_button.clicked.connect(self._handle_skip_feynman)
         self._show_initial_button.clicked.connect(self._show_initial_markdown)
@@ -316,9 +314,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._compress_button.clicked.connect(self._on_compress_clicked)
         for button in self._reference_buttons:
             button.setVisible(False)
-        self._history_button.setVisible(False)
         self._delete_question_button.setVisible(False)
-        self._tutor_focus_button.setVisible(False)
         self._integrate_button.setVisible(False)
         self._skip_feynman_button.setVisible(False)
         self._show_initial_button.setVisible(False)
@@ -338,9 +334,7 @@ class MainWindow(QtWidgets.QMainWindow):
         top_bar.addWidget(self._reveal_button)
         top_bar.addWidget(self._show_initial_button)
         top_bar.addWidget(self._fix_latex_button)
-        top_bar.addWidget(self._history_button)
         top_bar.addWidget(self._delete_question_button)
-        top_bar.addWidget(self._tutor_focus_button)
         top_bar.addWidget(self._integrate_button)
         top_bar.addWidget(self._skip_feynman_button)
         top_bar.addWidget(self._crop_head_button)
@@ -3089,15 +3083,11 @@ class MainWindow(QtWidgets.QMainWindow):
         return True
 
     def _update_history_button_visibility(self) -> None:
-        history_visible = False
         integrate_visible = False
         if self._current_markdown_path:
-            history_visible = self._tutor_context_from_markdown(self._current_markdown_path) is not None
-            integrate_visible = history_visible
+            integrate_visible = self._tutor_context_from_markdown(self._current_markdown_path) is not None
         if self._feynman_mode_active:
-            history_visible = False
             integrate_visible = False
-        self._history_button.setVisible(history_visible)
         self._integrate_button.setVisible(integrate_visible)
         self._skip_feynman_button.setVisible(integrate_visible)
         self._integrate_button.setEnabled(
@@ -3120,10 +3110,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._show_initial_button.setVisible(visible)
 
     def _update_tutor_focus_visibility(self) -> None:
-        visible = False
-        if self._current_markdown_path:
-            visible = self._group_context_from_markdown(self._current_markdown_path) is not None
-        self._tutor_focus_button.setVisible(visible)
+        return
 
     def _update_focus_crop_visibility(self) -> None:
         visible = False

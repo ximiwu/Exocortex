@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import os
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -80,12 +81,66 @@ def relative_to_repo(path: Path) -> Path:
         return path
 
 
+def _windows_documents_dir() -> Path | None:
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        CSIDL_PERSONAL = 5
+        SHGFP_TYPE_CURRENT = 0
+        buf = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+        result = ctypes.windll.shell32.SHGetFolderPathW(
+            None, CSIDL_PERSONAL, None, SHGFP_TYPE_CURRENT, buf
+        )
+        if result != 0:
+            return None
+        path = buf.value.strip("\x00").strip()
+        return Path(path) if path else None
+    except Exception:
+        return None
+
+
+@lru_cache(maxsize=1)
+def user_documents_dir() -> Path:
+    """
+    Best-effort resolution of the user's Documents directory.
+
+    Windows: uses Shell32 SHGetFolderPathW(CSIDL_PERSONAL).
+    Fallback: ~/Documents.
+    """
+    override = os.environ.get("EXOCORTEX_DOCUMENTS_DIR")
+    if override:
+        return Path(override).expanduser().resolve()
+
+    if os.name == "nt":
+        resolved = _windows_documents_dir()
+        if resolved is not None:
+            return resolved.resolve()
+
+    return (Path.home() / "Documents").resolve()
+
+
+@lru_cache(maxsize=1)
+def exocortex_assets_root() -> Path:
+    """
+    Default on-disk location for user assets.
+
+    Uses `%USERPROFILE%\\Documents\\ximiwu_app\\Exocortex\\assets` on Windows.
+    Can be overridden with EXOCORTEX_ASSETS_ROOT.
+    """
+    override = os.environ.get("EXOCORTEX_ASSETS_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
+    return user_documents_dir() / "ximiwu_app" / "Exocortex" / "assets"
+
+
 __all__ = [
     "DEFAULT_REPO_MARKERS",
     "detect_repo_root",
+    "exocortex_assets_root",
     "is_compiled_runtime",
     "relative_to_repo",
     "repo_root",
     "runtime_base_dir",
+    "user_documents_dir",
 ]
-
