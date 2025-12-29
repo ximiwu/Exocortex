@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 
 _SIDEBAR_ACTION_SCHEME = "exocortex-sidebar"
 _SIDEBAR_ACTION_HOST = "action"
+_SIDEBAR_GROUP_ALIAS_FILENAME = "group.alias"
+_SIDEBAR_MARKDOWN_ALIAS_SUFFIX = ".alias"
 
 
 class _MarkdownSidebarPage(QtWebEngineCore.QWebEnginePage):
@@ -1131,7 +1133,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._tutor_focus_dialog = _TutorFocusDialog(parent=self)
             self._tutor_focus_dialog.set_items([])
 
-    def _set_markdown_sidebar_collapsed(self, collapsed: bool) -> None:
+    def _set_markdown_sidebar_collapsed(self, collapsed: bool, *, update_restore_width: bool = True) -> None:
         splitter = self._markdown_sidebar_splitter
         self._markdown_sidebar_collapsed = collapsed
         if not splitter:
@@ -1144,7 +1146,7 @@ class MainWindow(QtWidgets.QMainWindow):
         collapsed_width = 44
         total = max(1, sizes[0] + sizes[1])
         if collapsed:
-            if sizes[0] > collapsed_width:
+            if update_restore_width and sizes[0] > collapsed_width:
                 self._markdown_sidebar_restore_width = sizes[0]
             splitter.setSizes([collapsed_width, max(1, total - collapsed_width)])
         else:
@@ -1152,6 +1154,7 @@ class MainWindow(QtWidgets.QMainWindow):
             restore_width = max(collapsed_width, min(restore_width, total - 1))
             splitter.setSizes([restore_width, max(1, total - restore_width)])
 
+        self._persist_asset_ui_state()
         self._refresh_markdown_sidebar()
 
     @staticmethod
@@ -1181,6 +1184,62 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 return None
         return kind, tuple(numbers)
+
+    @staticmethod
+    def _read_sidebar_alias(path: Path) -> str | None:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace").strip()
+        except Exception:
+            return None
+        return text or None
+
+    @staticmethod
+    def _atomic_write_sidebar_alias(path: Path, value: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        tmp_path.write_text(value, encoding="utf-8")
+        tmp_path.replace(path)
+
+    @staticmethod
+    def _markdown_alias_path(markdown_path: Path) -> Path:
+        return markdown_path.with_name(markdown_path.name + _SIDEBAR_MARKDOWN_ALIAS_SUFFIX)
+
+    @staticmethod
+    def _default_group_alias(group_index: int) -> str:
+        return f"Group {group_index}"
+
+    def _markdown_sidebar_group_title(self, group_dir: Path, group_index: int) -> str:
+        alias_path = group_dir / _SIDEBAR_GROUP_ALIAS_FILENAME
+        return self._read_sidebar_alias(alias_path) or self._default_group_alias(group_index)
+
+    def _markdown_sidebar_markdown_title(self, markdown_path: Path, fallback: str) -> str:
+        alias = self._read_sidebar_alias(self._markdown_alias_path(markdown_path))
+        return alias or fallback
+
+    def _set_markdown_sidebar_group_alias(self, group_dir: Path, group_index: int, alias: str) -> None:
+        alias_path = group_dir / _SIDEBAR_GROUP_ALIAS_FILENAME
+        cleaned = alias.strip()
+        default = self._default_group_alias(group_index)
+        if not cleaned or cleaned == default:
+            try:
+                alias_path.unlink()
+            except FileNotFoundError:
+                pass
+            return
+        self._atomic_write_sidebar_alias(alias_path, cleaned)
+
+    def _set_markdown_sidebar_markdown_alias(self, markdown_path: Path, alias: str) -> str:
+        alias_path = self._markdown_alias_path(markdown_path)
+        cleaned = alias.strip()
+        default = markdown_path.name
+        if not cleaned or cleaned == default:
+            try:
+                alias_path.unlink()
+            except FileNotFoundError:
+                pass
+            return default
+        self._atomic_write_sidebar_alias(alias_path, cleaned)
+        return cleaned
 
     @staticmethod
     def _markdown_sidebar_preview_for_path(path: Path) -> str:
@@ -1243,7 +1302,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     "title": tutor_title,
                     "active": False,
                     "leaves": [],
-                    "focus": None,
+                    "focus_path": None,
+                    "focus_open": False,
+                    "history": [],
                 }
                 tutors[tutor_id] = tutor
                 tutor_order: list[str] = group["tutor_order"]  # type: ignore[assignment]
@@ -1265,14 +1326,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 continue
 
             title = (self._markdown_tabs.tabText(tab_index) or resolved.name).strip() or resolved.name
+            title = self._markdown_sidebar_markdown_title(resolved, title)
             preview = self._markdown_sidebar_preview_for_path(resolved)
             is_active = bool(active_path and resolved == active_path)
 
             group_ctx = self._group_context_from_markdown(resolved)
             if group_ctx:
-                group_idx = group_ctx[1]
+                _ctx_asset, group_idx, group_dir = group_ctx
                 group_id = self._sidebar_node_id("group", group_idx)
-                group_title = f"group_data/{group_idx}"
+                group_title = self._markdown_sidebar_group_title(group_dir, group_idx)
             else:
                 group_id = "other"
                 group_title = "Other"
@@ -1293,6 +1355,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     focus_resolved = focus_path.resolve()
                 except Exception:
                     focus_resolved = focus_path
+                tutor["focus_path"] = focus_resolved
 
                 ask_history_dir = tutor_session_dir / "ask_history"
                 try:
@@ -1309,32 +1372,21 @@ class MainWindow(QtWidgets.QMainWindow):
                     except Exception:
                         is_history = False
 
-                if is_focus or is_history:
-                    focus = tutor.get("focus")
-                    if not isinstance(focus, dict):
-                        focus = {
-                            "id": self._sidebar_node_id("focus", group_idx_int, tutor_idx),
-                            "focus_path": focus_resolved,
-                            "focus_open": False,
-                            "active": False,
-                            "history": [],
+                if is_focus:
+                    tutor["focus_open"] = True
+                    continue
+
+                if is_history:
+                    history: list[dict[str, object]] = tutor["history"]  # type: ignore[assignment]
+                    history.append(
+                        {
+                            "path": resolved,
+                            "title": title,
+                            "preview": preview,
+                            "active": is_active,
+                            "parent": tutor_id,
                         }
-                        tutor["focus"] = focus
-                    if is_active:
-                        focus["active"] = True
-                    if is_focus:
-                        focus["focus_open"] = True
-                    else:
-                        history: list[dict[str, object]] = focus["history"]  # type: ignore[assignment]
-                        history.append(
-                            {
-                                "path": resolved,
-                                "title": title,
-                                "preview": preview,
-                                "active": is_active,
-                                "parent": focus["id"],
-                            }
-                        )
+                    )
                     continue
 
                 tutor_leaves: list[dict[str, object]] = tutor["leaves"]  # type: ignore[assignment]
@@ -1409,42 +1461,36 @@ class MainWindow(QtWidgets.QMainWindow):
                 for leaf in tutor.get("leaves", []):  # type: ignore[assignment]
                     tutor_children.append(leaf_html(leaf))
 
-                focus = tutor.get("focus")
-                if isinstance(focus, dict):
-                    focus_node_id = str(focus["id"])
-                    focus_classes = "node focus"
-                    if focus_node_id in collapsed_nodes:
-                        focus_classes += " collapsed"
-                    if focus.get("active"):
-                        focus_classes += " active"
-                    focus_path_attr = esc(focus.get("focus_path"))
-                    focus_close = ""
-                    if focus.get("focus_open"):
-                        focus_close = (
-                            f"<button class='close' data-action='close' data-path='{focus_path_attr}'>x</button>"
-                        )
-                    history_html = "".join(
-                        leaf_html(item) for item in focus.get("history", [])  # type: ignore[arg-type]
-                    )
-                    tutor_children.append(
-                        f"<div class='{focus_classes}' data-node='{esc(focus_node_id)}'>"
-                        "<div class='node-header'>"
-                        f"<span class='twisty' data-action='toggle-node' data-node='{esc(focus_node_id)}'>&#9656;</span>"
-                        f"<span class='node-title focus-title' data-action='activate' data-path='{focus_path_attr}'>focus.md</span>"
-                        f"{focus_close}"
-                        "</div>"
-                        f"<div class='children'>{history_html}</div>"
-                        "</div>"
-                    )
+                for leaf in tutor.get("history", []):  # type: ignore[assignment]
+                    tutor_children.append(leaf_html(leaf))
+
+                focus_path_value = tutor.get("focus_path")
+                focus_path_attr = esc(focus_path_value or "")
+                focus_title = "focus.md"
+                if isinstance(focus_path_value, Path):
+                    focus_title = self._markdown_sidebar_markdown_title(focus_path_value, focus_path_value.name)
+                focus_title_html = html.escape(focus_title)
+                focus_close = ""
+                if focus_path_attr:
+                    focus_close = f"<button class='close' data-action='close-node' data-node='{esc(tutor_node_id)}'>x</button>"
+                focus_history = f"<button class='action-btn' data-action='show-history' data-node='{esc(tutor_node_id)}' title='history question'>Q</button>"
 
                 children.append(
                     f"<div class='{tutor_classes}' data-node='{esc(tutor_node_id)}'>"
                     f"<div class='node-header' data-kind='tutor' data-node='{esc(tutor_node_id)}' draggable='true'>"
                     f"<span class='twisty' data-action='toggle-node' data-node='{esc(tutor_node_id)}'>&#9656;</span>"
-                    f"<span class='node-title' data-action='toggle-node' data-node='{esc(tutor_node_id)}'>{html.escape(str(tutor.get('title', '')))}</span>"
+                    f"<span class='node-title focus-title' data-action='activate' data-path='{focus_path_attr}'>{focus_title_html}</span>"
+                    f"{focus_history}"
+                    f"{focus_close}"
                     "</div>"
                     f"<div class='children'>{''.join(tutor_children)}</div>"
                     "</div>"
+                )
+
+            group_focus_button = ""
+            if node_id != "other":
+                group_focus_button = (
+                    f"<button class='action-btn' data-action='show-tutor-focus' data-node='{esc(node_id)}' title='history ask tutor'>A</button>"
                 )
 
             blocks.append(
@@ -1452,6 +1498,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"<div class='node-header' data-kind='group' data-node='{esc(node_id)}' draggable='true'>"
                 f"<span class='twisty' data-action='toggle-node' data-node='{esc(node_id)}'>&#9656;</span>"
                 f"<span class='node-title' data-action='toggle-node' data-node='{esc(node_id)}'>{html.escape(str(group.get('title', '')))}</span>"
+                f"{group_focus_button}"
+                f"<button class='close' data-action='close-node' data-node='{esc(node_id)}'>x</button>"
                 "</div>"
                 f"<div class='children'>{''.join(children)}</div>"
                 "</div>"
@@ -1490,7 +1538,7 @@ class MainWindow(QtWidgets.QMainWindow):
         .node.active > .node-header { background: rgba(37, 99, 235, 0.10); }
         .node-header[draggable='true'] { cursor: grab; }
         .twisty { width: 16px; text-align: center; cursor: pointer; user-select: none; }
-        .node-title { font-weight: 600; cursor: pointer; user-select: none; }
+        .node-title { flex: 1 1 auto; font-weight: 600; cursor: pointer; user-select: none; }
         .children { padding-left: 14px; }
         .node.collapsed > .children { display: none; }
         .node.collapsed > .node-header .twisty { transform: rotate(-90deg); display: inline-block; }
@@ -1501,9 +1549,25 @@ class MainWindow(QtWidgets.QMainWindow):
         .leaf-preview { color: #6b7280; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .close { border: 0; background: transparent; cursor: pointer; color: #6b7280; width: 22px; height: 22px; border-radius: 6px; }
         .close:hover { background: rgba(239,68,68,0.10); color: #ef4444; }
+        .action-btn { border: 0; background: transparent; cursor: pointer; color: #6b7280; width: 22px; height: 22px; border-radius: 6px; }
+        .action-btn:hover { background: rgba(37,99,235,0.10); color: #1d4ed8; }
         .drag-over { outline: 2px dashed rgba(37, 99, 235, 0.55); }
         .dragging { opacity: 0.5; }
         .focus-title { font-weight: 700; }
+        .inline-edit {
+            width: 100%;
+            font: inherit;
+            font-size: 12px;
+            padding: 2px 6px;
+            border: 1px solid rgba(17, 24, 39, 0.20);
+            border-radius: 6px;
+            outline: none;
+            background: #fff;
+        }
+        .inline-edit:focus {
+            border-color: rgba(37, 99, 235, 0.70);
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.10);
+        }
         """
 
         script = f"""
@@ -1537,6 +1601,27 @@ class MainWindow(QtWidgets.QMainWindow):
                         if (path) act('activate?path=' + encodeURIComponent(path));
                         return;
                     }}
+                    if (action === 'close-node') {{
+                        const node = actionEl.dataset.node || '';
+                        if (node) act('close-node?node=' + encodeURIComponent(node));
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return;
+                    }}
+                    if (action === 'show-tutor-focus') {{
+                        const node = actionEl.dataset.node || '';
+                        if (node) act('show-tutor-focus?node=' + encodeURIComponent(node));
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return;
+                    }}
+                    if (action === 'show-history') {{
+                        const node = actionEl.dataset.node || '';
+                        if (node) act('show-history?node=' + encodeURIComponent(node));
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return;
+                    }}
                     if (action === 'close') {{
                         const path = actionEl.dataset.path || '';
                         if (path) act('close?path=' + encodeURIComponent(path));
@@ -1548,6 +1633,83 @@ class MainWindow(QtWidgets.QMainWindow):
                 const leaf = e.target.closest('.leaf');
                 if (leaf && leaf.dataset.path) {{
                     act('activate?path=' + encodeURIComponent(leaf.dataset.path));
+                }}
+            }});
+
+            function startInlineEdit(container, onCommit) {{
+                if (!container) return;
+                if (container.querySelector('input.inline-edit')) return;
+                const previousText = container.textContent || '';
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.value = previousText.trim();
+                input.className = 'inline-edit';
+                container.textContent = '';
+                container.appendChild(input);
+                input.focus();
+                input.select();
+
+                let done = false;
+                function finish(shouldCommit) {{
+                    if (done) return;
+                    done = true;
+                    const value = (input.value || '').trim();
+                    if (shouldCommit) {{
+                        if (value === previousText.trim()) {{
+                            container.textContent = previousText;
+                            return;
+                        }}
+                        onCommit(value);
+                        return;
+                    }}
+                    container.textContent = previousText;
+                }}
+
+                input.addEventListener('keydown', (ev) => {{
+                    if (ev.key === 'Enter') {{ ev.preventDefault(); finish(true); }}
+                    else if (ev.key === 'Escape') {{ ev.preventDefault(); finish(false); }}
+                }});
+                input.addEventListener('blur', () => finish(true));
+                input.addEventListener('click', (ev) => ev.stopPropagation());
+                input.addEventListener('contextmenu', (ev) => {{ ev.preventDefault(); ev.stopPropagation(); }});
+            }}
+
+            document.addEventListener('contextmenu', (e) => {{
+                const leafTitle = e.target.closest('.leaf-title');
+                if (leafTitle) {{
+                    const leaf = leafTitle.closest('.leaf');
+                    const path = leaf ? (leaf.dataset.path || '') : '';
+                    if (path) {{
+                        e.preventDefault();
+                        e.stopPropagation();
+                        startInlineEdit(leafTitle, (value) => {{
+                            act('rename-md?path=' + encodeURIComponent(path) + '&name=' + encodeURIComponent(value));
+                        }});
+                        return;
+                    }}
+                }}
+
+                const mdTitle = e.target.closest('.node-title[data-path]');
+                if (mdTitle && mdTitle.dataset.path) {{
+                    e.preventDefault();
+                    e.stopPropagation();
+                    startInlineEdit(mdTitle, (value) => {{
+                        act('rename-md?path=' + encodeURIComponent(mdTitle.dataset.path) + '&name=' + encodeURIComponent(value));
+                    }});
+                    return;
+                }}
+
+                const groupTitle = e.target.closest('.node.group > .node-header .node-title');
+                if (groupTitle) {{
+                    const header = groupTitle.closest('.node-header');
+                    const kind = header ? (header.dataset.kind || '') : '';
+                    const node = header ? (header.dataset.node || '') : '';
+                    if (kind !== 'group' || !node) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    startInlineEdit(groupTitle, (value) => {{
+                        act('rename-group?node=' + encodeURIComponent(node) + '&name=' + encodeURIComponent(value));
+                    }});
                 }}
             }});
 
@@ -1650,7 +1812,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "<path d='M2 3.5h12a1 1 0 0 1 0 2H2a1 1 0 0 1 0-2zm0 4h12a1 1 0 0 1 0 2H2a1 1 0 0 1 0-2zm0 4h12a1 1 0 0 1 0 2H2a1 1 0 0 1 0-2z'/>"
             "</svg>"
             "</button>"
-            "<div class='toolbar-title'>Markdown</div>"
+            "<div class='toolbar-title'>Exocortex</div>"
             "<div class='spacer'></div>"
             "<div class='toolbar-actions'>"
             "<button class='btn' data-action='open-all' title='Open all markdown under asset' aria-label='Open all markdown under asset'>"
@@ -2265,6 +2427,56 @@ class MainWindow(QtWidgets.QMainWindow):
             self._markdown_sidebar_saved_scroll_top = saved
             self._markdown_sidebar_scroll_skip_capture = True
 
+        if action == "rename-group":
+            raw_node = query.queryItemValue("node")
+            raw_name = query.queryItemValue("name")
+            node_id = ""
+            alias_value = ""
+            if raw_node:
+                try:
+                    node_id = QtCore.QUrl.fromPercentEncoding(raw_node.encode("utf-8"))
+                except Exception:
+                    node_id = raw_node
+            if raw_name:
+                try:
+                    alias_value = QtCore.QUrl.fromPercentEncoding(raw_name.encode("utf-8"))
+                except Exception:
+                    alias_value = raw_name
+            parsed = self._parse_sidebar_node_id(node_id)
+            if parsed and parsed[0] == "group" and len(parsed[1]) == 1:
+                group_index = parsed[1][0]
+                asset_name = self._current_asset_name
+                if asset_name:
+                    group_dir = get_group_data_dir(asset_name) / str(group_index)
+                    if group_dir.is_dir():
+                        self._set_markdown_sidebar_group_alias(group_dir, group_index, alias_value)
+            self._refresh_markdown_sidebar()
+            return
+
+        if action == "rename-md":
+            path = self._decode_sidebar_query_path(query.queryItemValue("path"))
+            raw_name = query.queryItemValue("name")
+            alias_value = ""
+            if raw_name:
+                try:
+                    alias_value = QtCore.QUrl.fromPercentEncoding(raw_name.encode("utf-8"))
+                except Exception:
+                    alias_value = raw_name
+            if path:
+                try:
+                    resolved = path.resolve()
+                except Exception:
+                    resolved = path
+                if not self._group_context_from_markdown(resolved):
+                    self.statusBar().showMessage("Alias is supported for asset markdown only.")
+                else:
+                    display_title = self._set_markdown_sidebar_markdown_alias(resolved, alias_value)
+                    tab_index = self._find_markdown_tab(resolved)
+                    if tab_index is not None:
+                        self._markdown_tabs.setTabText(tab_index, display_title)
+            self._refresh_markdown_sidebar()
+            return
+
         if action == "toggle":
             self._set_markdown_sidebar_collapsed(not self._markdown_sidebar_collapsed)
             return
@@ -2286,6 +2498,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         self._markdown_sidebar_collapsed_nodes.discard(node_id)
                     else:
                         self._markdown_sidebar_collapsed_nodes.add(node_id)
+            self._persist_asset_ui_state()
             self._refresh_markdown_sidebar()
             return
 
@@ -2307,6 +2520,89 @@ class MainWindow(QtWidgets.QMainWindow):
                 if tab_index is not None:
                     self._close_markdown_tab(tab_index)
             self._refresh_markdown_sidebar()
+            return
+
+        if action == "close-node":
+            raw_node = query.queryItemValue("node")
+            node_id = ""
+            if raw_node:
+                try:
+                    node_id = QtCore.QUrl.fromPercentEncoding(raw_node.encode("utf-8"))
+                except Exception:
+                    node_id = raw_node
+
+            parsed = self._parse_sidebar_node_id(node_id)
+            open_paths = self._open_markdown_paths()
+            if parsed:
+                kind, nums = parsed
+                if kind == "group" and len(nums) == 1:
+                    group_index = nums[0]
+                    to_close: set[Path] = set()
+                    for path in open_paths:
+                        ctx = self._group_context_from_markdown(path)
+                        if ctx and ctx[1] == group_index:
+                            to_close.add(path)
+                    self._close_markdown_tabs_for_paths(to_close)
+                    return
+                if kind == "tutor" and len(nums) == 2:
+                    group_index, tutor_index = nums
+                    to_close: set[Path] = set()
+                    for path in open_paths:
+                        ctx = self._tutor_context_from_markdown(path)
+                        if not ctx:
+                            continue
+                        _asset_name, ctx_group, ctx_tutor, _tutor_dir = ctx
+                        if ctx_group == group_index and ctx_tutor == tutor_index:
+                            to_close.add(path)
+                    self._close_markdown_tabs_for_paths(to_close)
+                    return
+                if kind == "other" and not nums:
+                    to_close = {path for path in open_paths if not self._group_context_from_markdown(path)}
+                    self._close_markdown_tabs_for_paths(to_close)
+                    return
+            self._refresh_markdown_sidebar()
+            return
+
+        if action == "show-tutor-focus":
+            raw_node = query.queryItemValue("node")
+            node_id = ""
+            if raw_node:
+                try:
+                    node_id = QtCore.QUrl.fromPercentEncoding(raw_node.encode("utf-8"))
+                except Exception:
+                    node_id = raw_node
+            parsed = self._parse_sidebar_node_id(node_id)
+            if parsed and parsed[0] == "group" and len(parsed[1]) == 1:
+                asset_name = self._current_asset_name
+                if asset_name:
+                    group_index = parsed[1][0]
+                    QtCore.QTimer.singleShot(
+                        0,
+                        lambda a=asset_name, g=group_index: self._show_tutor_focus_list_for_group(a, g),
+                    )
+            self._markdown_sidebar_scroll_skip_capture = False
+            return
+
+        if action == "show-history":
+            raw_node = query.queryItemValue("node")
+            node_id = ""
+            if raw_node:
+                try:
+                    node_id = QtCore.QUrl.fromPercentEncoding(raw_node.encode("utf-8"))
+                except Exception:
+                    node_id = raw_node
+            parsed = self._parse_sidebar_node_id(node_id)
+            if parsed and parsed[0] == "tutor" and len(parsed[1]) == 2:
+                asset_name = self._current_asset_name
+                if asset_name:
+                    group_index, tutor_index = parsed[1]
+                    session_dir = get_group_data_dir(asset_name) / str(group_index) / "tutor_data" / str(tutor_index)
+                    if session_dir.is_dir():
+                        QtCore.QTimer.singleShot(
+                            0,
+                            lambda d=session_dir: self._show_history_questions_for_session_dir(d),
+                        )
+            self._markdown_sidebar_scroll_skip_capture = False
             return
 
         if action == "move":
@@ -2552,6 +2848,48 @@ class MainWindow(QtWidgets.QMainWindow):
                 paths.append(resolved)
         return paths
 
+    def _close_markdown_tabs_for_paths(self, paths: set[Path]) -> None:
+        if not paths:
+            return
+
+        tab_entries: list[tuple[int, Path]] = []
+        for path in paths:
+            try:
+                resolved = path.resolve()
+            except Exception:
+                resolved = path
+            view = self._markdown_views.get(resolved)
+            if not view:
+                continue
+            index = self._markdown_tabs.indexOf(view)
+            if index < 0:
+                continue
+            tab_entries.append((index, resolved))
+
+        if not tab_entries:
+            return
+
+        self._markdown_tabs.blockSignals(True)
+        try:
+            for index, resolved in sorted(tab_entries, key=lambda item: item[0], reverse=True):
+                widget = self._markdown_tabs.widget(index)
+                if widget:
+                    self._markdown_tabs.removeTab(index)
+                    if resolved in self._markdown_views and self._markdown_views[resolved] is widget:
+                        del self._markdown_views[resolved]
+                    else:
+                        for candidate_path, view in list(self._markdown_views.items()):
+                            if view is widget:
+                                del self._markdown_views[candidate_path]
+                                break
+        finally:
+            self._markdown_tabs.blockSignals(False)
+
+        if not self._markdown_views:
+            self._markdown_tabs.setTabsClosable(False)
+            self._show_markdown_placeholder()
+        self._set_current_markdown_path(self._resolve_current_markdown_path())
+
     def _persist_asset_ui_state(self) -> None:
         if self._asset_config_persist_suspended:
             return
@@ -2559,6 +2897,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if not asset_name:
             return
         config: dict[str, object] = {"zoom": float(self._zoom)}
+        config["markdown_sidebar_collapsed"] = bool(self._markdown_sidebar_collapsed)
+        config["markdown_sidebar_restore_width"] = (
+            int(self._markdown_sidebar_restore_width) if self._markdown_sidebar_restore_width is not None else None
+        )
+        config["markdown_sidebar_collapsed_nodes"] = sorted(self._markdown_sidebar_collapsed_nodes)
         config["open_markdown_paths"] = [
             self._serialize_asset_markdown_path(asset_name, path)
             for path in self._open_markdown_paths()
@@ -2573,9 +2916,27 @@ class MainWindow(QtWidgets.QMainWindow):
             logger.warning("Failed to save asset config for '%s': %s", asset_name, exc)
 
     def _restore_asset_ui_state(self, asset_name: str) -> None:
-        config = load_asset_config(asset_name)
-        if not config:
-            return
+        config = load_asset_config(asset_name) or {}
+
+        sidebar_collapsed = config.get("markdown_sidebar_collapsed")
+        collapsed = bool(sidebar_collapsed) if isinstance(sidebar_collapsed, bool) else False
+
+        sidebar_restore_width_raw = config.get("markdown_sidebar_restore_width")
+        restore_width: int | None = None
+        if isinstance(sidebar_restore_width_raw, (int, float)):
+            candidate = int(sidebar_restore_width_raw)
+            if candidate > 0:
+                restore_width = candidate
+        self._markdown_sidebar_restore_width = restore_width
+
+        collapsed_nodes_raw = config.get("markdown_sidebar_collapsed_nodes")
+        collapsed_nodes: set[str] = set()
+        if isinstance(collapsed_nodes_raw, list):
+            for item in collapsed_nodes_raw:
+                if isinstance(item, str) and item:
+                    collapsed_nodes.add(item)
+        self._markdown_sidebar_collapsed_nodes = collapsed_nodes
+        self._set_markdown_sidebar_collapsed(collapsed, update_restore_width=False)
 
         zoom_raw = config.get("zoom")
         try:
@@ -2958,6 +3319,40 @@ class MainWindow(QtWidgets.QMainWindow):
                 preview = self._markdown_preview(focus_path)
                 items.append((session_dir.name, preview, focus_path))
         return items
+
+    def _show_tutor_focus_list_for_group(self, asset_name: str, group_idx: int) -> None:
+        items = self._collect_tutor_focus_items(asset_name, group_idx)
+        if not items:
+            self.statusBar().showMessage("No tutor focus found for this group.")
+            return
+        dialog = self._tutor_focus_dialog
+        if not dialog:
+            dialog = _TutorFocusDialog(parent=self)
+            self._tutor_focus_dialog = dialog
+        dialog.set_items(items)
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            return
+        selected = dialog.selected_paths()
+        if not selected:
+            self.statusBar().showMessage("No focus.md selected.")
+            return
+        for path in selected:
+            self._open_markdown_file(path)
+
+    def _show_history_questions_for_session_dir(self, tutor_session_dir: Path) -> None:
+        entries = self._build_history_items(tutor_session_dir)
+        if not entries:
+            self.statusBar().showMessage("No tutor history found.")
+            return
+        dialog = self._tutor_history_dialog
+        if not dialog:
+            dialog = _TutorHistoryDialog(parent=self)
+            self._tutor_history_dialog = dialog
+        dialog.set_items(entries)
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            return
+        for path in dialog.selected_paths():
+            self._open_markdown_file(path)
 
     def _show_tutor_focus_list(self) -> None:
         if not self._current_markdown_path:
@@ -3583,13 +3978,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._remove_markdown_placeholder()
         title = tab_label or resolved.name
+        title = self._markdown_sidebar_markdown_title(resolved, title)
         existing_index = self._find_markdown_tab(resolved)
         if existing_index is not None:
             widget = self._markdown_tabs.widget(existing_index)
             if isinstance(widget, QtWebEngineWidgets.QWebEngineView):
                 self._configure_markdown_view(widget, resolved)
                 widget.setHtml(html, baseUrl=QtCore.QUrl.fromLocalFile(str(resolved.parent)))
-            if tab_label:
+            if self._markdown_tabs.tabText(existing_index) != title:
                 self._markdown_tabs.setTabText(existing_index, title)
             self._markdown_tabs.setCurrentIndex(existing_index)
             self._set_current_markdown_path(resolved)
@@ -4933,4 +5329,3 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_group_dive_failed(self, error: str) -> None:
         self._group_dive_in_progress = False
         self.statusBar().showMessage(f"Explainer failed: {error}")
-
