@@ -24,6 +24,7 @@ def run_nuitka():
         "--enable-plugin=pyside6",
         "--include-data-dir=prompts=prompts",
         "--include-data-dir=pdf_block_gui_lib/static=pdf_block_gui_lib/static",
+        "--include-data-files=pdf_block_gui_lib/feiman.html=pdf_block_gui_lib/feiman.html",
         f"--output-dir={OUTPUT_DIR}",
         "--msvc=latest",
         f"--windows-icon-from-ico={ICON_FILE}",

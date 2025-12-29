@@ -26,6 +26,8 @@ from .storage import get_asset_dir
 
 logger = logging.getLogger(__name__)
 
+IMG2MD_MISSING_RETRY_LIMIT = 2
+
 
 def asset_init(
     pdf_path: str | Path,
@@ -97,10 +99,6 @@ def asset_init(
 
         _notify("Running img2md...")
         img2md_output_dir.mkdir(parents=True, exist_ok=True)
-        stale_pattern = re.compile(r"output_(\d{3})\.md$", re.IGNORECASE)
-        for path in img2md_output_dir.iterdir():
-            if path.is_file() and stale_pattern.match(path.name):
-                path.unlink(missing_ok=True)
 
         image_pattern = re.compile(r".*_(\d{3})\.png$", re.IGNORECASE)
 
@@ -112,34 +110,78 @@ def asset_init(
 
         sorted_images = sorted(image_paths, key=_image_sort_key)
 
-        jobs: list[AgentJob] = []
+        jobs_by_output_name: dict[str, AgentJob] = {}
+        expected_output_names: list[str] = []
+        used_suffixes: set[str] = set()
+
         for idx, image_path in enumerate(sorted_images):
             match = image_pattern.match(image_path.name)
-            suffix = match.group(1) if match else f"{idx + 1:03d}"
+            raw_suffix = match.group(1) if match else f"{idx + 1:03d}"
+            suffix = raw_suffix if raw_suffix not in used_suffixes else f"{idx + 1:03d}"
+            used_suffixes.add(suffix)
             output_name = f"output_{suffix}.md"
-            jobs.append(
-                AgentJob(
-                    name=f"img2md_{suffix}",
-                    runners=[
-                        RunnerConfig(
-                            runner="gemini",
-                            prompt_path=IMG2MD_GEMINI_PROMPT,
-                            model=GEMINI_MODEL,
-                            new_console=True,
-                        )
-                    ],
-                    input_files=[image_path],
-                    input_rename={image_path.name: "input.png"},
-                    deliver_dir=relative_to_repo(img2md_output_dir),
-                    deliver_rename={"output.md": output_name},
-                    clean_markdown=True,
-                )
+            expected_output_names.append(output_name)
+            jobs_by_output_name[output_name] = AgentJob(
+                name=f"img2md_{suffix}",
+                runners=[
+                    RunnerConfig(
+                        runner="gemini",
+                        prompt_path=IMG2MD_GEMINI_PROMPT,
+                        model=GEMINI_MODEL,
+                        new_console=True,
+                    )
+                ],
+                input_files=[image_path],
+                input_rename={image_path.name: "input.png"},
+                deliver_dir=relative_to_repo(img2md_output_dir),
+                deliver_rename={"output.md": output_name},
+                clean_markdown=True,
             )
 
-        results = run_agent_jobs(jobs, max_workers=len(jobs))
-        delivered = [path for result in results for path in result.delivered]
-        if not delivered:
-            raise FileNotFoundError("img2md produced no outputs")
+        expected_output_set = set(expected_output_names)
+        stale_pattern = re.compile(r"output_(\d{3})\.md$", re.IGNORECASE)
+        for path in img2md_output_dir.iterdir():
+            if path.is_file() and stale_pattern.match(path.name) and path.name not in expected_output_set:
+                path.unlink(missing_ok=True)
+
+        def _is_valid_img2md_page(path: Path) -> bool:
+            if not path.is_file():
+                return False
+            try:
+                return path.stat().st_size >= 5
+            except OSError:  # pragma: no cover - filesystem race/permission
+                return False
+
+        def _missing_outputs() -> list[str]:
+            missing: list[str] = []
+            for name in expected_output_names:
+                if not _is_valid_img2md_page(img2md_output_dir / name):
+                    missing.append(name)
+            return missing
+
+        attempt = 0
+        while True:
+            missing = _missing_outputs()
+            if not missing:
+                break
+            if attempt > IMG2MD_MISSING_RETRY_LIMIT:
+                break
+            attempt += 1
+            if attempt > 1:
+                _notify(f"Retrying img2md for {len(missing)} missing page(s)...")
+            for name in missing:
+                (img2md_output_dir / name).unlink(missing_ok=True)
+            jobs = [jobs_by_output_name[name] for name in missing]
+            try:
+                run_agent_jobs(jobs, max_workers=len(jobs))
+            except Exception as exc:
+                logger.warning("img2md attempt %d failed: %s", attempt, exc)
+
+        missing = _missing_outputs()
+        if missing:
+            raise FileNotFoundError(
+                f"img2md missing outputs under {img2md_output_dir}: {', '.join(missing)}"
+            )
 
         merged_output = merge_outputs(
             img2md_output_dir,
@@ -196,4 +238,3 @@ def asset_init(
         raw_pdf_path=raw_pdf_path,
         reference_files=reference_files,
     )
-

@@ -74,6 +74,8 @@ CODEX_REASONING_HIGH = "high"
 CODEX_REASONING_MEDIUM = "medium"
 GEMINI_MODEL = "gemini-3-pro-preview"
 
+IMG2MD_MISSING_RETRY_LIMIT = 1145142778
+
 
 def _prompt_path(*parts: str) -> Path:
     return PROMPTS_DIR.joinpath(*parts)
@@ -514,6 +516,47 @@ def _next_directory_index(directory: Path) -> int:
         except ValueError:  # pragma: no cover - defensive
             continue
     return max_index + 1
+
+
+_MARKDOWN_ALIAS_SUFFIX = ".alias"  # Keep in sync with pdf_block_gui_lib.main_window_components.window
+
+
+def _markdown_alias_path(markdown_path: Path) -> Path:
+    return markdown_path.with_name(markdown_path.name + _MARKDOWN_ALIAS_SUFFIX)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(text, encoding="utf-8", newline="\n")
+    tmp_path.replace(path)
+
+
+def _set_markdown_alias(markdown_path: Path, alias: str) -> None:
+    alias_path = _markdown_alias_path(markdown_path)
+    cleaned = alias.strip()
+    if not cleaned or cleaned == markdown_path.name:
+        try:
+            alias_path.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    _atomic_write_text(alias_path, cleaned)
+
+
+def _first_line_alias(markdown_text: str) -> str:
+    normalized = markdown_text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = normalized.split("\n")
+    if not lines:
+        return ""
+    first_line = lines[0].strip()
+    if first_line:
+        return first_line
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
 
 
 def _safe_rmtree(path: Path) -> None:
@@ -1071,6 +1114,10 @@ def init_tutor(asset_name: str, group_idx: int, focus_markdown: str) -> Path:
 
     focus_path = session_dir / "focus.md"
     focus_path.write_text(focus_markdown, encoding="utf-8", newline="\n")
+    try:
+        _set_markdown_alias(focus_path, _first_line_alias(focus_markdown))
+    except Exception as exc:  # pragma: no cover - best-effort UX
+        logger.warning("Failed to write focus.md alias at %s: %s", focus_path, exc)
     return focus_path
 
 
@@ -1169,6 +1216,10 @@ def ask_tutor(question: str, asset_name: str, group_idx: int, tutor_idx: int) ->
     answer = moved_output.read_text(encoding="utf-8")
     header = f"## 提问：\n\n{normalized_question}\n\n## 回答：\n\n"
     moved_output.write_text(header + answer.lstrip(), encoding="utf-8", newline="\n")
+    try:
+        _set_markdown_alias(moved_output, normalized_question)
+    except Exception as exc:  # pragma: no cover - best-effort UX
+        logger.warning("Failed to write ask_history alias at %s: %s", moved_output, exc)
     return moved_output
 
 
@@ -1870,10 +1921,6 @@ def asset_init(
 
         _notify("Running img2md...")
         img2md_output_dir.mkdir(parents=True, exist_ok=True)
-        stale_pattern = re.compile(r"output_(\d{3})\.md$", re.IGNORECASE)
-        for path in img2md_output_dir.iterdir():
-            if path.is_file() and stale_pattern.match(path.name):
-                path.unlink(missing_ok=True)
 
         image_pattern = re.compile(r".*_(\d{3})\.png$", re.IGNORECASE)
         def _image_sort_key(path: Path) -> tuple[int, int | str]:
@@ -1884,34 +1931,78 @@ def asset_init(
 
         sorted_images = sorted(image_paths, key=_image_sort_key)
 
-        jobs: list[AgentJob] = []
+        jobs_by_output_name: dict[str, AgentJob] = {}
+        expected_output_names: list[str] = []
+        used_suffixes: set[str] = set()
+
         for idx, image_path in enumerate(sorted_images):
             match = image_pattern.match(image_path.name)
-            suffix = match.group(1) if match else f"{idx + 1:03d}"
+            raw_suffix = match.group(1) if match else f"{idx + 1:03d}"
+            suffix = raw_suffix if raw_suffix not in used_suffixes else f"{idx + 1:03d}"
+            used_suffixes.add(suffix)
             output_name = f"output_{suffix}.md"
-            jobs.append(
-                AgentJob(
-                    name=f"img2md_{suffix}",
-                    runners=[
-                        RunnerConfig(
-                            runner="gemini",
-                            prompt_path=IMG2MD_GEMINI_PROMPT,
-                            model=GEMINI_MODEL,
-                            new_console=True,
-                        )
-                    ],
-                    input_files=[image_path],
-                    input_rename={image_path.name: "input.png"},
-                    deliver_dir=_relative_to_repo(img2md_output_dir),
-                    deliver_rename={"output.md": output_name},
-                    clean_markdown=True,
-                )
+            expected_output_names.append(output_name)
+            jobs_by_output_name[output_name] = AgentJob(
+                name=f"img2md_{suffix}",
+                runners=[
+                    RunnerConfig(
+                        runner="gemini",
+                        prompt_path=IMG2MD_GEMINI_PROMPT,
+                        model=GEMINI_MODEL,
+                        new_console=True,
+                    )
+                ],
+                input_files=[image_path],
+                input_rename={image_path.name: "input.png"},
+                deliver_dir=_relative_to_repo(img2md_output_dir),
+                deliver_rename={"output.md": output_name},
+                clean_markdown=True,
             )
 
-        results = run_agent_jobs(jobs, max_workers=len(jobs))
-        delivered = [path for result in results for path in result.delivered]
-        if not delivered:
-            raise FileNotFoundError("img2md produced no outputs")
+        expected_output_set = set(expected_output_names)
+        stale_pattern = re.compile(r"output_(\d{3})\.md$", re.IGNORECASE)
+        for path in img2md_output_dir.iterdir():
+            if path.is_file() and stale_pattern.match(path.name) and path.name not in expected_output_set:
+                path.unlink(missing_ok=True)
+
+        def _is_valid_img2md_page(path: Path) -> bool:
+            if not path.is_file():
+                return False
+            try:
+                return path.stat().st_size >= 5
+            except OSError:  # pragma: no cover - filesystem race/permission
+                return False
+
+        def _missing_outputs() -> list[str]:
+            missing: list[str] = []
+            for name in expected_output_names:
+                if not _is_valid_img2md_page(img2md_output_dir / name):
+                    missing.append(name)
+            return missing
+
+        attempt = 0
+        while True:
+            missing = _missing_outputs()
+            if not missing:
+                break
+            if attempt > IMG2MD_MISSING_RETRY_LIMIT:
+                break
+            attempt += 1
+            if attempt > 1:
+                _notify(f"Retrying img2md for {len(missing)} missing page(s)...")
+            for name in missing:
+                (img2md_output_dir / name).unlink(missing_ok=True)
+            jobs = [jobs_by_output_name[name] for name in missing]
+            try:
+                run_agent_jobs(jobs, max_workers=len(jobs))
+            except Exception as exc:
+                logger.warning("img2md attempt %d failed: %s", attempt, exc)
+
+        missing = _missing_outputs()
+        if missing:
+            raise FileNotFoundError(
+                f"img2md missing outputs under {img2md_output_dir}: {', '.join(missing)}"
+            )
 
         merged_output = merge_outputs(
             img2md_output_dir,

@@ -39,6 +39,7 @@ _SIDEBAR_ACTION_SCHEME = "exocortex-sidebar"
 _SIDEBAR_ACTION_HOST = "action"
 _SIDEBAR_GROUP_ALIAS_FILENAME = "group.alias"
 _SIDEBAR_MARKDOWN_ALIAS_SUFFIX = ".alias"
+_SIDEBAR_SHOW_MARKDOWN_PREVIEW = False
 
 
 class _MarkdownSidebarPage(QtWebEngineCore.QWebEnginePage):
@@ -1256,6 +1257,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_markdown_sidebar_tree_html(self) -> str:
         head_assets = markdown_helper.katex_assets()
         collapsed_class = "collapsed" if self._markdown_sidebar_collapsed else ""
+        show_preview = _SIDEBAR_SHOW_MARKDOWN_PREVIEW
 
         active_path: Path | None = None
         if self._current_markdown_path:
@@ -1321,7 +1323,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             title = (self._markdown_tabs.tabText(tab_index) or resolved.name).strip() or resolved.name
             title = self._markdown_sidebar_markdown_title(resolved, title)
-            preview = self._markdown_sidebar_preview_for_path(resolved)
+            preview = self._markdown_sidebar_preview_for_path(resolved) if show_preview else ""
             is_active = bool(active_path and resolved == active_path)
 
             group_ctx = self._group_context_from_markdown(resolved)
@@ -1412,13 +1414,16 @@ class MainWindow(QtWidgets.QMainWindow):
             parent_attr = esc(item.get("parent"))
             title_html = html.escape(str(item.get("title", "")))
             preview_html = html.escape(str(item.get("preview", "")))
+            preview_block = ""
+            if show_preview and preview_html:
+                preview_block = f"<div class='leaf-preview'>{preview_html}</div>"
             return (
                 "<div class='"
                 + classes
                 + f"' data-path='{path_attr}' data-parent='{parent_attr}' draggable='true'>"
                 + "<div class='leaf-main'>"
                 + f"<div class='leaf-title'>{title_html}</div>"
-                + f"<div class='leaf-preview'>{preview_html}</div>"
+                + preview_block
                 + "</div>"
                 + f"<button class='close' data-action='close' data-path='{path_attr}'>x</button>"
                 + "</div>"
