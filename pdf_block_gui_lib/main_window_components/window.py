@@ -199,6 +199,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._markdown_clipboard_capture_token = 0
         self._markdown_clipboard_capture_handler: Callable[[], None] | None = None
         self._asset_config_persist_suspended = False
+        self._asset_ui_state_persist_timer = QtCore.QTimer(self)
+        self._asset_ui_state_persist_timer.setSingleShot(True)
+        self._asset_ui_state_persist_timer.setInterval(250)
+        self._asset_ui_state_persist_timer.timeout.connect(self._persist_asset_ui_state)
+        self._markdown_scroll_y_by_path: dict[str, float] = {}
         self._compress_mode_active = False
         self._compress_in_progress = False
         self._compress_preview_in_progress = False
@@ -415,6 +420,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._markdown_sidebar_splitter.setStretchFactor(0, 0)
         self._markdown_sidebar_splitter.setStretchFactor(1, 1)
         self._markdown_sidebar_splitter.setSizes([240, 800])
+        self._markdown_sidebar_splitter.splitterMoved.connect(
+            lambda _pos, _idx: self._schedule_persist_asset_ui_state()
+        )
 
         markdown_layout.addWidget(self._markdown_sidebar_splitter)
 
@@ -433,6 +441,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._splitter.setCollapsible(1, False)
         self._splitter.setStretchFactor(0, DEFAULT_SPLITTER_RATIO_LEFT)
         self._splitter.setStretchFactor(1, DEFAULT_SPLITTER_RATIO_RIGHT)
+        self._splitter.splitterMoved.connect(
+            lambda _pos, _idx: self._schedule_persist_asset_ui_state()
+        )
 
         central = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(central)
@@ -472,7 +483,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         selected_path = Path(path)
         default_name = selected_path.stem
-        dialog = _NewAssetDialog(default_name, parent=self)
+        dialog = _NewAssetDialog(
+            default_name,
+            allow_img2md_markdown=selected_path.suffix.lower() == ".pdf",
+            img2md_start_dir=selected_path.parent,
+            parent=self,
+        )
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
         asset_name = (dialog.asset_name() or default_name).strip()
@@ -491,6 +507,20 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("Asset name is required.")
             return
         self._reset_compress_state(clear_rect=True)
+
+        img2md_markdown_path = dialog.img2md_markdown_path()
+        if img2md_markdown_path is not None:
+            if selected_path.suffix.lower() != ".pdf":
+                self.statusBar().showMessage("Skipping img2md requires selecting a PDF first.")
+                return
+            if dialog.compress_enabled():
+                self.statusBar().showMessage("Page compress can't be used when skipping img2md.")
+                return
+            self._start_asset_initialization_with_img2md_markdown(
+                selected_path, img2md_markdown_path, asset_name
+            )
+            return
+
         if dialog.compress_enabled():
             if selected_path.suffix.lower() == ".md":
                 self.statusBar().showMessage("Page compress only supports PDF inputs.")
@@ -498,6 +528,32 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._start_page_compress(selected_path, asset_name)
                 return
         self._start_asset_initialization(selected_path, asset_name)
+
+    def _start_asset_initialization_with_img2md_markdown(
+        self,
+        source_pdf: Path,
+        img2md_markdown_path: Path,
+        asset_name: str,
+    ) -> None:
+        if not source_pdf.is_file():
+            self.statusBar().showMessage(f"PDF not found: {source_pdf}")
+            return
+        if not img2md_markdown_path.is_file():
+            self.statusBar().showMessage(f"Markdown not found: {img2md_markdown_path}")
+            return
+        if img2md_markdown_path.suffix.lower() != ".md":
+            self.statusBar().showMessage("Selected file is not a Markdown (.md) file.")
+            return
+
+        self._asset_init_in_progress = True
+        self._show_asset_progress_dialog()
+        if self._asset_progress_dialog:
+            self._asset_progress_dialog.append_message(
+                f"Using pre-generated Markdown (skip img2md): {img2md_markdown_path}"
+            )
+            self._asset_progress_dialog.append_message(f"Starting asset '{asset_name}'...")
+        self.statusBar().showMessage(f"Initializing asset '{asset_name}' (skip img2md)...")
+        self._start_asset_init_task(img2md_markdown_path, asset_name, rendered_pdf_path=source_pdf)
 
     def _start_asset_initialization(self, source_path: str | Path, asset_name: str) -> None:
         source_path = Path(source_path)
@@ -2889,21 +2945,146 @@ class MainWindow(QtWidgets.QMainWindow):
             self._show_markdown_placeholder()
         self._set_current_markdown_path(self._resolve_current_markdown_path())
 
+    def _schedule_persist_asset_ui_state(self) -> None:
+        if self._asset_config_persist_suspended:
+            return
+        if not self._current_asset_name:
+            return
+        self._asset_ui_state_persist_timer.start()
+
+    @staticmethod
+    def _encode_splitter_state(splitter: QtWidgets.QSplitter | None) -> str | None:
+        if splitter is None:
+            return None
+        try:
+            state = splitter.saveState()
+        except Exception:
+            return None
+        if not state:
+            return None
+        try:
+            return bytes(state.toBase64()).decode("ascii")
+        except Exception:
+            return None
+
+    @staticmethod
+    def _restore_splitter_state(splitter: QtWidgets.QSplitter | None, raw: object) -> bool:
+        if splitter is None or not isinstance(raw, str) or not raw.strip():
+            return False
+        try:
+            state = QtCore.QByteArray.fromBase64(raw.encode("ascii"))
+        except Exception:
+            return False
+        try:
+            return bool(splitter.restoreState(state))
+        except Exception:
+            return False
+
+    @staticmethod
+    def _parse_splitter_sizes(raw: object) -> list[int] | None:
+        if not isinstance(raw, list) or len(raw) != 2:
+            return None
+        sizes: list[int] = []
+        for item in raw:
+            if not isinstance(item, (int, float)):
+                return None
+            sizes.append(max(1, int(item)))
+        return sizes
+
+    def _capture_current_markdown_scroll_position(self) -> None:
+        asset_name = self._current_asset_name
+        if not asset_name:
+            return
+        view = self._current_markdown_view()
+        if not view:
+            return
+        markdown_path = self._markdown_path_for_view(view)
+        if not markdown_path:
+            return
+        try:
+            pos = view.page().scrollPosition()
+            scroll_y = float(pos.y())
+        except Exception:
+            return
+        key = self._serialize_asset_markdown_path(asset_name, markdown_path)
+        self._markdown_scroll_y_by_path[key] = scroll_y
+
+    def _queue_markdown_scroll_restore(self, view: QtWebEngineWidgets.QWebEngineView, path: Path) -> None:
+        asset_name = self._current_asset_name
+        if not asset_name:
+            return
+        key = self._serialize_asset_markdown_path(asset_name, path)
+        scroll_y = self._markdown_scroll_y_by_path.get(key)
+        if scroll_y is None:
+            return
+        view.setProperty("_pending_scroll_restore_y", float(scroll_y))
+
+    def _apply_pending_markdown_scroll_restore(self, view: QtWebEngineWidgets.QWebEngineView) -> None:
+        raw = view.property("_pending_scroll_restore_y")
+        if raw is None:
+            return
+        view.setProperty("_pending_scroll_restore_y", None)
+        try:
+            scroll_y = float(raw)
+        except Exception:
+            return
+        if scroll_y <= 0:
+            return
+        try:
+            view.page().runJavaScript(f"window.scrollTo(0, {int(scroll_y)});")
+        except Exception:
+            return
+
     def _persist_asset_ui_state(self) -> None:
         if self._asset_config_persist_suspended:
             return
         asset_name = self._current_asset_name
         if not asset_name:
             return
+        self._capture_current_markdown_scroll_position()
         config: dict[str, object] = {"zoom": float(self._zoom)}
         config["markdown_sidebar_collapsed"] = bool(self._markdown_sidebar_collapsed)
+        splitter_state = self._encode_splitter_state(self._splitter)
+        if splitter_state:
+            config["main_splitter_state_b64"] = splitter_state
+        sidebar_state = self._encode_splitter_state(self._markdown_sidebar_splitter)
+        if sidebar_state:
+            config["markdown_sidebar_splitter_state_b64"] = sidebar_state
+        if self._splitter:
+            config["main_splitter_sizes"] = [int(v) for v in self._splitter.sizes()]
+        if self._markdown_sidebar_splitter:
+            config["markdown_sidebar_splitter_sizes"] = [
+                int(v) for v in self._markdown_sidebar_splitter.sizes()
+            ]
+        if self._markdown_sidebar_splitter and not self._markdown_sidebar_collapsed:
+            sizes = self._markdown_sidebar_splitter.sizes()
+            if len(sizes) == 2 and sizes[0] > 0:
+                self._markdown_sidebar_restore_width = int(sizes[0])
         config["markdown_sidebar_restore_width"] = (
             int(self._markdown_sidebar_restore_width) if self._markdown_sidebar_restore_width is not None else None
         )
         config["markdown_sidebar_collapsed_nodes"] = sorted(self._markdown_sidebar_collapsed_nodes)
+        scroll_bar = self._view.verticalScrollBar()
+        scroll_value = int(scroll_bar.value())
+        scroll_max = int(scroll_bar.maximum())
+        config["pdf_scroll_value"] = scroll_value
+        config["pdf_scroll_fraction"] = float(scroll_value) / scroll_max if scroll_max > 0 else 0.0
+        open_markdown_paths = self._open_markdown_paths()
+        open_markdown_keys = {
+            self._serialize_asset_markdown_path(asset_name, path) for path in open_markdown_paths
+        }
+        if self._current_markdown_path:
+            open_markdown_keys.add(
+                self._serialize_asset_markdown_path(asset_name, self._current_markdown_path)
+            )
+        config["markdown_scroll_y"] = {
+            key: float(value)
+            for key, value in self._markdown_scroll_y_by_path.items()
+            if key in open_markdown_keys
+        }
         config["open_markdown_paths"] = [
             self._serialize_asset_markdown_path(asset_name, path)
-            for path in self._open_markdown_paths()
+            for path in open_markdown_paths
         ]
         if self._current_markdown_path:
             config["markdown_path"] = self._serialize_asset_markdown_path(asset_name, self._current_markdown_path)
@@ -2916,6 +3097,28 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _restore_asset_ui_state(self, asset_name: str) -> None:
         config = load_asset_config(asset_name) or {}
+
+        self._markdown_scroll_y_by_path = {}
+        scroll_raw = config.get("markdown_scroll_y")
+        if isinstance(scroll_raw, dict):
+            for key, value in scroll_raw.items():
+                if not isinstance(key, str) or not key:
+                    continue
+                if isinstance(value, (int, float)):
+                    self._markdown_scroll_y_by_path[key] = float(value)
+
+        restored_main_splitter = self._restore_splitter_state(
+            self._splitter, config.get("main_splitter_state_b64")
+        )
+        restored_sidebar_splitter = self._restore_splitter_state(
+            self._markdown_sidebar_splitter, config.get("markdown_sidebar_splitter_state_b64")
+        )
+        splitter_sizes = self._parse_splitter_sizes(config.get("main_splitter_sizes"))
+        if splitter_sizes and self._splitter and not restored_main_splitter:
+            self._splitter.setSizes(splitter_sizes)
+        sidebar_sizes = self._parse_splitter_sizes(config.get("markdown_sidebar_splitter_sizes"))
+        if sidebar_sizes and self._markdown_sidebar_splitter and not restored_sidebar_splitter:
+            self._markdown_sidebar_splitter.setSizes(sidebar_sizes)
 
         sidebar_collapsed = config.get("markdown_sidebar_collapsed")
         collapsed = bool(sidebar_collapsed) if isinstance(sidebar_collapsed, bool) else False
@@ -2964,6 +3167,40 @@ class MainWindow(QtWidgets.QMainWindow):
             self._open_markdown_file(path)
         if active_markdown:
             self._open_markdown_file(active_markdown)
+
+        pdf_scroll_fraction_raw = config.get("pdf_scroll_fraction")
+        pdf_scroll_fraction: float | None = None
+        if isinstance(pdf_scroll_fraction_raw, (int, float)):
+            candidate = float(pdf_scroll_fraction_raw)
+            if 0.0 <= candidate <= 1.0:
+                pdf_scroll_fraction = candidate
+        pdf_scroll_value_raw = config.get("pdf_scroll_value")
+        pdf_scroll_value: int | None = None
+        if isinstance(pdf_scroll_value_raw, (int, float)):
+            pdf_scroll_value = int(pdf_scroll_value_raw)
+
+        QtCore.QTimer.singleShot(
+            0,
+            lambda _asset=asset_name, _fraction=pdf_scroll_fraction, _value=pdf_scroll_value: self._restore_pdf_scroll(
+                _asset, _fraction, _value
+            ),
+        )
+
+    def _restore_pdf_scroll(
+        self, asset_name: str, scroll_fraction: float | None, scroll_value: int | None
+    ) -> None:
+        if self._current_asset_name != asset_name:
+            return
+        scroll_bar = self._view.verticalScrollBar()
+        maximum = int(scroll_bar.maximum())
+        target: int | None = None
+        if scroll_fraction is not None and maximum > 0:
+            target = int(round(scroll_fraction * maximum))
+        elif scroll_value is not None:
+            target = int(scroll_value)
+        if target is None:
+            return
+        scroll_bar.setValue(max(0, min(target, maximum)))
 
     def _update_prompt_visibility(self) -> None:
         if self._feynman_mode_active:
@@ -3976,6 +4213,7 @@ class MainWindow(QtWidgets.QMainWindow):
             widget = self._markdown_tabs.widget(existing_index)
             if isinstance(widget, QtWebEngineWidgets.QWebEngineView):
                 self._configure_markdown_view(widget, resolved)
+                self._queue_markdown_scroll_restore(widget, resolved)
                 widget.setHtml(html, baseUrl=QtCore.QUrl.fromLocalFile(str(resolved.parent)))
             if self._markdown_tabs.tabText(existing_index) != title:
                 self._markdown_tabs.setTabText(existing_index, title)
@@ -3986,6 +4224,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         view = QtWebEngineWidgets.QWebEngineView()
         self._configure_markdown_view(view, resolved)
+        self._queue_markdown_scroll_restore(view, resolved)
         view.setHtml(html, baseUrl=QtCore.QUrl.fromLocalFile(str(resolved.parent)))
         index = self._markdown_tabs.addTab(view, title)
         self._markdown_tabs.setCurrentIndex(index)
@@ -4015,17 +4254,53 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(f"Failed to render markdown: {exc}")
             return
         self._configure_markdown_view(widget, resolved)
+        self._queue_markdown_scroll_restore(widget, resolved)
         widget.setHtml(html, baseUrl=QtCore.QUrl.fromLocalFile(str(resolved.parent)))
 
     def _configure_markdown_view(self, view: QtWebEngineWidgets.QWebEngineView, path: Path) -> None:
         view.setProperty("markdown_path", str(path))
-        if view.property("_markdown_context_menu_ready"):
+        if not view.property("_markdown_context_menu_ready"):
+            view.setProperty("_markdown_context_menu_ready", True)
+            view.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            view.customContextMenuRequested.connect(
+                lambda point, _view=view: self._show_markdown_context_menu(_view, point)
+            )
+
+        if not view.property("_markdown_scroll_tracking_ready"):
+            view.setProperty("_markdown_scroll_tracking_ready", True)
+            try:
+                view.page().scrollPositionChanged.connect(
+                    lambda pos, _view=view: self._on_markdown_scroll_position_changed(_view, pos)
+                )
+            except Exception:
+                pass
+            view.loadFinished.connect(
+                lambda ok, _view=view: self._on_markdown_view_load_finished(_view, ok)
+            )
+
+    def _on_markdown_scroll_position_changed(
+        self, view: QtWebEngineWidgets.QWebEngineView, pos: QtCore.QPointF
+    ) -> None:
+        asset_name = self._current_asset_name
+        if not asset_name:
             return
-        view.setProperty("_markdown_context_menu_ready", True)
-        view.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        view.customContextMenuRequested.connect(
-            lambda point, _view=view: self._show_markdown_context_menu(_view, point)
-        )
+        markdown_path = self._markdown_path_for_view(view)
+        if not markdown_path:
+            return
+        key = self._serialize_asset_markdown_path(asset_name, markdown_path)
+        try:
+            scroll_y = float(pos.y())
+        except Exception:
+            return
+        self._markdown_scroll_y_by_path[key] = scroll_y
+        self._schedule_persist_asset_ui_state()
+
+    def _on_markdown_view_load_finished(
+        self, view: QtWebEngineWidgets.QWebEngineView, ok: bool
+    ) -> None:
+        if not ok:
+            return
+        self._apply_pending_markdown_scroll_restore(view)
 
     def _show_markdown_context_menu(self, view: QtWebEngineWidgets.QWebEngineView, point: QtCore.QPoint) -> None:
         try:
@@ -4697,6 +4972,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_scroll(self, _value: int) -> None:
         if self._drag_active:
+            self._schedule_persist_asset_ui_state()
             return
         center_y = self._view.mapToScene(
             QtCore.QPoint(
@@ -4710,6 +4986,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._page_input.setValue(self._current_page + 1)
             self._page_input.blockSignals(False)
             self._rebuild_scene(center_on_current=False)
+        self._schedule_persist_asset_ui_state()
 
     def _rebuild_scene(self, *, center_on_current: bool = False) -> None:
         if not self._page_count:

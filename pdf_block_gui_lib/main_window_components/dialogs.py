@@ -613,7 +613,14 @@ class _PreviewDialog(QtWidgets.QDialog):
 
 
 class _NewAssetDialog(QtWidgets.QDialog):
-    def __init__(self, default_name: str, parent: QtWidgets.QWidget | None = None) -> None:
+    def __init__(
+        self,
+        default_name: str,
+        *,
+        allow_img2md_markdown: bool = False,
+        img2md_start_dir: Path | None = None,
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("New Asset")
         self.setModal(True)
@@ -623,6 +630,10 @@ class _NewAssetDialog(QtWidgets.QDialog):
         self._subfolder_input = QtWidgets.QLineEdit(self)
         self._subfolder_input.setPlaceholderText("e.g. folder1/folder2")
         self._compress_switch = QtWidgets.QCheckBox("page compress", self)
+        self._img2md_markdown_path: Path | None = None
+        self._img2md_start_dir = img2md_start_dir
+        self._img2md_button: QtWidgets.QPushButton | None = None
+        self._img2md_path_label: QtWidgets.QLabel | None = None
 
         form = QtWidgets.QFormLayout()
         form.addRow("Asset name:", self._name_input)
@@ -631,6 +642,22 @@ class _NewAssetDialog(QtWidgets.QDialog):
         compress_row.addWidget(self._compress_switch)
         compress_row.addStretch(1)
         form.addRow("Options:", compress_row)
+
+        if allow_img2md_markdown:
+            self._img2md_button = QtWidgets.QPushButton("Select pre-generated Markdown (skip img2md)...", self)
+            self._img2md_button.setToolTip(
+                "Pick a .md file that is already the output of img2md; the app will use it as img2md_output/output.md."
+            )
+            self._img2md_button.clicked.connect(self._on_select_img2md_markdown_clicked)
+
+            self._img2md_path_label = QtWidgets.QLabel("No pre-generated Markdown selected.", self)
+            self._img2md_path_label.setWordWrap(True)
+            self._img2md_path_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+
+            md_row = QtWidgets.QHBoxLayout()
+            md_row.addWidget(self._img2md_button)
+            md_row.addWidget(self._img2md_path_label, 1)
+            form.addRow("img2md:", md_row)
 
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel, parent=self
@@ -650,6 +677,34 @@ class _NewAssetDialog(QtWidgets.QDialog):
 
     def compress_enabled(self) -> bool:
         return self._compress_switch.isChecked()
+
+    def img2md_markdown_path(self) -> Path | None:
+        return self._img2md_markdown_path
+
+    @QtCore.Slot()
+    def _on_select_img2md_markdown_clicked(self) -> None:
+        start_dir = str(self._img2md_start_dir) if self._img2md_start_dir else ""
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select pre-generated img2md Markdown",
+            start_dir,
+            "Markdown Files (*.md);;All Files (*)",
+        )
+        if not path:
+            return
+        selected = Path(path)
+        if selected.suffix.lower() != ".md":
+            QtWidgets.QMessageBox.warning(self, "Invalid File", "Please select a Markdown (.md) file.")
+            return
+        if not selected.is_file():
+            QtWidgets.QMessageBox.warning(self, "Invalid File", "Selected file does not exist.")
+            return
+        self._img2md_markdown_path = selected
+        if self._img2md_path_label is not None:
+            self._img2md_path_label.setText(str(selected))
+            self._img2md_path_label.setToolTip(str(selected))
+        self._compress_switch.setChecked(False)
+        self._compress_switch.setEnabled(False)
 
 
 class _AssetSelectionDialog(QtWidgets.QDialog):
