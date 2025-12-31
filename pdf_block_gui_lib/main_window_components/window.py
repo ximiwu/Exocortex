@@ -1151,6 +1151,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._pending_renders.clear()
         self._desired_pages.clear()
         self._scene.clear()
+        self._block_action_proxy = None
+        self._block_action_block_id = None
         self._clear_compress_overlays(reset_rect=False)
         self._next_block_id = 1
         self._next_group_idx = 1
@@ -3019,21 +3021,60 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         view.setProperty("_pending_scroll_restore_y", float(scroll_y))
 
-    def _apply_pending_markdown_scroll_restore(self, view: QtWebEngineWidgets.QWebEngineView) -> None:
+    def _apply_pending_markdown_scroll_restore(self, view: QtWebEngineWidgets.QWebEngineView) -> bool:
         raw = view.property("_pending_scroll_restore_y")
         if raw is None:
-            return
+            return False
         view.setProperty("_pending_scroll_restore_y", None)
         try:
             scroll_y = float(raw)
         except Exception:
-            return
+            return False
         if scroll_y <= 0:
-            return
+            return False
         try:
             view.page().runJavaScript(f"window.scrollTo(0, {int(scroll_y)});")
         except Exception:
+            return False
+        return True
+
+    @staticmethod
+    def _nudge_webengine_view_paint(view: QtWebEngineWidgets.QWebEngineView) -> None:
+        try:
+            view.update()
+        except Exception:
+            pass
+        try:
+            view.repaint()
+        except Exception:
+            pass
+        try:
+            zoom = float(view.zoomFactor())
+            view.setZoomFactor(zoom + 0.0001)
+            view.setZoomFactor(zoom)
+        except Exception:
+            pass
+        try:
+            page = view.page()
+        except Exception:
             return
+        if page is None:
+            return
+        try:
+            page.setBackgroundColor(QtGui.QColor("#ffffff"))
+        except Exception:
+            pass
+        try:
+            page.runJavaScript(
+                "(function(){"
+                "try{document.documentElement&&document.documentElement.getBoundingClientRect();}catch(e){}"
+                "try{document.body&&document.body.getBoundingClientRect();}catch(e){}"
+                "try{const x=window.scrollX||0;const y=window.scrollY||0;"
+                "window.scrollTo(x,y+1);window.scrollTo(x,y);}catch(e){}"
+                "})();"
+            )
+        except Exception:
+            pass
 
     def _persist_asset_ui_state(self) -> None:
         if self._asset_config_persist_suspended:
@@ -4222,15 +4263,23 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(f"Updated {title}")
             return
 
-        view = QtWebEngineWidgets.QWebEngineView()
+        view = QtWebEngineWidgets.QWebEngineView(self._markdown_tabs)
         self._configure_markdown_view(view, resolved)
         self._queue_markdown_scroll_restore(view, resolved)
-        view.setHtml(html, baseUrl=QtCore.QUrl.fromLocalFile(str(resolved.parent)))
         index = self._markdown_tabs.addTab(view, title)
         self._markdown_tabs.setCurrentIndex(index)
         self._markdown_tabs.setTabsClosable(True)
         self._markdown_views[resolved] = view
         self._set_current_markdown_path(resolved)
+        base_url = QtCore.QUrl.fromLocalFile(str(resolved.parent))
+
+        def _load_html() -> None:
+            try:
+                view.setHtml(html, baseUrl=base_url)
+            except Exception:
+                return
+
+        QtCore.QTimer.singleShot(0, _load_html)
         self.statusBar().showMessage(f"Opened {title}")
 
     def _refresh_open_markdown_file(self, path: Path) -> None:
@@ -4259,6 +4308,22 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _configure_markdown_view(self, view: QtWebEngineWidgets.QWebEngineView, path: Path) -> None:
         view.setProperty("markdown_path", str(path))
+        if not view.property("_markdown_background_ready"):
+            view.setProperty("_markdown_background_ready", True)
+            try:
+                view.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+                view.setStyleSheet("background: #ffffff;")
+            except Exception:
+                pass
+            try:
+                page = view.page()
+            except Exception:
+                page = None
+            if page is not None:
+                try:
+                    page.setBackgroundColor(QtGui.QColor("#ffffff"))
+                except Exception:
+                    pass
         if not view.property("_markdown_context_menu_ready"):
             view.setProperty("_markdown_context_menu_ready", True)
             view.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -4301,6 +4366,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if not ok:
             return
         self._apply_pending_markdown_scroll_restore(view)
+        self._nudge_webengine_view_paint(view)
+        QtCore.QTimer.singleShot(
+            0, lambda _view=view: self._nudge_webengine_view_paint(_view)
+        )
+        QtCore.QTimer.singleShot(
+            80, lambda _view=view: self._nudge_webengine_view_paint(_view)
+        )
 
     def _show_markdown_context_menu(self, view: QtWebEngineWidgets.QWebEngineView, point: QtCore.QPoint) -> None:
         try:
@@ -4941,6 +5013,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _clear_scene_items(self) -> None:
         self._hide_block_action_overlay()
         self._scene.clear()
+        self._block_action_proxy = None
+        self._block_action_block_id = None
         self._page_pixmaps.clear()
         self._pages_loaded.clear()
         self._pending_renders.clear()
@@ -5085,6 +5159,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if page_index in self._page_pixmaps:
             self._scene.removeItem(self._page_pixmaps[page_index])
             del self._page_pixmaps[page_index]
+        if self._block_action_block_id in self._blocks_by_page.get(page_index, []):
+            self._hide_block_action_overlay()
         for block_id in list(self._blocks_by_page.get(page_index, [])):
             item = self._block_items.pop(block_id, None)
             if item:
@@ -5138,11 +5214,33 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         return translated.center()
 
+    def _ensure_block_action_overlay(self) -> None:
+        if self._block_action_proxy is not None:
+            return
+
+        container = QtWidgets.QFrame()
+        container.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        layout = QtWidgets.QHBoxLayout(container)
+        layout.setContentsMargins(6, 4, 6, 4)
+
+        merge_button = QtWidgets.QPushButton("Merge Block")
+        clear_button = QtWidgets.QPushButton("Clear Selection")
+        merge_button.clicked.connect(self._merge_selected_blocks)
+        clear_button.clicked.connect(self._clear_merge_order)
+        layout.addWidget(merge_button)
+        layout.addWidget(clear_button)
+
+        proxy = self._scene.addWidget(container)
+        proxy.setZValue(10)
+        proxy.setFlag(QtWidgets.QGraphicsItem.ItemIgnoresTransformations, True)
+        proxy.setVisible(False)
+
+        self._block_action_proxy = proxy
+
     def _hide_block_action_overlay(self) -> None:
-        if self._block_action_proxy:
-            self._scene.removeItem(self._block_action_proxy)
-        self._block_action_proxy = None
         self._block_action_block_id = None
+        if self._block_action_proxy is not None:
+            self._block_action_proxy.setVisible(False)
 
     def _position_block_action_overlay(self, center: QtCore.QPointF) -> None:
         if not self._block_action_proxy:
@@ -5159,28 +5257,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if center is None:
             self._hide_block_action_overlay()
             return
-        if block_id != self._block_action_block_id:
-            self._hide_block_action_overlay()
-        if self._block_action_proxy and self._block_action_block_id == block_id:
-            self._position_block_action_overlay(center)
+        self._ensure_block_action_overlay()
+        if self._block_action_proxy is None:
             return
-
-        container = QtWidgets.QFrame()
-        container.setFrameShape(QtWidgets.QFrame.StyledPanel)
-        layout = QtWidgets.QHBoxLayout(container)
-        layout.setContentsMargins(6, 4, 6, 4)
-        merge_button = QtWidgets.QPushButton("Merge Block")
-        clear_button = QtWidgets.QPushButton("Clear Selection")
-        merge_button.clicked.connect(self._merge_selected_blocks)
-        clear_button.clicked.connect(self._clear_merge_order)
-        layout.addWidget(merge_button)
-        layout.addWidget(clear_button)
-
-        proxy = self._scene.addWidget(container)
-        proxy.setZValue(10)
-        proxy.setFlag(QtWidgets.QGraphicsItem.ItemIgnoresTransformations, True)
-        self._block_action_proxy = proxy
         self._block_action_block_id = block_id
+        self._block_action_proxy.setVisible(True)
         self._position_block_action_overlay(center)
 
     def _on_block_hover_enter(self, block_id: int) -> None:

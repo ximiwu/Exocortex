@@ -1,5 +1,5 @@
 ﻿## 任务
-output/output.md 的latex公式渲染出错了，仔细检查然后修好它
+output/output.md 的latex公式渲染出错了，仔细检查然后修好它。如果有{aligned}块，拆成多个$$包裹的公式块
 
 
 ## File I/O Protocol (UTF-8 Enforced)

@@ -40,10 +40,22 @@ try:
 except ImportError:  # pragma: no cover - optional dependency guard
     _ARITHMETEX_AVAILABLE = False
 
+
+def _has_agent_workspace_dir(candidate: Path) -> bool:
+    try:
+        return any(
+            entry.is_dir()
+            and (entry.name == "agent_workspace" or entry.name.startswith("agent_workspace_"))
+            for entry in candidate.iterdir()
+        )
+    except Exception:
+        return False
+
+
 def _detect_repo_root(module_dir: Path) -> Path:
     markers = ("prompts", "assets", "agent_workspace", "README.md")
     for candidate in (module_dir, *module_dir.parents):
-        if any((candidate / marker).exists() for marker in markers):
+        if any((candidate / marker).exists() for marker in markers) or _has_agent_workspace_dir(candidate):
             return candidate
     return module_dir
 

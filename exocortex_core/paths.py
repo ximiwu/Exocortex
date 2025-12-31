@@ -10,6 +10,17 @@ from pathlib import Path
 DEFAULT_REPO_MARKERS: tuple[str, ...] = ("prompts", "assets", "agent_workspace", "README.md")
 
 
+def _has_agent_workspace_dir(candidate: Path) -> bool:
+    try:
+        return any(
+            entry.is_dir()
+            and (entry.name == "agent_workspace" or entry.name.startswith("agent_workspace_"))
+            for entry in candidate.iterdir()
+        )
+    except Exception:
+        return False
+
+
 def is_compiled_runtime() -> bool:
     """
     Best-effort detection for packaged/compiled runtimes (Nuitka/PyInstaller).
@@ -43,7 +54,7 @@ def runtime_base_dir() -> Path:
 
 def detect_repo_root(start: Path, markers: tuple[str, ...] = DEFAULT_REPO_MARKERS) -> Path:
     for candidate in (start, *start.parents):
-        if any((candidate / marker).exists() for marker in markers):
+        if any((candidate / marker).exists() for marker in markers) or _has_agent_workspace_dir(candidate):
             return candidate
     return start
 

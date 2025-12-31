@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import logging
 import os
 import re
@@ -15,16 +16,87 @@ from concurrent.futures import ThreadPoolExecutor
 logger = logging.getLogger(__name__)
 
 
+def _has_agent_workspace_dir(candidate: Path) -> bool:
+    try:
+        return any(
+            entry.is_dir()
+            and (entry.name == "agent_workspace" or entry.name.startswith("agent_workspace_"))
+            for entry in candidate.iterdir()
+        )
+    except Exception:
+        return False
+
+
+def _pid_is_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if pid == os.getpid():
+        return True
+
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            ERROR_ACCESS_DENIED = 5
+
+            open_process = kernel32.OpenProcess
+            open_process.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            open_process.restype = wintypes.HANDLE
+
+            close_handle = kernel32.CloseHandle
+            close_handle.argtypes = [wintypes.HANDLE]
+            close_handle.restype = wintypes.BOOL
+
+            handle = open_process(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if handle:
+                close_handle(handle)
+                return True
+
+            error = ctypes.get_last_error()
+            if error == ERROR_ACCESS_DENIED:
+                return True
+            return False
+        except Exception:
+            return True
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except Exception:
+        return True
+    return True
+
+
+def _parse_agent_workspace_pid(name: str) -> int | None:
+    prefix = "agent_workspace_"
+    if not name.startswith(prefix):
+        return None
+    raw = name.removeprefix(prefix).strip()
+    if not raw.isdigit():
+        return None
+    try:
+        pid = int(raw)
+    except Exception:
+        return None
+    return pid if pid > 0 else None
+
+
 def _detect_repo_root(module_dir: Path) -> Path:
     markers = ("prompts", "assets", "agent_workspace", "README.md")
     for candidate in (module_dir, *module_dir.parents):
-        if any((candidate / marker).exists() for marker in markers):
+        if any((candidate / marker).exists() for marker in markers) or _has_agent_workspace_dir(candidate):
             return candidate
     return module_dir
 
 
 REPO_ROOT = _detect_repo_root(Path(__file__).resolve().parent)
-WORKSPACE_ROOT = REPO_ROOT / "agent_workspace"
+WORKSPACE_ROOT = REPO_ROOT / f"agent_workspace_{os.getpid()}"
 _WORKSPACE_LOCK = threading.Lock()
 _WORKSPACE_INITIALIZED = False
 
@@ -53,6 +125,27 @@ def _safe_unlink(path: Path) -> None:
         except Exception:
             pass
         path.unlink(missing_ok=True)
+
+
+def _cleanup_stale_workspace_roots() -> None:
+    try:
+        entries = list(REPO_ROOT.iterdir())
+    except Exception:
+        return
+
+    current_pid = os.getpid()
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        pid = _parse_agent_workspace_pid(entry.name)
+        if pid is None or pid == current_pid:
+            continue
+        if _pid_is_running(pid):
+            continue
+        try:
+            _safe_rmtree(entry)
+        except Exception:
+            logger.warning("Failed to remove stale workspace root: %s", entry)
 
 
 def _ensure_workspace_root() -> None:
@@ -105,12 +198,27 @@ def _initialize_workspace_root() -> None:
     with _WORKSPACE_LOCK:
         if _WORKSPACE_INITIALIZED:
             return
+        _cleanup_stale_workspace_roots()
         _ensure_workspace_root()
         _reset_workspace_root()
         _WORKSPACE_INITIALIZED = True
 
 
 _initialize_workspace_root()
+
+
+def _cleanup_current_workspace_root() -> None:
+    keep = os.environ.get("EXOCORTEX_KEEP_AGENT_WORKSPACE", "").strip().lower()
+    if keep in {"1", "true", "yes", "y", "on"}:
+        return
+    try:
+        if WORKSPACE_ROOT.exists():
+            _safe_rmtree(WORKSPACE_ROOT)
+    except Exception:
+        logger.warning("Failed to remove workspace root: %s", WORKSPACE_ROOT)
+
+
+atexit.register(_cleanup_current_workspace_root)
 
 
 def create_workspace() -> Path:
