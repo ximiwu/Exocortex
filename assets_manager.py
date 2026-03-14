@@ -80,7 +80,7 @@ REFERENCE_RENDER_DPI = 130  # Keep in sync with pdf_block_gui_lib.main_window.DE
 
 EXTRACTOR_AGENTS: tuple[str, ...] = ("background", "concept", "formula")
 
-CODEX_MODEL = "gpt-5.2"
+CODEX_MODEL = "gpt-5.4"
 CODEX_REASONING_XHIGH = "xhigh"
 CODEX_REASONING_HIGH = "high"
 CODEX_REASONING_MEDIUM = "medium"

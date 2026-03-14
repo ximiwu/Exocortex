@@ -350,7 +350,7 @@ def run_codex(
     message: str,
     workdir: Path,
     *,
-    model: str = "gpt-5.2",
+    model: str = "gpt-5.4",
     model_reasoning_effort: str = "high",
     new_console: bool = False,
 ) -> subprocess.CompletedProcess[str]:
@@ -402,9 +402,10 @@ def run_gemini(
     return subprocess.run(
         [
             gemini_exe,
-            "--model",
-            model,
+            # "--model",
+            # model,
             "--yolo",
+            "--prompt",
             message,
         ],
         cwd=workdir,

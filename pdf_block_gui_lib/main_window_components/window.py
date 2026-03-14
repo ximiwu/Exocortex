@@ -3041,6 +3041,17 @@ class MainWindow(QtWidgets.QMainWindow):
     @staticmethod
     def _nudge_webengine_view_paint(view: QtWebEngineWidgets.QWebEngineView) -> None:
         try:
+            import shiboken6
+        except Exception:
+            shiboken6 = None
+        if shiboken6 is not None:
+            try:
+                if not shiboken6.isValid(view):
+                    return
+            except Exception:
+                return
+
+        try:
             view.update()
         except Exception:
             pass
@@ -3073,6 +3084,61 @@ class MainWindow(QtWidgets.QMainWindow):
                 "window.scrollTo(x,y+1);window.scrollTo(x,y);}catch(e){}"
                 "})();"
             )
+        except Exception:
+            pass
+        try:
+            MainWindow._post_synthetic_mouse_move(view)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _post_synthetic_mouse_move(view: QtWebEngineWidgets.QWebEngineView) -> None:
+        try:
+            import shiboken6
+        except Exception:
+            shiboken6 = None
+        if shiboken6 is not None:
+            try:
+                if not shiboken6.isValid(view):
+                    return
+            except Exception:
+                return
+
+        try:
+            QtWidgets.QApplication.postEvent(view, QtCore.QEvent(QtCore.QEvent.Enter))
+        except Exception:
+            pass
+
+        try:
+            rect = view.rect()
+            if rect.isNull():
+                return
+            pos = rect.center()
+            local_pos = QtCore.QPointF(pos)
+            global_pos = QtCore.QPointF(view.mapToGlobal(pos))
+            button = QtCore.Qt.MouseButton.NoButton
+            buttons = QtCore.Qt.MouseButtons(QtCore.Qt.MouseButton.NoButton)
+            modifiers = QtCore.Qt.KeyboardModifier.NoModifier
+            try:
+                event = QtGui.QMouseEvent(
+                    QtCore.QEvent.Type.MouseMove,
+                    local_pos,
+                    global_pos,
+                    button,
+                    buttons,
+                    modifiers,
+                )
+            except TypeError:
+                event = QtGui.QMouseEvent(
+                    QtCore.QEvent.Type.MouseMove,
+                    local_pos,
+                    local_pos,
+                    global_pos,
+                    button,
+                    buttons,
+                    modifiers,
+                )
+            QtWidgets.QApplication.postEvent(view, event)
         except Exception:
             pass
 
@@ -4312,6 +4378,11 @@ class MainWindow(QtWidgets.QMainWindow):
             view.setProperty("_markdown_background_ready", True)
             try:
                 view.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+                view.setAutoFillBackground(True)
+                palette = view.palette()
+                palette.setColor(QtGui.QPalette.Window, QtGui.QColor("#ffffff"))
+                palette.setColor(QtGui.QPalette.Base, QtGui.QColor("#ffffff"))
+                view.setPalette(palette)
                 view.setStyleSheet("background: #ffffff;")
             except Exception:
                 pass
@@ -4324,6 +4395,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     page.setBackgroundColor(QtGui.QColor("#ffffff"))
                 except Exception:
                     pass
+            try:
+                view.setMouseTracking(True)
+            except Exception:
+                pass
         if not view.property("_markdown_context_menu_ready"):
             view.setProperty("_markdown_context_menu_ready", True)
             view.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -4367,12 +4442,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._apply_pending_markdown_scroll_restore(view)
         self._nudge_webengine_view_paint(view)
-        QtCore.QTimer.singleShot(
-            0, lambda _view=view: self._nudge_webengine_view_paint(_view)
-        )
-        QtCore.QTimer.singleShot(
-            80, lambda _view=view: self._nudge_webengine_view_paint(_view)
-        )
+        QtCore.QTimer.singleShot(0, lambda _view=view: self._nudge_webengine_view_paint(_view))
+        QtCore.QTimer.singleShot(80, lambda _view=view: self._nudge_webengine_view_paint(_view))
+        QtCore.QTimer.singleShot(250, lambda _view=view: self._nudge_webengine_view_paint(_view))
+        QtCore.QTimer.singleShot(600, lambda _view=view: self._nudge_webengine_view_paint(_view))
 
     def _show_markdown_context_menu(self, view: QtWebEngineWidgets.QWebEngineView, point: QtCore.QPoint) -> None:
         try:
