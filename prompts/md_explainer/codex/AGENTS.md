@@ -29,22 +29,22 @@
 二、 **锚定：background.md**
 
 **关键名词追踪**：
-* 对于文本中出现的关键名词、概念，必须使用`rg -F 'keywords' -C 15`指令查找`/references/background.md`对应的公式，将背景信息自然融入到讲解中。(注：background.md为英文文档)
+* 对于文本中出现的关键名词、概念，查找`/references/background.md`对应的公式，将背景信息自然融入到讲解中。(注：background.md为英文文档)
 
 三、 **锚定：formula.md**
 
 1. **引用线索追踪**：
-* 如果文本中引用了未知的公式，必须使用`rg -F 'tag{idx}' -C 15`指令查找`/references/formula.md`中对应的公式，将公式信息自然融入到讲解中。(fomula.md为英文文档)
+* 如果文本中引用了未知的公式，查找`/references/formula.md`中对应的公式，将公式信息自然融入到讲解中。(fomula.md为英文文档)
 
 四、 **锚定：concept.md**
 
 **关键名词追踪**：
-* 对于文本中出现的关键名词、概念、关键图表编号，必须使用`rg -F 'keywords' -C 15`指令查找`/references/concept.md`对应的概念，将概念信息自然融入到讲解中。(concept.md为英文文档)
+* 对于文本中出现的关键名词、概念、关键图表编号，查找`/references/concept.md`对应的概念，将概念信息自然融入到讲解中。(concept.md为英文文档)
 
 五、 **锚定：entire_content.md**
 
 **完整论文内容**：
-必要时使用 `rg -F 'keywords' -C 15` 指令从论文的完整内容文件`/references/entire_content.md`里查找需要的信息
+必要时从论文的完整内容文件`/references/entire_content.md`里查找需要的信息
 
 六、 **输出初版内容：**
 
@@ -105,50 +105,13 @@
 
 六、 **尝试解决需要确认问题：**
 
-* 对于初版内容中的"6. 需要确认的问题"，使用`rg -F '{keywords}' -C 15` 甚至是 `Get-Content` 指令获取 `/references/entire_content.md` 中的内容，如果查到了有用的内容，就能够解决需要确认问题。
+* 对于初版内容中的"6. 需要确认的问题"，查阅 `/references/entire_content.md` 中的内容，如果查到了有用的内容，就能够解决需要确认问题。
 
 七、 **复审、优化输出内容**
 
 * 检查输出内容逻辑是否通顺、是否易于理解，是否需要改进，你面向的用户是一个智障博士，宁可啰嗦，也不要思维跳跃
 
-# Tool Usage: Searching Protocol
-
-## Searching for Keywords (High Precision)
-Use the following strict command pattern to ensure you capture the key and their context without encoding errors.
-
-* **Command Pattern**:
-```powershell
-powershell -NoProfile -Command "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; rg -F '{keywords}' -C 15 '[INSERT_TARGET_FILE_PATH]'"
-```
-
-## PowerShell File I/O Protocol (UTF-8 Enforced)
-
+## File I/O Protocol (UTF-8 Enforced)
 All file interactions must strictly enforce UTF-8 encoding to prevent character corruption or data loss.
-
-### 1. Reading Files
-
-To read text files safely, use `Get-Content` with explicit encoding settings.
-
-* **Pattern:**
-`powershell -NoProfile -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Content -Raw -Encoding utf8 '{file_path}'"`
-
-### 2. Searching Content
-
-When using search tools (like `rg` or `grep`), ensure the console output encoding is synchronized.
-
-* **Pattern:**
-`powershell -NoProfile -Command "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; rg --encoding utf8 '{pattern}' '{path}'"`
-
-### 3. Saving Files
-
-Use the apply_patch shell command to edit files
-
-## Tool Usage: Ripgrep (rg) on Windows
-When searching for exact strings, especially code or LaTeX (e.g., `\sum`, `\mathbf{X}`, `(a+b)`):
-1.  **Use `-F`**: Always add the `--fixed-strings` (or `-F`) flag. This treats the pattern as a literal string, ignoring special regex meanings of `+`, `*`, `(`, `{`.
-2.  **Escaping Backslashes**: Since `-F` is active, you only need to escape the backslash for the shell string. Map a literal `\` in the target text to `\\` in the command.
-* Target: `\frac{a}{b}` -> Command: `rg -F "\\frac{a}{b}"`
-* Target: `C:\Path` -> Command: `rg -F "C:\\Path"`
-3.  **Avoid Redundancy**: Do not escape braces `{}`, parenthesis `()`, or plus signs `+` when `-F` is on.
 
 </INSTRUCTIONS>

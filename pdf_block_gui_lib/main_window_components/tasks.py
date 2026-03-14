@@ -342,7 +342,7 @@ class _CompressPreviewTask(QtCore.QRunnable):
 class _GroupDiveSignals(QtCore.QObject):
     finished = QtCore.Signal(str)
     failed = QtCore.Signal(str)
-    gemini_ready = QtCore.Signal(str, int)
+    secondary_ready = QtCore.Signal(str, int)
 
 
 class _GroupDiveTask(QtCore.QRunnable):
@@ -357,7 +357,7 @@ class _GroupDiveTask(QtCore.QRunnable):
             output_path = group_dive_in(
                 self._asset_name,
                 self._group_idx,
-                on_gemini_ready=lambda path: self.signals.gemini_ready.emit(
+                on_secondary_ready=lambda path: self.signals.secondary_ready.emit(
                     str(path), self._group_idx
                 ),
             )

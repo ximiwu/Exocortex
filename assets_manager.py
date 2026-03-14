@@ -16,7 +16,6 @@ from PySide6 import QtGui, QtPrintSupport
 from exocortex_core.paths import exocortex_assets_root
 
 from agent_manager import (
-    AgentCallbacks,
     AgentJob,
     RunnerConfig,
     clean_markdown_file as _agent_clean_markdown_file,
@@ -96,16 +95,16 @@ def _prompt_path(*parts: str) -> Path:
 IMG2MD_CODEX_PROMPT = _prompt_path("img2md", "codex", "AGENTS.md")
 IMG2MD_GEMINI_PROMPT = _prompt_path("img2md", "gemini", "GEMINI.md")
 IMG_EXPLAINER_CODEX_PROMPT = _prompt_path("img_explainer", "codex", "AGENTS.md")
-IMG_EXPLAINER_GEMINI_PROMPT = _prompt_path("img_explainer", "gemini", "GEMINI.md")
+IMG_EXPLAINER_CODEX_2_PROMPT = _prompt_path("img_explainer", "codex_2", "AGENTS.md")
 MD_EXPLAINER_CODEX_PROMPT = _prompt_path("md_explainer", "codex", "AGENTS.md")
-MD_EXPLAINER_GEMINI_PROMPT = _prompt_path("md_explainer", "gemini", "GEMINI.md")
-ENHANCER_GEMINI_PROMPT = _prompt_path("enhancer", "gemini", "GEMINI.md")
+MD_EXPLAINER_CODEX_2_PROMPT = _prompt_path("md_explainer", "codex_2", "AGENTS.md")
+ENHANCER_CODEX_PROMPT = _prompt_path("enhancer", "codex", "AGENTS.md")
 INTEGRATOR_CODEX_PROMPT = _prompt_path("integrator", "codex", "AGENTS.md")
-TUTOR_GEMINI_PROMPT = _prompt_path("tutor", "gemini", "GEMINI.md")
+TUTOR_CODEX_PROMPT = _prompt_path("tutor", "codex", "AGENTS.md")
 BUG_FINDER_GEMINI_PROMPT = _prompt_path("bug_finder", "gemini", "GEMINI.md")
 RE_TUTOR_GEMINI_PROMPT = _prompt_path("re_tutor", "gemini", "GEMINI.md")
 MANUSCRIPT_GEMINI_PROMPT = _prompt_path("manuscript2md", "gemini", "GEMINI.md")
-LATEX_FIXER_GEMINI_PROMPT = _prompt_path("latex_fixer", "GEMINI.md")
+LATEX_FIXER_CODEX_PROMPT = _prompt_path("latex_fixer", "codex", "AGENTS.md")
 
 EXTRACTOR_PROMPTS = {
     "background": _prompt_path("extractor", "background", "codex", "AGENTS.md"),
@@ -922,7 +921,7 @@ def _collect_reference_files(
 
 
 def group_dive_in(
-    asset_name: str, group_idx: int, *, on_gemini_ready: Callable[[Path], None] | None = None
+    asset_name: str, group_idx: int, *, on_secondary_ready: Callable[[Path], None] | None = None
 ) -> Path:
     """
     Generate explainer output for a group, archive initial outputs, and run enhancer.
@@ -935,24 +934,27 @@ def group_dive_in(
     use_markdown_input = content_md.is_file()
 
     legacy_output = target_dir / "output.md"
-    legacy_gemini = target_dir / "output_gemini.md"
+    legacy_output_2 = target_dir / "output_2.md"
+    legacy_secondary_compat_output = target_dir / "output_gemini.md"
     initial_output = initial_dir / "output.md"
-    initial_gemini_output = initial_dir / "output_gemini.md"
+    initial_output_2 = initial_dir / "output_2.md"
+    initial_secondary_compat_output = initial_dir / "output_gemini.md"
 
     def _run_enhancer() -> Path:
         job = AgentJob(
             name="enhancer",
             runners=[
                 RunnerConfig(
-                    runner="gemini",
-                    prompt_path=ENHANCER_GEMINI_PROMPT,
-                    model=GEMINI_MODEL,
+                    runner="codex",
+                    prompt_path=ENHANCER_CODEX_PROMPT,
+                    model=CODEX_MODEL,
+                    reasoning_effort=CODEX_REASONING_XHIGH,
                     new_console=True,
                     extra_message="Use @/output/main.md as the primary draft, incrementally insert suitable parts from @/input/supplement.md into it, and save back to @/output/main.md without deleting existing content.",
                 )
             ],
-            input_files=[initial_gemini_output],
-            input_rename={initial_gemini_output.name: "supplement.md"},
+            input_files=[initial_output_2],
+            input_rename={initial_output_2.name: "supplement.md"},
             output_seed_files=[initial_output],
             output_rename={initial_output.name: "main.md"},
             deliver_dir=_relative_to_repo(target_dir),
@@ -974,26 +976,34 @@ def group_dive_in(
         )
         return enhanced_md
 
-    if legacy_output.is_file() or legacy_gemini.is_file():
+    if legacy_output.is_file() or legacy_output_2.is_file() or legacy_secondary_compat_output.is_file():
         initial_dir.mkdir(parents=True, exist_ok=True)
         if legacy_output.is_file() and not initial_output.is_file():
             shutil.move(str(legacy_output), str(initial_output))
-        if legacy_gemini.is_file() and not initial_gemini_output.is_file():
-            shutil.move(str(legacy_gemini), str(initial_gemini_output))
+        if legacy_output_2.is_file() and not initial_output_2.is_file():
+            shutil.move(str(legacy_output_2), str(initial_output_2))
+        if legacy_secondary_compat_output.is_file() and not initial_output_2.is_file():
+            shutil.move(str(legacy_secondary_compat_output), str(initial_output_2))
+        elif legacy_secondary_compat_output.is_file() and not initial_secondary_compat_output.is_file():
+            shutil.move(str(legacy_secondary_compat_output), str(initial_secondary_compat_output))
+
+    # Migrate older secondary explainer outputs that were written as output_gemini.md.
+    if initial_secondary_compat_output.is_file() and not initial_output_2.is_file():
+        shutil.move(str(initial_secondary_compat_output), str(initial_output_2))
 
     if initial_output.is_file():
         _clean_markdown_file(initial_output)
-    if initial_gemini_output.is_file():
+    if initial_output_2.is_file():
         try:
-            _clean_markdown_file(initial_gemini_output)
+            _clean_markdown_file(initial_output_2)
         except Exception as exc:  # pragma: no cover - defensive cleanup
             logger.warning(
-                "Failed to clean existing Gemini output for '%s' (group %s): %s",
+                "Failed to clean existing secondary explainer output for '%s' (group %s): %s",
                 asset_name,
                 group_idx,
                 exc,
             )
-    if initial_output.is_file() and initial_gemini_output.is_file():
+    if initial_output.is_file() and initial_output_2.is_file():
         logger.info(
             "Found initial explainer outputs for asset '%s', group %s; running enhancer only.",
             asset_name,
@@ -1021,11 +1031,11 @@ def group_dive_in(
             raise ValueError(f"Markdown content is empty: {content_md}")
         explainer_name = "md_explainer"
         codex_prompt = MD_EXPLAINER_CODEX_PROMPT
-        gemini_prompt = MD_EXPLAINER_GEMINI_PROMPT
+        codex_2_prompt = MD_EXPLAINER_CODEX_2_PROMPT
         thesis_input_path = content_md
         thesis_input_name = "thesis.md"
         codex_extra_message = "Explain input/thesis.md and save to output.md."
-        gemini_extra_message = "Explain @input/thesis.md and save to output_gemini.md."
+        codex_2_extra_message = "Explain input/thesis.md and save to output_2.md."
     else:
         pdf_path = get_asset_pdf_path(asset_name)
         if not pdf_path.is_file():
@@ -1041,75 +1051,48 @@ def group_dive_in(
             raise RuntimeError(f"Failed to save rendered image to {thesis_image_path}")
         explainer_name = "img_explainer"
         codex_prompt = IMG_EXPLAINER_CODEX_PROMPT
-        gemini_prompt = IMG_EXPLAINER_GEMINI_PROMPT
+        codex_2_prompt = IMG_EXPLAINER_CODEX_2_PROMPT
         thesis_input_path = thesis_image_path
         thesis_input_name = "thesis.png"
         codex_extra_message = "Explain input/thesis.png and save to output.md."
-        gemini_extra_message = "Explain @input/thesis.png and save to output_gemini.md."
+        codex_2_extra_message = "Explain input/thesis.png and save to output_2.md."
 
-    def _on_runner_finish(job_name: str, runner: RunnerConfig, workspace: Path, error: Exception | None) -> None:
-        if runner.runner != "gemini":
-            return
-        gemini_output_path = workspace / "output" / "output_gemini.md"
-        if not gemini_output_path.is_file():
-            logger.warning(
-                "Gemini finished but output_gemini.md not found at %s",
-                gemini_output_path,
-            )
-            return
-        try:
-            initial_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(gemini_output_path, initial_gemini_output)
-            _clean_markdown_file(initial_gemini_output)
-            if on_gemini_ready is not None:
-                on_gemini_ready(initial_gemini_output)
-        except Exception as exc:  # pragma: no cover - defensive callback
-            logger.warning(
-                "Failed to archive Gemini output for '%s' (group %s): %s",
-                asset_name,
-                group_idx,
-                exc,
-            )
+    def _build_explainer_job(prompt_path: Path, output_name: str, extra_message: str, job_name: str) -> AgentJob:
+        return AgentJob(
+            name=job_name,
+            runners=[
+                RunnerConfig(
+                    runner="codex",
+                    prompt_path=prompt_path,
+                    model=CODEX_MODEL,
+                    reasoning_effort=CODEX_REASONING_XHIGH,
+                    new_console=True,
+                    extra_message=extra_message,
+                )
+            ],
+            input_files=[thesis_input_path],
+            input_rename={thesis_input_path.name: thesis_input_name},
+            reference_files=reference_files,
+            reference_rename=reference_rename,
+            deliver_dir=_relative_to_repo(initial_dir),
+            deliver_rename={output_name: output_name},
+            clean_markdown=True,
+        )
 
-    callbacks = AgentCallbacks(on_finish=_on_runner_finish)
+    explainer_jobs = [
+        _build_explainer_job(codex_prompt, "output.md", codex_extra_message, explainer_name),
+        _build_explainer_job(codex_2_prompt, "output_2.md", codex_2_extra_message, f"{explainer_name}_2"),
+    ]
+    run_agent_jobs(explainer_jobs, max_workers=len(explainer_jobs))
 
-    job = AgentJob(
-        name=explainer_name,
-        runners=[
-            RunnerConfig(
-                runner="codex",
-                prompt_path=codex_prompt,
-                model=CODEX_MODEL,
-                reasoning_effort=CODEX_REASONING_HIGH,
-                new_console=True,
-                extra_message=codex_extra_message,
-            ),
-            RunnerConfig(
-                runner="gemini",
-                prompt_path=gemini_prompt,
-                model=GEMINI_MODEL,
-                new_console=True,
-                extra_message=gemini_extra_message,
-            ),
-        ],
-        input_files=[thesis_input_path],
-        input_rename={thesis_input_path.name: thesis_input_name},
-        reference_files=reference_files,
-        reference_rename=reference_rename,
-        deliver_dir=_relative_to_repo(initial_dir),
-        deliver_rename={
-            "output.md": "output.md",
-            "output_gemini.md": "output_gemini.md",
-        },
-        clean_markdown=True,
-        callbacks=callbacks,
-    )
-    run_agent_job(job)
+    secondary_output = initial_output_2
+    if on_secondary_ready is not None:
+        on_secondary_ready(secondary_output)
 
     if not initial_output.is_file():
         raise FileNotFoundError(f"Explainer output not found: {initial_output}")
-    if not initial_gemini_output.is_file():
-        raise FileNotFoundError(f"Explainer Gemini output not found: {initial_gemini_output}")
+    if not initial_output_2.is_file():
+        raise FileNotFoundError(f"Explainer secondary output not found: {initial_output_2}")
 
     return _run_enhancer()
 
@@ -1224,9 +1207,10 @@ def ask_tutor(question: str, asset_name: str, group_idx: int, tutor_idx: int) ->
         name="tutor",
         runners=[
             RunnerConfig(
-                runner="gemini",
-                prompt_path=TUTOR_GEMINI_PROMPT,
-                model=GEMINI_MODEL,
+                runner="codex",
+                prompt_path=TUTOR_CODEX_PROMPT,
+                model=CODEX_MODEL,
+                reasoning_effort=CODEX_REASONING_MEDIUM,
                 new_console=True,
                 extra_message=f"{normalized_question}把讲解保存至 output/output.md",
             )
@@ -1331,7 +1315,7 @@ def integrate(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
                 runner="codex",
                 prompt_path=INTEGRATOR_CODEX_PROMPT,
                 model=CODEX_MODEL,
-                reasoning_effort=CODEX_REASONING_HIGH,
+                reasoning_effort=CODEX_REASONING_XHIGH,
                 new_console=True,
             )
         ],
@@ -1856,9 +1840,10 @@ def fix_latex(markdown_path: str | Path) -> Path:
         name="latex_fixer",
         runners=[
             RunnerConfig(
-                runner="gemini",
-                prompt_path=LATEX_FIXER_GEMINI_PROMPT,
-                model=GEMINI_MODEL,
+                runner="codex",
+                prompt_path=LATEX_FIXER_CODEX_PROMPT,
+                model=CODEX_MODEL,
+                reasoning_effort=CODEX_REASONING_MEDIUM,
                 new_console=True,
                 extra_message="Fix latex in @output/output.md and save to output/output.md.",
             )
@@ -2067,7 +2052,7 @@ def asset_init(
                         runner="codex",
                         prompt_path=prompt_path,
                         model=CODEX_MODEL,
-                        reasoning_effort=CODEX_REASONING_HIGH,
+                        reasoning_effort=CODEX_REASONING_XHIGH,
                         new_console=True,
                     )
                 ],

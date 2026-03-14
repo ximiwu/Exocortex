@@ -5752,7 +5752,7 @@ class MainWindow(QtWidgets.QMainWindow):
         task = _GroupDiveTask(self._current_asset_name, group_idx)
         task.signals.finished.connect(self._on_group_dive_finished)
         task.signals.failed.connect(self._on_group_dive_failed)
-        task.signals.gemini_ready.connect(self._on_group_dive_gemini_ready)
+        task.signals.secondary_ready.connect(self._on_group_dive_secondary_ready)
         self._group_dive_pool.start(task)
 
     def _resolve_group_markdown_output(self, path: Path) -> Path | None:
@@ -5768,12 +5768,16 @@ class MainWindow(QtWidgets.QMainWindow):
         return None
 
     @QtCore.Slot(str, int)
-    def _on_group_dive_gemini_ready(self, output_path: str, group_idx: int) -> None:
+    def _on_group_dive_secondary_ready(self, output_path: str, group_idx: int) -> None:
         path = Path(output_path)
         if not path.is_file():
-            self.statusBar().showMessage(f"Gemini output not found for group {group_idx}: {path.name}")
+            self.statusBar().showMessage(
+                f"Secondary explainer output not found for group {group_idx}: {path.name}"
+            )
             return
-        self.statusBar().showMessage(f"Gemini output ready for group {group_idx}: {path.name}")
+        self.statusBar().showMessage(
+            f"Secondary explainer output ready for group {group_idx}: {path.name}"
+        )
 
     def _on_group_dive_finished(self, output_path: str) -> None:
         self._group_dive_in_progress = False
