@@ -195,6 +195,43 @@ class _FeynmanManuscriptDialog(QtWidgets.QDialog):
         self._set_ok_enabled()
 
 
+class _MergeByMarkdownDialog(QtWidgets.QDialog):
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Merge by Markdown")
+        self.setModal(True)
+        self.setMinimumSize(640, 480)
+
+        hint = QtWidgets.QLabel("Enter the markdown content to save as content.md before grouping.")
+        hint.setWordWrap(True)
+
+        self._editor = QtWidgets.QPlainTextEdit(self)
+        self._editor.setLineWrapMode(QtWidgets.QPlainTextEdit.WidgetWidth)
+        self._editor.textChanged.connect(self._update_ok_enabled)
+
+        self._buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            parent=self,
+        )
+        self._buttons.accepted.connect(self.accept)
+        self._buttons.rejected.connect(self.reject)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(hint)
+        layout.addWidget(self._editor, 1)
+        layout.addWidget(self._buttons)
+
+        self._update_ok_enabled()
+
+    def markdown_text(self) -> str:
+        return self._editor.toPlainText()
+
+    def _update_ok_enabled(self) -> None:
+        ok_button = self._buttons.button(QtWidgets.QDialogButtonBox.Ok)
+        if ok_button:
+            ok_button.setEnabled(bool(self._editor.toPlainText().strip()))
+
+
 _HISTORY_ACTION_SCHEME = "exocortex-history"
 _HISTORY_ACTION_HOST = "action"
 

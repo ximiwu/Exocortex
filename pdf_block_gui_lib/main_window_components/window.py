@@ -104,6 +104,7 @@ from .dialogs import (
     _AssetProgressDialog,
     _AssetSelectionDialog,
     _FeynmanManuscriptDialog,
+    _MergeByMarkdownDialog,
     _NewAssetDialog,
     _PreviewDialog,
     _TutorFocusDialog,
@@ -5297,10 +5298,13 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setContentsMargins(6, 4, 6, 4)
 
         merge_button = QtWidgets.QPushButton("Merge Block")
+        merge_md_button = QtWidgets.QPushButton("Merge by MD")
         clear_button = QtWidgets.QPushButton("Clear Selection")
         merge_button.clicked.connect(self._merge_selected_blocks)
+        merge_md_button.clicked.connect(self._merge_selected_blocks_by_markdown)
         clear_button.clicked.connect(self._clear_merge_order)
         layout.addWidget(merge_button)
+        layout.addWidget(merge_md_button)
         layout.addWidget(clear_button)
 
         proxy = self._scene.addWidget(container)
@@ -5530,22 +5534,54 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("Selection cleared.")
 
     def _merge_selected_blocks(self) -> None:
+        self._merge_selected_blocks_impl()
+
+    def _merge_selected_blocks_by_markdown(self) -> None:
+        if not self._can_merge_selected_blocks():
+            return
+        dialog = _MergeByMarkdownDialog(self)
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            return
+        markdown_content = dialog.markdown_text()
+        if not markdown_content.strip():
+            self.statusBar().showMessage("Markdown content is required.")
+            return
+        self._merge_selected_blocks_impl(markdown_content=markdown_content)
+
+    def _can_merge_selected_blocks(self) -> bool:
         if not self._current_asset_name:
             self.statusBar().showMessage("No asset loaded to merge.")
-            return
+            return False
         if not self._merge_order:
             self.statusBar().showMessage("Select blocks to merge.")
-            return
+            return False
         grouped = [
             bid for bid in self._merge_order if self._blocks.get(bid) and self._blocks[bid].group_idx is not None
         ]
         if grouped:
             grouped_text = ", ".join(str(bid) for bid in grouped)
             self.statusBar().showMessage(f"Already grouped: {grouped_text}")
+            return False
+        return True
+
+    def _merge_selected_blocks_impl(self, *, markdown_content: str | None = None) -> None:
+        if not self._can_merge_selected_blocks():
             return
+        asset_name = self._current_asset_name
+        if not asset_name:
+            return
+        record: GroupRecord | None = None
         try:
-            record = create_group_record(self._current_asset_name, self._merge_order, group_idx=self._next_group_idx)
+            record = create_group_record(asset_name, self._merge_order, group_idx=self._next_group_idx)
+            if markdown_content is not None:
+                content_path = get_group_data_dir(asset_name) / str(record.group_idx) / "content.md"
+                content_path.write_text(markdown_content, encoding="utf-8", newline="\n")
         except Exception as exc:  # pragma: no cover - GUI runtime path
+            if record is not None:
+                try:
+                    delete_group_record(asset_name, record.group_idx)
+                except Exception:
+                    pass
             self.statusBar().showMessage(f"Failed to merge blocks: {exc}")
             return
         self._blocks_by_group[record.group_idx] = set(record.block_ids)
@@ -5563,6 +5599,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._apply_block_style(block_id)
         self._hide_block_action_overlay()
         self._persist_block_data(force=True)
+        if markdown_content is not None:
+            self.statusBar().showMessage(
+                f"Created group {record.group_idx} with {len(record.block_ids)} block(s) using markdown."
+            )
+            return
         self.statusBar().showMessage(f"Created group {record.group_idx} with {len(record.block_ids)} block(s).")
 
     def _block_style_for(self, block_id: int) -> dict:

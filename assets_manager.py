@@ -97,6 +97,8 @@ IMG2MD_CODEX_PROMPT = _prompt_path("img2md", "codex", "AGENTS.md")
 IMG2MD_GEMINI_PROMPT = _prompt_path("img2md", "gemini", "GEMINI.md")
 IMG_EXPLAINER_CODEX_PROMPT = _prompt_path("img_explainer", "codex", "AGENTS.md")
 IMG_EXPLAINER_GEMINI_PROMPT = _prompt_path("img_explainer", "gemini", "GEMINI.md")
+MD_EXPLAINER_CODEX_PROMPT = _prompt_path("md_explainer", "codex", "AGENTS.md")
+MD_EXPLAINER_GEMINI_PROMPT = _prompt_path("md_explainer", "gemini", "GEMINI.md")
 ENHANCER_GEMINI_PROMPT = _prompt_path("enhancer", "gemini", "GEMINI.md")
 INTEGRATOR_CODEX_PROMPT = _prompt_path("integrator", "codex", "AGENTS.md")
 TUTOR_GEMINI_PROMPT = _prompt_path("tutor", "gemini", "GEMINI.md")
@@ -923,11 +925,14 @@ def group_dive_in(
     asset_name: str, group_idx: int, *, on_gemini_ready: Callable[[Path], None] | None = None
 ) -> Path:
     """
-    Generate img_explainer output for a group, archive initial outputs, and run enhancer.
+    Generate explainer output for a group, archive initial outputs, and run enhancer.
     """
-    target_dir = get_group_data_dir(asset_name) / str(group_idx) / "img_explainer_data"
+    group_dir = get_group_data_dir(asset_name) / str(group_idx)
+    target_dir = group_dir / "img_explainer_data"
     initial_dir = target_dir / "initial"
     enhanced_md = target_dir / "enhanced.md"
+    content_md = group_dir / "content.md"
+    use_markdown_input = content_md.is_file()
 
     legacy_output = target_dir / "output.md"
     legacy_gemini = target_dir / "output_gemini.md"
@@ -943,7 +948,7 @@ def group_dive_in(
                     prompt_path=ENHANCER_GEMINI_PROMPT,
                     model=GEMINI_MODEL,
                     new_console=True,
-                    extra_message="以材料 @/output/main.md 的逻辑结构和数学深度 为主轴，将 @/input/supplement.md 中适合插入的片段增量式插入 @/output/main.md ，禁止删减 @/output/main.md的原有内容"
+                    extra_message="Use @/output/main.md as the primary draft, incrementally insert suitable parts from @/input/supplement.md into it, and save back to @/output/main.md without deleting existing content.",
                 )
             ],
             input_files=[initial_gemini_output],
@@ -990,7 +995,7 @@ def group_dive_in(
             )
     if initial_output.is_file() and initial_gemini_output.is_file():
         logger.info(
-            "Found initial img_explainer outputs for asset '%s', group %s; running enhancer only.",
+            "Found initial explainer outputs for asset '%s', group %s; running enhancer only.",
             asset_name,
             group_idx,
         )
@@ -1011,18 +1016,36 @@ def group_dive_in(
         include_entire_content=True,
     )
 
-    pdf_path = get_asset_pdf_path(asset_name)
-    if not pdf_path.is_file():
-        raise FileNotFoundError(f"PDF not found for asset '{asset_name}': {pdf_path}")
+    if use_markdown_input:
+        if not content_md.read_text(encoding="utf-8-sig").strip():
+            raise ValueError(f"Markdown content is empty: {content_md}")
+        explainer_name = "md_explainer"
+        codex_prompt = MD_EXPLAINER_CODEX_PROMPT
+        gemini_prompt = MD_EXPLAINER_GEMINI_PROMPT
+        thesis_input_path = content_md
+        thesis_input_name = "thesis.md"
+        codex_extra_message = "Explain input/thesis.md and save to output.md."
+        gemini_extra_message = "Explain @input/thesis.md and save to output_gemini.md."
+    else:
+        pdf_path = get_asset_pdf_path(asset_name)
+        if not pdf_path.is_file():
+            raise FileNotFoundError(f"PDF not found for asset '{asset_name}': {pdf_path}")
 
-    blocks = _select_blocks_for_group(asset_name, group_idx)
-    images = _render_blocks_to_images(pdf_path, blocks, dpi=300)
-    merged_image = _stack_images_vertically(images)
+        blocks = _select_blocks_for_group(asset_name, group_idx)
+        images = _render_blocks_to_images(pdf_path, blocks, dpi=300)
+        merged_image = _stack_images_vertically(images)
 
-    thesis_image_path = target_dir / "thesis.png"
-    thesis_image_path.parent.mkdir(parents=True, exist_ok=True)
-    if not merged_image.save(str(thesis_image_path)):
-        raise RuntimeError(f"Failed to save rendered image to {thesis_image_path}")
+        thesis_image_path = target_dir / "thesis.png"
+        thesis_image_path.parent.mkdir(parents=True, exist_ok=True)
+        if not merged_image.save(str(thesis_image_path)):
+            raise RuntimeError(f"Failed to save rendered image to {thesis_image_path}")
+        explainer_name = "img_explainer"
+        codex_prompt = IMG_EXPLAINER_CODEX_PROMPT
+        gemini_prompt = IMG_EXPLAINER_GEMINI_PROMPT
+        thesis_input_path = thesis_image_path
+        thesis_input_name = "thesis.png"
+        codex_extra_message = "Explain input/thesis.png and save to output.md."
+        gemini_extra_message = "Explain @input/thesis.png and save to output_gemini.md."
 
     def _on_runner_finish(job_name: str, runner: RunnerConfig, workspace: Path, error: Exception | None) -> None:
         if runner.runner != "gemini":
@@ -1051,26 +1074,26 @@ def group_dive_in(
     callbacks = AgentCallbacks(on_finish=_on_runner_finish)
 
     job = AgentJob(
-        name="img_explainer",
+        name=explainer_name,
         runners=[
             RunnerConfig(
                 runner="codex",
-                prompt_path=IMG_EXPLAINER_CODEX_PROMPT,
+                prompt_path=codex_prompt,
                 model=CODEX_MODEL,
                 reasoning_effort=CODEX_REASONING_HIGH,
                 new_console=True,
-                extra_message="开始讲解 input/thesis.png，保存到 output.md中"
+                extra_message=codex_extra_message,
             ),
             RunnerConfig(
                 runner="gemini",
-                prompt_path=IMG_EXPLAINER_GEMINI_PROMPT,
+                prompt_path=gemini_prompt,
                 model=GEMINI_MODEL,
                 new_console=True,
-                extra_message="开始讲解 @input/thesis.png，保存到 output_gemini.md中"
+                extra_message=gemini_extra_message,
             ),
         ],
-        input_files=[thesis_image_path],
-        input_rename={thesis_image_path.name: "thesis.png"},
+        input_files=[thesis_input_path],
+        input_rename={thesis_input_path.name: thesis_input_name},
         reference_files=reference_files,
         reference_rename=reference_rename,
         deliver_dir=_relative_to_repo(initial_dir),
@@ -1084,14 +1107,11 @@ def group_dive_in(
     run_agent_job(job)
 
     if not initial_output.is_file():
-        raise FileNotFoundError(f"img_explainer output not found: {initial_output}")
+        raise FileNotFoundError(f"Explainer output not found: {initial_output}")
     if not initial_gemini_output.is_file():
-        raise FileNotFoundError(
-            f"img_explainer Gemini output not found: {initial_gemini_output}"
-        )
+        raise FileNotFoundError(f"Explainer Gemini output not found: {initial_gemini_output}")
 
     return _run_enhancer()
-
 
 def _resolve_img_explainer_markdown(img_explainer_dir: Path) -> Path:
     candidates = (
