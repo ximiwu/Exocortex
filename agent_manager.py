@@ -8,23 +8,22 @@ import shutil
 import stat
 import subprocess
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
-from concurrent.futures import ThreadPoolExecutor
+
+from exocortex_core.paths import AGENT_WORKSPACE_DIR_PREFIX
+from exocortex_core.settings import (
+    CODEX_MODEL,
+    GEMINI_MODEL,
+    REPO_ROOT,
+    WORKSPACE_ROOT,
+    resolve_repo_path,
+)
+from exocortex_core.workflow_events import WorkflowEventCallback, emit_workflow_event
 
 logger = logging.getLogger(__name__)
-
-
-def _has_agent_workspace_dir(candidate: Path) -> bool:
-    try:
-        return any(
-            entry.is_dir()
-            and (entry.name == "agent_workspace" or entry.name.startswith("agent_workspace_"))
-            for entry in candidate.iterdir()
-        )
-    except Exception:
-        return False
 
 
 def _pid_is_running(pid: int) -> bool:
@@ -74,7 +73,7 @@ def _pid_is_running(pid: int) -> bool:
 
 
 def _parse_agent_workspace_pid(name: str) -> int | None:
-    prefix = "agent_workspace_"
+    prefix = AGENT_WORKSPACE_DIR_PREFIX
     if not name.startswith(prefix):
         return None
     raw = name.removeprefix(prefix).strip()
@@ -86,17 +85,6 @@ def _parse_agent_workspace_pid(name: str) -> int | None:
         return None
     return pid if pid > 0 else None
 
-
-def _detect_repo_root(module_dir: Path) -> Path:
-    markers = ("prompts", "assets", "agent_workspace", "README.md")
-    for candidate in (module_dir, *module_dir.parents):
-        if any((candidate / marker).exists() for marker in markers) or _has_agent_workspace_dir(candidate):
-            return candidate
-    return module_dir
-
-
-REPO_ROOT = _detect_repo_root(Path(__file__).resolve().parent)
-WORKSPACE_ROOT = REPO_ROOT / f"agent_workspace_{os.getpid()}"
 _WORKSPACE_LOCK = threading.Lock()
 _WORKSPACE_INITIALIZED = False
 
@@ -350,7 +338,7 @@ def run_codex(
     message: str,
     workdir: Path,
     *,
-    model: str = "gpt-5.4",
+    model: str = CODEX_MODEL,
     model_reasoning_effort: str = "high",
     new_console: bool = False,
 ) -> subprocess.CompletedProcess[str]:
@@ -387,7 +375,7 @@ def run_gemini(
     message: str,
     workdir: Path,
     *,
-    model: str = "gemini-3-pro-preview",
+    model: str = GEMINI_MODEL,
     new_console: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     gemini_exe = shutil.which("gemini")
@@ -465,6 +453,24 @@ def _build_message(extra_message: str | None = None) -> str:
     return "Proceed."
 
 
+def _job_event_payload(
+    job: "AgentJob",
+    *,
+    runner: "RunnerConfig" | None = None,
+    workspace: Path | None = None,
+    extra: dict[str, object] | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {"job_name": job.name}
+    if runner is not None:
+        payload["runner"] = runner.runner
+        payload["model"] = runner.model
+    if workspace is not None:
+        payload["workspace"] = str(workspace)
+    if extra:
+        payload.update(extra)
+    return payload
+
+
 def _copy_prompt(prompt_path: Path, workspace: Path, dest_name: str | None = None) -> Path:
     if not prompt_path.is_file():
         raise FileNotFoundError(f"Prompt not found: {prompt_path}")
@@ -498,7 +504,7 @@ def _deliver_outputs(job: AgentJob, workspace: Path) -> list[Path]:
 
     deliver_dir = job.deliver_dir
     if not deliver_dir.is_absolute():
-        deliver_dir = (REPO_ROOT / deliver_dir).resolve()
+        deliver_dir = resolve_repo_path(deliver_dir)
     deliver_dir.mkdir(parents=True, exist_ok=True)
 
     delivered: list[Path] = []
@@ -516,10 +522,17 @@ def _launch_runner(
     job: AgentJob,
     runner: RunnerConfig,
     workspace: Path,
+    event_callback: WorkflowEventCallback | None = None,
 ) -> int:
     callbacks = job.callbacks
     if callbacks and callbacks.on_start:
         callbacks.on_start(job.name, runner, workspace, None)
+    emit_workflow_event(
+        event_callback,
+        "log",
+        f"Launching {runner.runner} runner for agent job '{job.name}'.",
+        payload=_job_event_payload(job, runner=runner, workspace=workspace),
+    )
 
     try:
         message = _build_message(runner.extra_message)
@@ -543,38 +556,129 @@ def _launch_runner(
     except Exception as exc:
         if callbacks and callbacks.on_failure:
             callbacks.on_failure(job.name, runner, workspace, exc)
+        emit_workflow_event(
+            event_callback,
+            "failed",
+            f"{runner.runner} runner failed for agent job '{job.name}': {exc}",
+            payload=_job_event_payload(
+                job,
+                runner=runner,
+                workspace=workspace,
+                extra={"error": str(exc)},
+            ),
+        )
         if isinstance(exc, subprocess.CalledProcessError):
             return exc.returncode or 1
         return 1
 
     if callbacks and callbacks.on_finish:
         callbacks.on_finish(job.name, runner, workspace, None)
+    emit_workflow_event(
+        event_callback,
+        "log",
+        f"{runner.runner} runner finished for agent job '{job.name}'.",
+        payload=_job_event_payload(job, runner=runner, workspace=workspace),
+    )
     return 0
 
 
-def run_agent_job(job: AgentJob) -> AgentRunResult:
+def run_agent_job(
+    job: AgentJob,
+    *,
+    event_callback: WorkflowEventCallback | None = None,
+) -> AgentRunResult:
     workspace = create_workspace()
+    failure_emitted = False
+    emit_workflow_event(
+        event_callback,
+        "queued",
+        f"Queued agent job '{job.name}'.",
+        payload=_job_event_payload(job, workspace=workspace),
+    )
     try:
+        emit_workflow_event(
+            event_callback,
+            "started",
+            f"Started agent job '{job.name}'.",
+            payload=_job_event_payload(job, workspace=workspace),
+        )
         _prepare_workspace(job, workspace)
+        emit_workflow_event(
+            event_callback,
+            "log",
+            f"Prepared workspace for agent job '{job.name}'.",
+            payload=_job_event_payload(job, workspace=workspace),
+        )
 
         exit_codes: dict[str, int] = {}
         with ThreadPoolExecutor(max_workers=len(job.runners) or 1) as executor:
             futures = {
-                executor.submit(_launch_runner, job, runner, workspace): runner
+                executor.submit(_launch_runner, job, runner, workspace, event_callback): runner
                 for runner in job.runners
             }
-            for future in futures:
+            total_runners = len(futures)
+            completed_runners = 0
+            for future in as_completed(futures):
                 runner = futures[future]
                 exit_codes[runner.runner] = future.result()
+                completed_runners += 1
+                emit_workflow_event(
+                    event_callback,
+                    "progress",
+                    f"Agent job '{job.name}' runner progress: {completed_runners}/{total_runners}.",
+                    progress=(completed_runners / total_runners) if total_runners else 1.0,
+                    payload=_job_event_payload(
+                        job,
+                        runner=runner,
+                        workspace=workspace,
+                        extra={"completed_runners": completed_runners, "total_runners": total_runners},
+                    ),
+                )
 
         failures = {name: code for name, code in exit_codes.items() if code != 0}
         if failures:
+            emit_workflow_event(
+                event_callback,
+                "failed",
+                f"Agent job '{job.name}' failed: {failures}",
+                payload=_job_event_payload(
+                    job,
+                    workspace=workspace,
+                    extra={"exit_codes": exit_codes, "failures": failures},
+                ),
+            )
+            failure_emitted = True
             raise RuntimeError(f"Agent '{job.name}' failed: {failures}")
 
         delivered = _deliver_outputs(job, workspace)
-        return AgentRunResult(
+        result = AgentRunResult(
             job=job, workspace=workspace, delivered=delivered, exit_codes=exit_codes
         )
+        emit_workflow_event(
+            event_callback,
+            "completed",
+            f"Completed agent job '{job.name}'.",
+            artifact_path=delivered[0] if delivered else None,
+            payload=_job_event_payload(
+                job,
+                workspace=workspace,
+                extra={"exit_codes": exit_codes, "delivered": [str(path) for path in delivered]},
+            ),
+        )
+        return result
+    except Exception as exc:
+        if not failure_emitted:
+            emit_workflow_event(
+                event_callback,
+                "failed",
+                f"Agent job '{job.name}' failed: {exc}",
+                payload=_job_event_payload(
+                    job,
+                    workspace=workspace,
+                    extra={"error": str(exc)},
+                ),
+            )
+        raise
     finally:
         try:
             if workspace.exists():
@@ -583,13 +687,54 @@ def run_agent_job(job: AgentJob) -> AgentRunResult:
             logger.warning("Failed to remove workspace: %s", workspace)
 
 
-def run_agent_jobs(jobs: Iterable[AgentJob], *, max_workers: int | None = None) -> list[AgentRunResult]:
+def run_agent_jobs(
+    jobs: Iterable[AgentJob],
+    *,
+    max_workers: int | None = None,
+    event_callback: WorkflowEventCallback | None = None,
+) -> list[AgentRunResult]:
     job_list = list(jobs)
     if not job_list:
         return []
-    results: list[AgentRunResult] = []
-    with ThreadPoolExecutor(max_workers=max_workers or len(job_list)) as executor:
-        futures = {executor.submit(run_agent_job, job): job for job in job_list}
-        for future in futures:
-            results.append(future.result())
-    return results
+    emit_workflow_event(
+        event_callback,
+        "queued",
+        f"Queued batch of {len(job_list)} agent job(s).",
+        payload={"job_count": len(job_list)},
+    )
+    results: list[AgentRunResult | None] = [None] * len(job_list)
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers or len(job_list)) as executor:
+            futures = {
+                executor.submit(run_agent_job, job, event_callback=event_callback): index
+                for index, job in enumerate(job_list)
+            }
+            completed_jobs = 0
+            total_jobs = len(futures)
+            for future in as_completed(futures):
+                index = futures[future]
+                results[index] = future.result()
+                completed_jobs += 1
+                emit_workflow_event(
+                    event_callback,
+                    "progress",
+                    f"Agent batch progress: {completed_jobs}/{total_jobs}.",
+                    progress=(completed_jobs / total_jobs) if total_jobs else 1.0,
+                    payload={"completed_jobs": completed_jobs, "total_jobs": total_jobs},
+                )
+    except Exception as exc:
+        emit_workflow_event(
+            event_callback,
+            "failed",
+            f"Agent batch failed: {exc}",
+            payload={"job_count": len(job_list), "error": str(exc)},
+        )
+        raise
+    final_results = [result for result in results if result is not None]
+    emit_workflow_event(
+        event_callback,
+        "completed",
+        f"Completed batch of {len(final_results)} agent job(s).",
+        payload={"job_count": len(final_results)},
+    )
+    return final_results

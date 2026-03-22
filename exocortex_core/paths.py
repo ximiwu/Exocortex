@@ -7,14 +7,24 @@ from functools import lru_cache
 from pathlib import Path
 
 
-DEFAULT_REPO_MARKERS: tuple[str, ...] = ("prompts", "assets", "agent_workspace", "README.md")
+AGENT_WORKSPACE_DIR_BASENAME = "agent_workspace"
+AGENT_WORKSPACE_DIR_PREFIX = "agent_workspace_"
+DEFAULT_REPO_MARKERS: tuple[str, ...] = (
+    "prompts",
+    "assets",
+    AGENT_WORKSPACE_DIR_BASENAME,
+    "README.md",
+)
 
 
 def _has_agent_workspace_dir(candidate: Path) -> bool:
     try:
         return any(
             entry.is_dir()
-            and (entry.name == "agent_workspace" or entry.name.startswith("agent_workspace_"))
+            and (
+                entry.name == AGENT_WORKSPACE_DIR_BASENAME
+                or entry.name.startswith(AGENT_WORKSPACE_DIR_PREFIX)
+            )
             for entry in candidate.iterdir()
         )
     except Exception:
@@ -92,6 +102,15 @@ def relative_to_repo(path: Path) -> Path:
         return path
 
 
+def agent_workspace_root(*, pid: int | None = None, root: Path | None = None) -> Path:
+    """
+    Return the per-process agent workspace root directory.
+    """
+    workspace_pid = os.getpid() if pid is None else pid
+    workspace_root = root if root is not None else repo_root()
+    return workspace_root / f"{AGENT_WORKSPACE_DIR_PREFIX}{workspace_pid}"
+
+
 def _windows_documents_dir() -> Path | None:
     try:
         import ctypes
@@ -146,7 +165,10 @@ def exocortex_assets_root() -> Path:
 
 
 __all__ = [
+    "AGENT_WORKSPACE_DIR_BASENAME",
+    "AGENT_WORKSPACE_DIR_PREFIX",
     "DEFAULT_REPO_MARKERS",
+    "agent_workspace_root",
     "detect_repo_root",
     "exocortex_assets_root",
     "is_compiled_runtime",

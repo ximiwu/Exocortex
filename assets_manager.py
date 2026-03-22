@@ -6,14 +6,38 @@ import os
 import re
 import shutil
 import stat
-import sys
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, List
+from typing import TYPE_CHECKING, Callable, Iterable
 
-from PySide6 import QtGui, QtPrintSupport
-
-from exocortex_core.paths import exocortex_assets_root
+from exocortex_core.contracts import AssetInitResult, BlockData, BlockRecord, GroupRecord
+from exocortex_core.markdown_web import render_markdown_asset_to_pdf
+from exocortex_core.pdf_images import (
+    crop_blocks_to_images,
+    render_pdf_to_png_files,
+    stack_images_vertically,
+)
+from exocortex_core.settings import (
+    ASSETS_ROOT,
+    BUG_FINDER_GEMINI_PROMPT,
+    CODEX_MODEL,
+    CODEX_REASONING_MEDIUM,
+    CODEX_REASONING_XHIGH,
+    ENHANCER_CODEX_PROMPT,
+    EXTRACTOR_PROMPTS,
+    GEMINI_MODEL,
+    IMG2MD_GEMINI_PROMPT,
+    IMG_EXPLAINER_CODEX_2_PROMPT,
+    IMG_EXPLAINER_CODEX_PROMPT,
+    INTEGRATOR_CODEX_PROMPT,
+    LATEX_FIXER_CODEX_PROMPT,
+    MANUSCRIPT_GEMINI_PROMPT,
+    MD_EXPLAINER_CODEX_2_PROMPT,
+    MD_EXPLAINER_CODEX_PROMPT,
+    RE_TUTOR_GEMINI_PROMPT,
+    TUTOR_CODEX_PROMPT,
+    relative_to_repo,
+)
+from exocortex_core.workflow_events import WorkflowEventCallback, WorkflowEventType, emit_workflow_event
 
 from agent_manager import (
     AgentJob,
@@ -27,96 +51,61 @@ from agent_manager import (
 
 logger = logging.getLogger(__name__)
 
-try:
-    import markdown
-except ImportError:  # pragma: no cover - optional dependency guard
-    markdown = None
-
-try:
-    import pymdownx.arithmatex  # type: ignore  # noqa: F401
-
-    _ARITHMETEX_AVAILABLE = True
-except ImportError:  # pragma: no cover - optional dependency guard
-    _ARITHMETEX_AVAILABLE = False
-
-
-def _has_agent_workspace_dir(candidate: Path) -> bool:
-    try:
-        return any(
-            entry.is_dir()
-            and (entry.name == "agent_workspace" or entry.name.startswith("agent_workspace_"))
-            for entry in candidate.iterdir()
-        )
-    except Exception:
-        return False
-
-
-def _detect_repo_root(module_dir: Path) -> Path:
-    markers = ("prompts", "assets", "agent_workspace", "README.md")
-    for candidate in (module_dir, *module_dir.parents):
-        if any((candidate / marker).exists() for marker in markers) or _has_agent_workspace_dir(candidate):
-            return candidate
-    return module_dir
-
-
-def _runtime_start_dir() -> Path:
-    if "__compiled__" in globals():
-        return Path(sys.argv[0]).resolve().parent
-    return Path(__file__).resolve().parent
+if TYPE_CHECKING:
+    from PIL import Image
 
 
 def _relative_to_repo(path: Path) -> Path:
-    try:
-        return path.relative_to(REPO_ROOT)
-    except ValueError:
-        return path
+    return relative_to_repo(path)
 
 
-REPO_ROOT = _detect_repo_root(_runtime_start_dir())
-PROMPTS_DIR = REPO_ROOT / "prompts"
-ASSETS_ROOT = exocortex_assets_root()
-REFERENCE_RENDER_DPI = 130  # Keep in sync with pdf_block_gui_lib.main_window.DEFAULT_RENDER_DPI
+REFERENCE_RENDER_DPI = 130
 
 EXTRACTOR_AGENTS: tuple[str, ...] = ("background", "concept", "formula")
 
-CODEX_MODEL = "gpt-5.4"
-CODEX_REASONING_XHIGH = "xhigh"
-CODEX_REASONING_HIGH = "high"
-CODEX_REASONING_MEDIUM = "medium"
-GEMINI_MODEL = "gemini-3-pro-preview"
-
 IMG2MD_MISSING_RETRY_LIMIT = 1145142778
-
-
-def _prompt_path(*parts: str) -> Path:
-    return PROMPTS_DIR.joinpath(*parts)
-
-
-IMG2MD_CODEX_PROMPT = _prompt_path("img2md", "codex", "AGENTS.md")
-IMG2MD_GEMINI_PROMPT = _prompt_path("img2md", "gemini", "GEMINI.md")
-IMG_EXPLAINER_CODEX_PROMPT = _prompt_path("img_explainer", "codex", "AGENTS.md")
-IMG_EXPLAINER_CODEX_2_PROMPT = _prompt_path("img_explainer", "codex_2", "AGENTS.md")
-MD_EXPLAINER_CODEX_PROMPT = _prompt_path("md_explainer", "codex", "AGENTS.md")
-MD_EXPLAINER_CODEX_2_PROMPT = _prompt_path("md_explainer", "codex_2", "AGENTS.md")
-ENHANCER_CODEX_PROMPT = _prompt_path("enhancer", "codex", "AGENTS.md")
-INTEGRATOR_CODEX_PROMPT = _prompt_path("integrator", "codex", "AGENTS.md")
-TUTOR_CODEX_PROMPT = _prompt_path("tutor", "codex", "AGENTS.md")
-BUG_FINDER_GEMINI_PROMPT = _prompt_path("bug_finder", "gemini", "GEMINI.md")
-RE_TUTOR_GEMINI_PROMPT = _prompt_path("re_tutor", "gemini", "GEMINI.md")
-MANUSCRIPT_GEMINI_PROMPT = _prompt_path("manuscript2md", "gemini", "GEMINI.md")
-LATEX_FIXER_CODEX_PROMPT = _prompt_path("latex_fixer", "codex", "AGENTS.md")
-
-EXTRACTOR_PROMPTS = {
-    "background": _prompt_path("extractor", "background", "codex", "AGENTS.md"),
-    "concept": _prompt_path("extractor", "concept", "codex", "AGENTS.md"),
-    "formula": _prompt_path("extractor", "formula", "codex", "AGENTS.md"),
-}
 
 EXTRACTOR_OUTPUT_NAMES = {
     "background": "background.md",
     "concept": "concept.md",
     "formula": "formula.md",
 }
+
+
+def _emit_asset_event(
+    event_callback: WorkflowEventCallback | None,
+    event_type: WorkflowEventType,
+    message: str,
+    *,
+    progress: float | None = None,
+    artifact_path: str | Path | None = None,
+    payload: dict[str, object] | None = None,
+) -> None:
+    emit_workflow_event(
+        event_callback,
+        event_type,
+        message,
+        progress=progress,
+        artifact_path=artifact_path,
+        payload=payload,
+    )
+
+
+def _asset_payload(
+    asset_name: str,
+    *,
+    group_idx: int | None = None,
+    tutor_idx: int | None = None,
+    extra: dict[str, object] | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {"asset_name": asset_name}
+    if group_idx is not None:
+        payload["group_idx"] = group_idx
+    if tutor_idx is not None:
+        payload["tutor_idx"] = tutor_idx
+    if extra:
+        payload.update(extra)
+    return payload
 
 
 def get_asset_dir(asset_name: str) -> Path:
@@ -157,139 +146,6 @@ def save_asset_config(asset_name: str, data: dict[str, object]) -> Path:
     tmp_path.write_text(serialized, encoding="utf-8")
     tmp_path.replace(path)
     return path
-
-
-@dataclass(frozen=True)
-class AssetInitResult:
-    asset_dir: Path
-    references_dir: Path
-    raw_pdf_path: Path
-    reference_files: list[Path]
-
-
-@dataclass(frozen=True)
-class BlockRect:
-    x: float
-    y: float
-    width: float
-    height: float
-
-    @classmethod
-    def from_dict(cls, data: dict) -> BlockRect:
-        try:
-            return cls(
-                x=float(data["x"]),
-                y=float(data["y"]),
-                width=float(data["width"]),
-                height=float(data["height"]),
-            )
-        except Exception as exc:  # pragma: no cover - defensive parsing
-            raise ValueError(f"Invalid rect: {data}") from exc
-
-    def to_dict(self) -> dict:
-        return {
-            "x": self.x,
-            "y": self.y,
-            "width": self.width,
-            "height": self.height,
-        }
-
-
-@dataclass(frozen=True)
-class BlockRecord:
-    block_id: int
-    page_index: int
-    rect: BlockRect
-    group_idx: int | None = None
-
-    @classmethod
-    def from_dict(cls, data: dict) -> BlockRecord:
-        try:
-            block_id = int(data.get("block_id", data.get("id")))
-            page_index = int(data["page_index"])
-            rect = BlockRect.from_dict(data["rect"])
-            group_idx_raw = data.get("group_idx")
-            group_idx = int(group_idx_raw) if group_idx_raw is not None else None
-        except Exception as exc:  # pragma: no cover - defensive parsing
-            raise ValueError(f"Invalid block record: {data}") from exc
-        return cls(block_id=block_id, page_index=page_index, rect=rect, group_idx=group_idx)
-
-    def to_dict(self) -> dict:
-        return {
-            "block_id": self.block_id,
-            "page_index": self.page_index,
-            "rect": self.rect.to_dict(),
-            "group_idx": self.group_idx,
-        }
-
-
-@dataclass(frozen=True)
-class BlockData:
-    blocks: List[BlockRecord]
-    merge_order: List[int]
-    next_block_id: int
-
-    @classmethod
-    def empty(cls) -> BlockData:
-        return cls(blocks=[], merge_order=[], next_block_id=1)
-
-    @classmethod
-    def from_dict(cls, data: dict) -> BlockData:
-        blocks_raw = data.get("blocks", [])
-        merge_order_raw = data.get("merge_order", [])
-        next_block_id = int(data.get("next_block_id", 1))
-
-        blocks: list[BlockRecord] = []
-        for entry in blocks_raw:
-            try:
-                blocks.append(BlockRecord.from_dict(entry))
-            except ValueError as exc:  # pragma: no cover - defensive parsing
-                logging.warning("Skipping invalid block entry: %s", exc)
-
-        merge_order: list[int] = []
-        for bid in merge_order_raw:
-            try:
-                merge_order.append(int(bid))
-            except Exception:  # pragma: no cover - defensive parsing
-                logging.warning("Invalid merge_order entry: %s", bid)
-
-        if next_block_id <= 0:
-            next_block_id = 1
-        return cls(blocks=blocks, merge_order=merge_order, next_block_id=next_block_id)
-
-    def to_dict(self) -> dict:
-        return {
-            "blocks": [block.to_dict() for block in self.blocks],
-            "merge_order": self.merge_order,
-            "next_block_id": self.next_block_id,
-        }
-
-
-@dataclass(frozen=True)
-class GroupRecord:
-    group_idx: int
-    block_ids: list[int]
-
-    @classmethod
-    def from_dict(cls, data: dict, *, default_idx: int | None = None) -> GroupRecord:
-        try:
-            idx_value = data.get("group_idx", default_idx)
-            if idx_value is None:
-                raise ValueError("Missing group_idx")
-            group_idx = int(idx_value)
-            raw_block_ids = data.get("block_ids", data.get("blocks", []))
-            block_ids = list(dict.fromkeys(int(bid) for bid in raw_block_ids))
-        except Exception as exc:  # pragma: no cover - defensive parsing
-            raise ValueError(f"Invalid group record: {data}") from exc
-        if not block_ids:
-            raise ValueError("Group record must contain block_ids.")
-        return cls(group_idx=group_idx, block_ids=block_ids)
-
-    def to_dict(self) -> dict:
-        return {
-            "group_idx": self.group_idx,
-            "block_ids": self.block_ids,
-        }
 
 
 def get_group_data_dir(asset_name: str) -> Path:
@@ -396,54 +252,7 @@ def _clean_directory(directory: Path) -> None:
 
 
 def _render_markdown_to_pdf(markdown_path: Path, output_pdf: Path) -> Path:
-    if markdown is None:
-        raise RuntimeError("Missing 'markdown' package for rendering markdown.")
-
-    text = markdown_path.read_text(encoding="utf-8-sig").lstrip("\ufeff")
-    extensions = ["extra", "sane_lists", "fenced_code", "tables"]
-    extension_configs: dict[str, dict[str, object]] = {}
-    if _ARITHMETEX_AVAILABLE:
-        extensions.append("pymdownx.arithmatex")
-        extension_configs["pymdownx.arithmatex"] = {"generic": True}
-
-    md = markdown.Markdown(
-        extensions=extensions,
-        extension_configs=extension_configs,
-    )
-    body = md.convert(text)
-
-    styles = """
-body { font-family: 'Times New Roman','Segoe UI','Helvetica Neue',Arial,sans-serif; font-size: 14px; line-height: 1.6; color: #222; padding: 18px; }
-p { margin: 0.6em 0; }
-pre { background: #f7f7f7; padding: 10px; border: 1px solid #e0e0e0; white-space: pre-wrap; }
-code { font-family: 'Consolas','JetBrains Mono',monospace; font-size: 0.95em; }
-table { border-collapse: collapse; width: 100%; margin: 12px 0; }
-th, td { border: 1px solid #dcdcdc; padding: 8px 10px; vertical-align: top; }
-thead th { background: #f5f5f5; font-weight: 600; }
-"""
-    html_text = (
-        "<!DOCTYPE html>"
-        "<html><head><meta charset='UTF-8'>"
-        f"<style>{styles}</style>"
-        "</head><body>"
-        f"{body}"
-        "</body></html>"
-    )
-
-    output_pdf.parent.mkdir(parents=True, exist_ok=True)
-    printer = QtPrintSupport.QPrinter()
-    printer.setOutputFormat(QtPrintSupport.QPrinter.PdfFormat)
-    printer.setOutputFileName(str(output_pdf))
-    printer.setPageSize(QtGui.QPageSize(QtGui.QPageSize.A4))
-    printer.setResolution(150)
-
-    document = QtGui.QTextDocument()
-    document.setHtml(html_text)
-    document.print_(printer)
-
-    if not output_pdf.is_file():
-        raise FileNotFoundError(f"Markdown PDF output not found: {output_pdf}")
-    return output_pdf
+    return render_markdown_asset_to_pdf(markdown_path, output_pdf)
 
 
 def convert_pdf_to_images(
@@ -465,35 +274,7 @@ def convert_pdf_to_images(
     Returns:
         List of saved image paths in page order.
     """
-    import pypdfium2 as pdfium
-
-    pdf_path = Path(pdf_path)
-    output_dir = Path(output_dir)
-
-    if not pdf_path.exists():
-        raise FileNotFoundError(f"PDF not found: {pdf_path}")
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    base_name = prefix or pdf_path.stem
-    scale = dpi / 72
-    image_paths: list[Path] = []
-
-    with pdfium.PdfDocument(pdf_path) as pdf:
-        for page_index in range(len(pdf)):
-            page = pdf.get_page(page_index)
-            bitmap = page.render(scale=scale)
-            image = bitmap.to_pil()
-            image_path = output_dir / f"{base_name}_page_{page_index + 1:03d}.png"
-            image.save(image_path)
-
-            image_paths.append(image_path)
-
-            image.close()
-            bitmap.close()
-            page.close()
-
-    return image_paths
+    return render_pdf_to_png_files(pdf_path, output_dir, dpi=dpi, prefix=prefix)
 
 
 def _next_markdown_index(directory: Path) -> int:
@@ -531,7 +312,7 @@ def _next_directory_index(directory: Path) -> int:
     return max_index + 1
 
 
-_MARKDOWN_ALIAS_SUFFIX = ".alias"  # Keep in sync with pdf_block_gui_lib.main_window_components.window
+_MARKDOWN_ALIAS_SUFFIX = ".alias"
 
 
 def _markdown_alias_path(markdown_path: Path) -> Path:
@@ -702,114 +483,24 @@ def _render_blocks_to_images(
     blocks: list[BlockRecord],
     dpi: int = 300,
     reference_dpi: int = REFERENCE_RENDER_DPI,
-) -> list[QtGui.QImage]:
+) -> list["Image.Image"]:
     """
-    Render each block rect to a QImage cropped from its page(s).
+    Render each block rect to a Pillow image cropped from its page(s).
 
     Block coordinates are stored in reference_dpi space (GUI reference render DPI) and must
     be scaled to the target renderer DPI before cropping.
     """
-    from pdf_block_gui_lib.renderer import PdfRenderer
-
-    renderer = PdfRenderer(dpi=dpi)
-    renderer.open(str(pdf_path))
-    images: list[QtGui.QImage] = []
-    try:
-        if reference_dpi <= 0:
-            raise ValueError("reference_dpi must be positive.")
-        scale = renderer.dpi / reference_dpi
-        if scale <= 0:
-            raise ValueError("Invalid render scale.")
-        page_count = renderer.page_count
-        page_widths_ref: list[float] = []
-        page_heights_ref: list[float] = []
-        page_offsets_ref: list[float] = [0.0]
-        for page_index in range(page_count):
-            width_px, height_px = renderer.page_pixel_size(page_index)
-            width_ref = width_px / scale
-            height_ref = height_px / scale
-            page_widths_ref.append(width_ref)
-            page_heights_ref.append(height_ref)
-            page_offsets_ref.append(page_offsets_ref[-1] + height_ref)
-
-        for block in blocks:
-            if block.page_index < 0 or block.page_index >= page_count:
-                raise ValueError(f"Invalid page index for block {block.block_id}: {block.page_index}")
-            block_width_ref = float(block.rect.width)
-            block_height_ref = float(block.rect.height)
-            if block_width_ref <= 0 or block_height_ref <= 0:
-                raise ValueError(f"Invalid block dimensions for block {block.block_id} on page {block.page_index}")
-            block_x_ref = float(block.rect.x)
-            block_y_ref = float(block.rect.y)
-
-            base_page_width_ref = page_widths_ref[block.page_index]
-            base_page_offset_ref = page_offsets_ref[block.page_index]
-            block_center_offset = (block_x_ref + block_width_ref / 2) - base_page_width_ref / 2
-            block_global_y0 = base_page_offset_ref + block_y_ref
-            block_global_y1 = block_global_y0 + block_height_ref
-
-            slices: list[QtGui.QImage] = []
-            for page_index in range(page_count):
-                page_top = page_offsets_ref[page_index]
-                page_bottom = page_offsets_ref[page_index + 1]
-                inter_top = max(block_global_y0, page_top)
-                inter_bottom = min(block_global_y1, page_bottom)
-                if inter_bottom <= inter_top:
-                    continue
-
-                local_y0_ref = inter_top - page_top
-                local_height_ref = inter_bottom - inter_top
-
-                page_width_ref = page_widths_ref[page_index]
-                center_x_ref = page_width_ref / 2 + block_center_offset
-                x0_ref = center_x_ref - block_width_ref / 2
-
-                page_image = renderer.render_page(page_index)
-                x = int(round(x0_ref * scale))
-                y = int(round(local_y0_ref * scale))
-                width = int(round(block_width_ref * scale))
-                height = int(round(local_height_ref * scale))
-
-                if x < 0:
-                    width += x
-                    x = 0
-                if y < 0:
-                    height += y
-                    y = 0
-                width = min(width, page_image.width() - x)
-                height = min(height, page_image.height() - y)
-                if width <= 0 or height <= 0:
-                    continue
-                slices.append(page_image.copy(x, y, width, height))
-
-            if not slices:
-                raise ValueError(f"Block {block.block_id} does not intersect any page.")
-            if len(slices) == 1:
-                images.append(slices[0])
-            else:
-                images.append(_stack_images_vertically(slices))
-    finally:
-        renderer.close()
-    return images
+    return crop_blocks_to_images(
+        pdf_path,
+        blocks,
+        dpi=dpi,
+        reference_dpi=reference_dpi,
+    )
 
 
-def _stack_images_vertically(images: list[QtGui.QImage]) -> QtGui.QImage:
-    """Stack images vertically into one combined QImage."""
-    if not images:
-        raise ValueError("No images provided to stack.")
-    max_width = max(image.width() for image in images)
-    total_height = sum(image.height() for image in images)
-    canvas = QtGui.QImage(max_width, total_height, QtGui.QImage.Format_RGB888)
-    canvas.fill(QtGui.QColor("white"))
-    painter = QtGui.QPainter(canvas)
-    try:
-        y_offset = 0
-        for image in images:
-            painter.drawImage(0, y_offset, image)
-            y_offset += image.height()
-    finally:
-        painter.end()
-    return canvas
+def _stack_images_vertically(images: list["Image.Image"]) -> "Image.Image":
+    """Stack images vertically into one combined Pillow image."""
+    return stack_images_vertically(images)
 
 
 def get_asset_pdf_path(asset_name: str) -> Path:
@@ -921,11 +612,21 @@ def _collect_reference_files(
 
 
 def group_dive_in(
-    asset_name: str, group_idx: int, *, on_secondary_ready: Callable[[Path], None] | None = None
+    asset_name: str,
+    group_idx: int,
+    *,
+    on_secondary_ready: Callable[[Path], None] | None = None,
+    event_callback: WorkflowEventCallback | None = None,
 ) -> Path:
     """
     Generate explainer output for a group, archive initial outputs, and run enhancer.
     """
+    _emit_asset_event(
+        event_callback,
+        "started",
+        f"Starting group dive for asset '{asset_name}', group {group_idx}.",
+        payload=_asset_payload(asset_name, group_idx=group_idx),
+    )
     group_dir = get_group_data_dir(asset_name) / str(group_idx)
     target_dir = group_dir / "img_explainer_data"
     initial_dir = target_dir / "initial"
@@ -961,10 +662,20 @@ def group_dive_in(
             deliver_rename={"main.md": "enhanced.md"},
             clean_markdown=True,
         )
-        run_agent_job(job)
+        run_agent_job(
+            job,
+            event_callback=event_callback,
+        )
         if not enhanced_md.is_file():
             raise FileNotFoundError(f"enhancer output not found: {enhanced_md}")
         _clean_markdown_file(enhanced_md)
+        _emit_asset_event(
+            event_callback,
+            "completed",
+            f"Completed group dive for asset '{asset_name}', group {group_idx}.",
+            artifact_path=enhanced_md,
+            payload=_asset_payload(asset_name, group_idx=group_idx),
+        )
         return enhanced_md
 
     if enhanced_md.is_file():
@@ -973,6 +684,13 @@ def group_dive_in(
             "enhanced.md already exists for asset '%s', group %s; skipping regeneration.",
             asset_name,
             group_idx,
+        )
+        _emit_asset_event(
+            event_callback,
+            "completed",
+            f"Reused existing explainer output for asset '{asset_name}', group {group_idx}.",
+            artifact_path=enhanced_md,
+            payload=_asset_payload(asset_name, group_idx=group_idx),
         )
         return enhanced_md
 
@@ -1047,7 +765,8 @@ def group_dive_in(
 
         thesis_image_path = target_dir / "thesis.png"
         thesis_image_path.parent.mkdir(parents=True, exist_ok=True)
-        if not merged_image.save(str(thesis_image_path)):
+        merged_image.save(thesis_image_path)
+        if not thesis_image_path.is_file():
             raise RuntimeError(f"Failed to save rendered image to {thesis_image_path}")
         explainer_name = "img_explainer"
         codex_prompt = IMG_EXPLAINER_CODEX_PROMPT
@@ -1083,11 +802,22 @@ def group_dive_in(
         _build_explainer_job(codex_prompt, "output.md", codex_extra_message, explainer_name),
         _build_explainer_job(codex_2_prompt, "output_2.md", codex_2_extra_message, f"{explainer_name}_2"),
     ]
-    run_agent_jobs(explainer_jobs, max_workers=len(explainer_jobs))
+    run_agent_jobs(
+        explainer_jobs,
+        max_workers=len(explainer_jobs),
+        event_callback=event_callback,
+    )
 
     secondary_output = initial_output_2
     if on_secondary_ready is not None:
         on_secondary_ready(secondary_output)
+    _emit_asset_event(
+        event_callback,
+        "artifact",
+        f"Secondary explainer draft is ready for asset '{asset_name}', group {group_idx}.",
+        artifact_path=secondary_output,
+        payload=_asset_payload(asset_name, group_idx=group_idx),
+    )
 
     if not initial_output.is_file():
         raise FileNotFoundError(f"Explainer output not found: {initial_output}")
@@ -1136,7 +866,14 @@ def init_tutor(asset_name: str, group_idx: int, focus_markdown: str) -> Path:
     return focus_path
 
 
-def ask_tutor(question: str, asset_name: str, group_idx: int, tutor_idx: int) -> Path:
+def ask_tutor(
+    question: str,
+    asset_name: str,
+    group_idx: int,
+    tutor_idx: int,
+    *,
+    event_callback: WorkflowEventCallback | None = None,
+) -> Path:
     """
     Run the tutor agent for a given question and tutor session, archive the response, and return it.
 
@@ -1150,6 +887,17 @@ def ask_tutor(question: str, asset_name: str, group_idx: int, tutor_idx: int) ->
     )
     if not normalized_question:
         raise ValueError("Question is required.")
+    _emit_asset_event(
+        event_callback,
+        "started",
+        f"Starting tutor flow for asset '{asset_name}', group {group_idx}, tutor {tutor_idx}.",
+        payload=_asset_payload(
+            asset_name,
+            group_idx=group_idx,
+            tutor_idx=tutor_idx,
+            extra={"question": normalized_question},
+        ),
+    )
 
     group_dir = get_group_data_dir(asset_name) / str(group_idx)
     if not group_dir.is_dir():
@@ -1223,7 +971,7 @@ def ask_tutor(question: str, asset_name: str, group_idx: int, tutor_idx: int) ->
         deliver_rename={"output.md": output_name},
         clean_markdown=True,
     )
-    run_agent_job(job)
+    run_agent_job(job, event_callback=event_callback)
 
     moved_output = ask_history_dir / output_name
     if not moved_output.is_file():
@@ -1236,11 +984,29 @@ def ask_tutor(question: str, asset_name: str, group_idx: int, tutor_idx: int) ->
         _set_markdown_alias(moved_output, normalized_question)
     except Exception as exc:  # pragma: no cover - best-effort UX
         logger.warning("Failed to write ask_history alias at %s: %s", moved_output, exc)
+    _emit_asset_event(
+        event_callback,
+        "completed",
+        f"Completed tutor flow for asset '{asset_name}', group {group_idx}, tutor {tutor_idx}.",
+        artifact_path=moved_output,
+        payload=_asset_payload(
+            asset_name,
+            group_idx=group_idx,
+            tutor_idx=tutor_idx,
+            extra={"question": normalized_question},
+        ),
+    )
     return moved_output
 
 
 
-def integrate(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
+def integrate(
+    asset_name: str,
+    group_idx: int,
+    tutor_idx: int,
+    *,
+    event_callback: WorkflowEventCallback | None = None,
+) -> Path:
     """
     Run the integrator agent for a tutor session, save a note, and insert it back into enhanced.md.
 
@@ -1251,6 +1017,12 @@ def integrate(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
     4) Wrap note.md in a <details class="note"> block.
     5) Insert the wrapped note block into img_explainer_data/enhanced.md at the end of the focus region.
     """
+    _emit_asset_event(
+        event_callback,
+        "started",
+        f"Starting integrate flow for asset '{asset_name}', group {group_idx}, tutor {tutor_idx}.",
+        payload=_asset_payload(asset_name, group_idx=group_idx, tutor_idx=tutor_idx),
+    )
     group_dir = get_group_data_dir(asset_name) / str(group_idx)
     if not group_dir.is_dir():
         raise FileNotFoundError(
@@ -1327,7 +1099,7 @@ def integrate(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
         deliver_rename={"output.md": "note.md"},
         clean_markdown=True,
     )
-    run_agent_job(job)
+    run_agent_job(job, event_callback=event_callback)
 
     if not note_path.is_file():
         raise FileNotFoundError(f"integrator output not found at {note_path}")
@@ -1382,6 +1154,13 @@ def integrate(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
     insert_at = match_start + len(match_text)
     updated_enhanced = enhanced_content[:insert_at] + note_wrapped + enhanced_content[insert_at:]
     enhanced_md.write_text(updated_enhanced, encoding="utf-8", newline="\n")
+    _emit_asset_event(
+        event_callback,
+        "completed",
+        f"Completed integrate flow for asset '{asset_name}', group {group_idx}, tutor {tutor_idx}.",
+        artifact_path=enhanced_md,
+        payload=_asset_payload(asset_name, group_idx=group_idx, tutor_idx=tutor_idx),
+    )
     return enhanced_md
 
 
@@ -1418,7 +1197,13 @@ def _list_tutor_manuscript_images(tutor_session_dir: Path) -> list[Path]:
     return []
 
 
-def bug_finder(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
+def bug_finder(
+    asset_name: str,
+    group_idx: int,
+    tutor_idx: int,
+    *,
+    event_callback: WorkflowEventCallback | None = None,
+) -> Path:
     """
     Review manuscript images against note.md for a tutor session and write bugs.md.
 
@@ -1427,6 +1212,12 @@ def bug_finder(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
     - references/original.md (renamed from note.md)
     - output/bugs.md (delivered to tutor_data/<tutor_idx>/bugs.md)
     """
+    _emit_asset_event(
+        event_callback,
+        "started",
+        f"Starting bug finder for asset '{asset_name}', group {group_idx}, tutor {tutor_idx}.",
+        payload=_asset_payload(asset_name, group_idx=group_idx, tutor_idx=tutor_idx),
+    )
     group_dir = get_group_data_dir(asset_name) / str(group_idx)
     tutor_session_dir = group_dir / "tutor_data" / str(tutor_idx)
     if not tutor_session_dir.is_dir():
@@ -1471,14 +1262,28 @@ def bug_finder(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
         deliver_rename={"bugs.md": "bugs.md"},
         clean_markdown=True,
     )
-    run_agent_job(job)
+    run_agent_job(job, event_callback=event_callback)
 
     if not bugs_path.is_file():
         raise FileNotFoundError(f"bug_finder output not found at {bugs_path}")
+    _emit_asset_event(
+        event_callback,
+        "completed",
+        f"Completed bug finder for asset '{asset_name}', group {group_idx}, tutor {tutor_idx}.",
+        artifact_path=bugs_path,
+        payload=_asset_payload(asset_name, group_idx=group_idx, tutor_idx=tutor_idx),
+    )
     return bugs_path
 
 
-def ask_re_tutor(question: str, asset_name: str, group_idx: int, tutor_idx: int) -> Path:
+def ask_re_tutor(
+    question: str,
+    asset_name: str,
+    group_idx: int,
+    tutor_idx: int,
+    *,
+    event_callback: WorkflowEventCallback | None = None,
+) -> Path:
     """
     Run the re_tutor agent in Feynman mode and append Q/A to tutor_data/<tutor_idx>/bugs.md.
 
@@ -1493,6 +1298,17 @@ def ask_re_tutor(question: str, asset_name: str, group_idx: int, tutor_idx: int)
     )
     if not normalized_question:
         raise ValueError("Question is required.")
+    _emit_asset_event(
+        event_callback,
+        "started",
+        f"Starting re-tutor flow for asset '{asset_name}', group {group_idx}, tutor {tutor_idx}.",
+        payload=_asset_payload(
+            asset_name,
+            group_idx=group_idx,
+            tutor_idx=tutor_idx,
+            extra={"question": normalized_question},
+        ),
+    )
 
     group_dir = get_group_data_dir(asset_name) / str(group_idx)
     tutor_session_dir = group_dir / "tutor_data" / str(tutor_idx)
@@ -1538,7 +1354,7 @@ def ask_re_tutor(question: str, asset_name: str, group_idx: int, tutor_idx: int)
         deliver_rename={"output.md": re_tutor_output_name},
         clean_markdown=True,
     )
-    run_agent_job(job)
+    run_agent_job(job, event_callback=event_callback)
 
     answer_path = tutor_session_dir / re_tutor_output_name
     if not answer_path.is_file():
@@ -1555,6 +1371,18 @@ def ask_re_tutor(question: str, asset_name: str, group_idx: int, tutor_idx: int)
     )
     bugs_path.write_text(appended, encoding="utf-8", newline="\n")
     _clean_markdown_file(bugs_path)
+    _emit_asset_event(
+        event_callback,
+        "completed",
+        f"Completed re-tutor flow for asset '{asset_name}', group {group_idx}, tutor {tutor_idx}.",
+        artifact_path=bugs_path,
+        payload=_asset_payload(
+            asset_name,
+            group_idx=group_idx,
+            tutor_idx=tutor_idx,
+            extra={"question": normalized_question},
+        ),
+    )
     return bugs_path
 
 
@@ -1611,16 +1439,8 @@ def insert_feynman_original_image(asset_name: str, group_idx: int, tutor_idx: in
         "</div>\n"
         "</details>\n\n"
     )
-    legacy_image_markdown = "\n\n".join(
+    "\n\n".join(
         f"![你的推导](./img_explainer_data/{name})" for name in target_names
-    )
-    legacy_original_block = (
-        "\n\n<details class=\"note\">\n"
-        "<summary>原图</summary> \n"
-        "<div markdown=\"1\">\n\n"
-        f"{legacy_image_markdown}\n\n\n"
-        "</div>\n"
-        "</details>\n\n"
     )
 
     enhanced_content = enhanced_md.read_text(encoding="utf-8")
@@ -1667,12 +1487,24 @@ def insert_feynman_original_image(asset_name: str, group_idx: int, tutor_idx: in
     return enhanced_md
 
 
-def create_student_note(asset_name: str, group_idx: int, tutor_idx: int) -> Path:
+def create_student_note(
+    asset_name: str,
+    group_idx: int,
+    tutor_idx: int,
+    *,
+    event_callback: WorkflowEventCallback | None = None,
+) -> Path:
     """
     Convert tutor_data/<tutor_idx>/manuscript_1.png (and manuscript_2.png, ...) into note_student.md via the
     manuscript prompt, then insert it into
     img_explainer_data/enhanced.md.
     """
+    _emit_asset_event(
+        event_callback,
+        "started",
+        f"Starting student note flow for asset '{asset_name}', group {group_idx}, tutor {tutor_idx}.",
+        payload=_asset_payload(asset_name, group_idx=group_idx, tutor_idx=tutor_idx),
+    )
     group_dir = get_group_data_dir(asset_name) / str(group_idx)
     if not group_dir.is_dir():
         raise FileNotFoundError(
@@ -1726,7 +1558,7 @@ def create_student_note(asset_name: str, group_idx: int, tutor_idx: int) -> Path
         deliver_rename={"output.md": "note_student.md"},
         clean_markdown=True,
     )
-    run_agent_job(job)
+    run_agent_job(job, event_callback=event_callback)
 
     if not note_student_path.is_file():
         raise FileNotFoundError(f"manuscript output not found at {note_student_path}")
@@ -1826,15 +1658,32 @@ def create_student_note(asset_name: str, group_idx: int, tutor_idx: int) -> Path
         enhanced_content[:insert_at] + note_student_wrapped + enhanced_content[insert_at:]
     )
     enhanced_md.write_text(updated_enhanced, encoding="utf-8", newline="\n")
+    _emit_asset_event(
+        event_callback,
+        "completed",
+        f"Completed student note flow for asset '{asset_name}', group {group_idx}, tutor {tutor_idx}.",
+        artifact_path=enhanced_md,
+        payload=_asset_payload(asset_name, group_idx=group_idx, tutor_idx=tutor_idx),
+    )
     return enhanced_md
 
 
-def fix_latex(markdown_path: str | Path) -> Path:
+def fix_latex(
+    markdown_path: str | Path,
+    *,
+    event_callback: WorkflowEventCallback | None = None,
+) -> Path:
     path = Path(markdown_path)
     if not path.is_file():
         raise FileNotFoundError(f"Markdown not found: {path}")
     if path.suffix.lower() != ".md":
         raise ValueError(f"fix_latex only supports markdown files: {path}")
+    _emit_asset_event(
+        event_callback,
+        "started",
+        f"Starting latex fix for {path.name}.",
+        payload={"markdown_path": str(path)},
+    )
 
     job = AgentJob(
         name="latex_fixer",
@@ -1854,10 +1703,17 @@ def fix_latex(markdown_path: str | Path) -> Path:
         deliver_rename={"output.md": path.name},
         clean_markdown=True,
     )
-    run_agent_job(job)
+    run_agent_job(job, event_callback=event_callback)
 
     if not path.is_file():
         raise FileNotFoundError(f"Latex fixer output not found at {path}")
+    _emit_asset_event(
+        event_callback,
+        "completed",
+        f"Completed latex fix for {path.name}.",
+        artifact_path=path,
+        payload={"markdown_path": str(path)},
+    )
     return path
 
 
@@ -1867,6 +1723,7 @@ def asset_init(
     progress_callback: Callable[[str], None] | None = None,
     *,
     rendered_pdf_path: str | Path | None = None,
+    event_callback: WorkflowEventCallback | None = None,
 ) -> AssetInitResult:
     """
     Run the PDF -> image -> markdown -> extractor pipeline for a given asset.
@@ -1890,16 +1747,48 @@ def asset_init(
     references_dir = asset_dir / "references"
     img2md_output_dir = asset_dir / "img2md_output"
     img2md_output_dir.mkdir(parents=True, exist_ok=True)
+    _emit_asset_event(
+        event_callback,
+        "started",
+        f"Starting asset initialization for '{resolved_asset_name}'.",
+        payload=_asset_payload(
+            resolved_asset_name,
+            extra={
+                "source_path": str(source_path),
+                "is_markdown": is_markdown,
+            },
+        ),
+    )
 
-    def _notify(message: str) -> None:
+    def _notify(
+        message: str,
+        *,
+        event_type: WorkflowEventType = "log",
+        progress: float | None = None,
+        artifact_path: str | Path | None = None,
+    ) -> None:
         if progress_callback:
             try:
                 progress_callback(message)
             except Exception:  # pragma: no cover - defensive
                 pass
+        _emit_asset_event(
+            event_callback,
+            event_type,
+            message,
+            progress=progress,
+            artifact_path=artifact_path,
+            payload=_asset_payload(
+                resolved_asset_name,
+                extra={
+                    "source_path": str(source_path),
+                    "is_markdown": is_markdown,
+                },
+            ),
+        )
 
     if is_markdown:
-        _notify("Preparing markdown asset...")
+        _notify("Preparing markdown asset...", progress=0.05)
         logger.info("Preparing markdown asset '%s' from %s", resolved_asset_name, source_path)
         asset_dir.mkdir(parents=True, exist_ok=True)
         _clean_directory(references_dir)
@@ -1916,13 +1805,13 @@ def asset_init(
             rendered_pdf_path = Path(rendered_pdf_path)
             if not rendered_pdf_path.is_file():
                 raise FileNotFoundError(f"Rendered PDF not found: {rendered_pdf_path}")
-            _notify("Copying rendered PDF...")
+            _notify("Copying rendered PDF...", progress=0.2)
             raw_pdf_path = _copy_raw_pdf(rendered_pdf_path, asset_dir)
         else:
-            _notify("Rendering markdown to PDF...")
+            _notify("Rendering markdown to PDF...", progress=0.2)
             raw_pdf_path = _render_markdown_to_pdf(output_md, asset_dir / "raw.pdf")
     else:
-        _notify("Copying PDF and preparing directories...")
+        _notify("Copying PDF and preparing directories...", progress=0.05)
         logger.info("Preparing asset '%s' from %s", resolved_asset_name, source_path)
         raw_pdf_path = _copy_raw_pdf(source_path, asset_dir)
         _clean_directory(references_dir)
@@ -1930,13 +1819,13 @@ def asset_init(
         images_dir = asset_dir / "img2md_images"
         _clean_directory(images_dir)
 
-        _notify("Converting PDF pages to images...")
+        _notify("Converting PDF pages to images...", progress=0.15)
         image_paths = convert_pdf_to_images(source_path, images_dir, dpi=300)
         if not image_paths:
             raise RuntimeError(f"No images rendered from {source_path}")
         logger.info("Converted %d page(s) to %s", len(image_paths), images_dir)
 
-        _notify("Running img2md...")
+        _notify("Running img2md...", progress=0.3)
         img2md_output_dir.mkdir(parents=True, exist_ok=True)
 
         image_pattern = re.compile(r".*_(\d{3})\.png$", re.IGNORECASE)
@@ -2006,12 +1895,12 @@ def asset_init(
                 break
             attempt += 1
             if attempt > 1:
-                _notify(f"Retrying img2md for {len(missing)} missing page(s)...")
+                _notify(f"Retrying img2md for {len(missing)} missing page(s)...", progress=0.45)
             for name in missing:
                 (img2md_output_dir / name).unlink(missing_ok=True)
             jobs = [jobs_by_output_name[name] for name in missing]
             try:
-                run_agent_jobs(jobs, max_workers=len(jobs))
+                run_agent_jobs(jobs, max_workers=len(jobs), event_callback=event_callback)
             except Exception as exc:
                 logger.warning("img2md attempt %d failed: %s", attempt, exc)
 
@@ -2037,7 +1926,7 @@ def asset_init(
     if not output_md.is_file():
         raise FileNotFoundError(f"img2md output.md not found for asset '{resolved_asset_name}'")
 
-    _notify("Running extractors...")
+    _notify("Running extractors...", progress=0.75)
     extractor_jobs: list[AgentJob] = []
     for agent_name in EXTRACTOR_AGENTS:
         prompt_path = EXTRACTOR_PROMPTS.get(agent_name)
@@ -2064,7 +1953,11 @@ def asset_init(
             )
         )
 
-    extractor_results = run_agent_jobs(extractor_jobs, max_workers=len(extractor_jobs))
+    extractor_results = run_agent_jobs(
+        extractor_jobs,
+        max_workers=len(extractor_jobs),
+        event_callback=event_callback,
+    )
     reference_files: list[Path] = [
         path for result in extractor_results for path in result.delivered
     ]
@@ -2072,9 +1965,16 @@ def asset_init(
         raise FileNotFoundError("Extractor produced no reference files")
 
     logger.info("Moved %d file(s) to %s", len(reference_files), references_dir)
-    return AssetInitResult(
+    result = AssetInitResult(
         asset_dir=asset_dir,
         references_dir=references_dir,
         raw_pdf_path=raw_pdf_path,
         reference_files=reference_files,
     )
+    _notify(
+        f"Asset '{resolved_asset_name}' initialized.",
+        event_type="completed",
+        progress=1.0,
+        artifact_path=asset_dir,
+    )
+    return result
