@@ -26,6 +26,11 @@ env/
 build/
 dist/
 *.egg-info/
+web/dist/
+web/node_modules/
+web/test-results/
+web/coverage/
+web/.vitest/
 
 # Tools / IDE
 .vscode/

@@ -1,0 +1,21 @@
+name: web_env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - nodejs=22
+  - pip
+  - pip:
+      - fastapi>=0.116,<0.117
+      - uvicorn[standard]>=0.35,<0.36
+      - pydantic>=2.11,<2.12
+      - pymupdf>=1.26,<1.27
+      - pillow>=11.3,<11.4
+      - markdown>=3.8,<3.9
+      - pymdown-extensions>=10.16,<10.17
+      - pywebview>=5.4,<5.5
+      - playwright>=1.55,<1.56
+      - nuitka>=2.7,<2.8
+      - pytest>=8.4,<8.5
+      - pytest-cov>=6.2,<6.3
+      - ruff>=0.12,<0.13

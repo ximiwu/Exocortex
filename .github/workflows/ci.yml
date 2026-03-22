@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: web_env
+          environment-file: environment.yml
+          auto-activate-base: false
+          use-only-tar-bz2: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: web
+        run: npm ci
+
+      - name: Generate frontend contracts
+        working-directory: web
+        run: conda run -n web_env npm run generate:contracts
+
+      - name: Lint Python
+        run: conda run -n web_env python -m ruff check .
+
+      - name: Test Python
+        run: conda run -n web_env python -m pytest
+
+      - name: Lint frontend
+        working-directory: web
+        run: npm run lint
+
+      - name: Typecheck frontend
+        working-directory: web
+        run: npm run typecheck
+
+      - name: Test frontend
+        working-directory: web
+        run: npm run test:unit -- --run
+
+      - name: Build frontend
+        working-directory: web
+        run: npm run build

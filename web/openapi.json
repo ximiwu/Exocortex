@@ -1,0 +1,2761 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Exocortex Web API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/blocks": {
+      "post": {
+        "tags": [
+          "blocks"
+        ],
+        "summary": "Create Block",
+        "operationId": "create_block_api_assets__asset_name__blocks_post",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBlockRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetStateModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/blocks/{block_id}": {
+      "delete": {
+        "tags": [
+          "blocks"
+        ],
+        "summary": "Delete Block",
+        "operationId": "delete_block_api_assets__asset_name__blocks__block_id__delete",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          },
+          {
+            "name": "block_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Block Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetStateModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/blocks/selection": {
+      "post": {
+        "tags": [
+          "blocks"
+        ],
+        "summary": "Update Selection",
+        "operationId": "update_selection_api_assets__asset_name__blocks_selection_post",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSelectionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetStateModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/groups/merge": {
+      "post": {
+        "tags": [
+          "blocks"
+        ],
+        "summary": "Merge Group",
+        "operationId": "merge_group_api_assets__asset_name__groups_merge_post",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeGroupRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetStateModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/groups/{group_idx}": {
+      "delete": {
+        "tags": [
+          "blocks"
+        ],
+        "summary": "Delete Group",
+        "operationId": "delete_group_api_assets__asset_name__groups__group_idx__delete",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          },
+          {
+            "name": "group_idx",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Group Idx"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetStateModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/ui-state": {
+      "put": {
+        "tags": [
+          "blocks"
+        ],
+        "summary": "Update Ui State",
+        "operationId": "update_ui_state_api_assets__asset_name__ui_state_put",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUiStateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetStateModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets": {
+      "get": {
+        "tags": [
+          "assets"
+        ],
+        "summary": "List Assets",
+        "operationId": "list_assets_api_assets_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AssetSummaryModel"
+                  },
+                  "type": "array",
+                  "title": "Response List Assets Api Assets Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/state": {
+      "get": {
+        "tags": [
+          "assets"
+        ],
+        "summary": "Get Asset State",
+        "operationId": "get_asset_state_api_assets__asset_name__state_get",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetStateModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/import": {
+      "post": {
+        "tags": [
+          "assets"
+        ],
+        "summary": "Import Asset",
+        "operationId": "import_asset_api_assets_import_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_asset_api_assets_import_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSummaryModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/references/{name}": {
+      "get": {
+        "tags": [
+          "assets"
+        ],
+        "summary": "Get Reference",
+        "operationId": "get_reference_api_assets__asset_name__references__name__get",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/reveal": {
+      "post": {
+        "tags": [
+          "assets"
+        ],
+        "summary": "Reveal Asset",
+        "operationId": "reveal_asset_api_assets__asset_name__reveal_post",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/groups/{group_idx}/tutors/{tutor_idx}/questions": {
+      "delete": {
+        "tags": [
+          "assets"
+        ],
+        "summary": "Delete Question",
+        "operationId": "delete_question_api_assets__asset_name__groups__group_idx__tutors__tutor_idx__questions_delete",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          },
+          {
+            "name": "group_idx",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Group Idx"
+            }
+          },
+          {
+            "name": "tutor_idx",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Tutor Idx"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/groups/{group_idx}/tutors": {
+      "post": {
+        "tags": [
+          "assets"
+        ],
+        "summary": "Create Tutor Session",
+        "operationId": "create_tutor_session_api_assets__asset_name__groups__group_idx__tutors_post",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          },
+          {
+            "name": "group_idx",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Group Idx"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTutorRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TutorSessionModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}": {
+      "delete": {
+        "tags": [
+          "assets"
+        ],
+        "summary": "Delete Asset",
+        "operationId": "delete_asset_api_assets__asset_name__delete",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/markdown/tree": {
+      "get": {
+        "tags": [
+          "markdown"
+        ],
+        "summary": "Get Markdown Tree",
+        "operationId": "get_markdown_tree_api_assets__asset_name__markdown_tree_get",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MarkdownTreeNodeModel"
+                  },
+                  "title": "Response Get Markdown Tree Api Assets  Asset Name  Markdown Tree Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/markdown/content": {
+      "get": {
+        "tags": [
+          "markdown"
+        ],
+        "summary": "Get Markdown Content",
+        "operationId": "get_markdown_content_api_assets__asset_name__markdown_content_get",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarkdownContentModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/markdown/nodes/alias": {
+      "patch": {
+        "tags": [
+          "markdown"
+        ],
+        "summary": "Update Markdown Node Alias",
+        "operationId": "update_markdown_node_alias_api_assets__asset_name__markdown_nodes_alias_patch",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMarkdownNodeAliasRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/markdown/nodes/reorder": {
+      "post": {
+        "tags": [
+          "markdown"
+        ],
+        "summary": "Reorder Markdown Siblings",
+        "operationId": "reorder_markdown_siblings_api_assets__asset_name__markdown_nodes_reorder_post",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderMarkdownSiblingsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/pdf/metadata": {
+      "get": {
+        "tags": [
+          "pdf"
+        ],
+        "summary": "Get Pdf Metadata",
+        "operationId": "get_pdf_metadata_api_assets__asset_name__pdf_metadata_get",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfMetadataModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/pdf/pages/{page_index}/image": {
+      "get": {
+        "tags": [
+          "pdf"
+        ],
+        "summary": "Get Pdf Page Image",
+        "operationId": "get_pdf_page_image_api_assets__asset_name__pdf_pages__page_index__image_get",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          },
+          {
+            "name": "page_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Page Index"
+            }
+          },
+          {
+            "name": "dpi",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1200,
+              "minimum": 72,
+              "default": 130,
+              "title": "Dpi"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "List Tasks",
+        "operationId": "list_tasks_api_tasks_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TaskSummaryModel"
+                  },
+                  "type": "array",
+                  "title": "Response List Tasks Api Tasks Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Get Task",
+        "operationId": "get_task_api_tasks__task_id__get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDetailModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/asset-init": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Submit Asset Init",
+        "operationId": "submit_asset_init_api_tasks_asset_init_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_submit_asset_init_api_tasks_asset_init_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSummaryModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/compress-preview": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Submit Compress Preview",
+        "operationId": "submit_compress_preview_api_tasks_compress_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompressTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSummaryModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/compress-execute": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Submit Compress Execute",
+        "operationId": "submit_compress_execute_api_tasks_compress_execute_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompressTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSummaryModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/group-dive": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Submit Group Dive",
+        "operationId": "submit_group_dive_api_tasks_group_dive_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupWorkflowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSummaryModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/ask-tutor": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Submit Ask Tutor",
+        "operationId": "submit_ask_tutor_api_tasks_ask_tutor_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskTutorWorkflowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSummaryModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/re-tutor": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Submit Re Tutor",
+        "operationId": "submit_re_tutor_api_tasks_re_tutor_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReTutorWorkflowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSummaryModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/integrate": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Submit Integrate",
+        "operationId": "submit_integrate_api_tasks_integrate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TutorWorkflowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSummaryModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/bug-finder": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Submit Bug Finder",
+        "operationId": "submit_bug_finder_api_tasks_bug_finder_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_submit_bug_finder_api_tasks_bug_finder_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSummaryModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/student-note": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Submit Student Note",
+        "operationId": "submit_student_note_api_tasks_student_note_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TutorWorkflowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSummaryModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/fix-latex": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Submit Fix Latex",
+        "operationId": "submit_fix_latex_api_tasks_fix_latex_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FixLatexWorkflowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSummaryModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system/asset-root": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Get Asset Root",
+        "operationId": "get_asset_root_api_system_asset_root_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetRootResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AskTutorWorkflowRequest": {
+        "properties": {
+          "assetName": {
+            "type": "string",
+            "title": "Assetname"
+          },
+          "groupIdx": {
+            "type": "integer",
+            "title": "Groupidx"
+          },
+          "tutorIdx": {
+            "type": "integer",
+            "title": "Tutoridx"
+          },
+          "question": {
+            "type": "string",
+            "title": "Question"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetName",
+          "groupIdx",
+          "tutorIdx",
+          "question"
+        ],
+        "title": "AskTutorWorkflowRequest"
+      },
+      "AssetRootResponse": {
+        "properties": {
+          "assetRoot": {
+            "type": "string",
+            "title": "Assetroot"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetRoot"
+        ],
+        "title": "AssetRootResponse"
+      },
+      "AssetStateAssetModel": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pageCount": {
+            "type": "integer",
+            "title": "Pagecount"
+          },
+          "pdfPath": {
+            "type": "string",
+            "title": "Pdfpath"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "pageCount",
+          "pdfPath"
+        ],
+        "title": "AssetStateAssetModel"
+      },
+      "AssetStateModel": {
+        "properties": {
+          "asset": {
+            "$ref": "#/components/schemas/AssetStateAssetModel"
+          },
+          "references": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "References"
+          },
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/BlockModel"
+            },
+            "type": "array",
+            "title": "Blocks"
+          },
+          "mergeOrder": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Mergeorder"
+          },
+          "nextBlockId": {
+            "type": "integer",
+            "title": "Nextblockid",
+            "default": 1
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/GroupModel"
+            },
+            "type": "array",
+            "title": "Groups"
+          },
+          "uiState": {
+            "$ref": "#/components/schemas/UiStateModel"
+          }
+        },
+        "type": "object",
+        "required": [
+          "asset"
+        ],
+        "title": "AssetStateModel"
+      },
+      "AssetSummaryModel": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pageCount": {
+            "type": "integer",
+            "title": "Pagecount"
+          },
+          "hasReferences": {
+            "type": "boolean",
+            "title": "Hasreferences"
+          },
+          "hasBlocks": {
+            "type": "boolean",
+            "title": "Hasblocks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "pageCount",
+          "hasReferences",
+          "hasBlocks"
+        ],
+        "title": "AssetSummaryModel"
+      },
+      "BlockModel": {
+        "properties": {
+          "blockId": {
+            "type": "integer",
+            "title": "Blockid"
+          },
+          "pageIndex": {
+            "type": "integer",
+            "title": "Pageindex"
+          },
+          "rect": {
+            "$ref": "#/components/schemas/RectModel"
+          },
+          "groupIdx": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Groupidx"
+          }
+        },
+        "type": "object",
+        "required": [
+          "blockId",
+          "pageIndex",
+          "rect"
+        ],
+        "title": "BlockModel"
+      },
+      "Body_import_asset_api_assets_import_post": {
+        "properties": {
+          "source_file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Source File"
+          },
+          "asset_name": {
+            "type": "string",
+            "title": "Asset Name"
+          },
+          "asset_subfolder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Subfolder"
+          },
+          "skip_img2md_markdown_file": {
+            "anyOf": [
+              {
+                "type": "string",
+                "contentMediaType": "application/octet-stream"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skip Img2Md Markdown File"
+          },
+          "compress_enabled": {
+            "type": "boolean",
+            "title": "Compress Enabled",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_file",
+          "asset_name"
+        ],
+        "title": "Body_import_asset_api_assets_import_post"
+      },
+      "Body_submit_asset_init_api_tasks_asset_init_post": {
+        "properties": {
+          "source_file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Source File"
+          },
+          "asset_name": {
+            "type": "string",
+            "title": "Asset Name"
+          },
+          "asset_subfolder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Subfolder"
+          },
+          "skip_img2md_markdown_file": {
+            "anyOf": [
+              {
+                "type": "string",
+                "contentMediaType": "application/octet-stream"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skip Img2Md Markdown File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_file",
+          "asset_name"
+        ],
+        "title": "Body_submit_asset_init_api_tasks_asset_init_post"
+      },
+      "Body_submit_bug_finder_api_tasks_bug_finder_post": {
+        "properties": {
+          "assetName": {
+            "type": "string",
+            "title": "Assetname"
+          },
+          "groupIdx": {
+            "type": "integer",
+            "title": "Groupidx"
+          },
+          "tutorIdx": {
+            "type": "integer",
+            "title": "Tutoridx"
+          },
+          "manuscript_files": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Manuscript Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetName",
+          "groupIdx",
+          "tutorIdx",
+          "manuscript_files"
+        ],
+        "title": "Body_submit_bug_finder_api_tasks_bug_finder_post"
+      },
+      "CompressTaskRequest": {
+        "properties": {
+          "assetName": {
+            "type": "string",
+            "title": "Assetname"
+          },
+          "fractionRect": {
+            "$ref": "#/components/schemas/RectModel"
+          },
+          "ratio": {
+            "type": "integer",
+            "title": "Ratio"
+          },
+          "compressScale": {
+            "type": "number",
+            "title": "Compressscale",
+            "default": 1.0
+          },
+          "drawBadge": {
+            "type": "boolean",
+            "title": "Drawbadge",
+            "default": true
+          },
+          "badgePosition": {
+            "type": "string",
+            "title": "Badgeposition",
+            "default": "top_left"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetName",
+          "fractionRect",
+          "ratio"
+        ],
+        "title": "CompressTaskRequest"
+      },
+      "CreateBlockRequest": {
+        "properties": {
+          "pageIndex": {
+            "type": "integer",
+            "title": "Pageindex"
+          },
+          "rect": {
+            "$ref": "#/components/schemas/RectModel"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pageIndex",
+          "rect"
+        ],
+        "title": "CreateBlockRequest"
+      },
+      "CreateTutorRequest": {
+        "properties": {
+          "focusMarkdown": {
+            "type": "string",
+            "title": "Focusmarkdown"
+          }
+        },
+        "type": "object",
+        "required": [
+          "focusMarkdown"
+        ],
+        "title": "CreateTutorRequest"
+      },
+      "FixLatexWorkflowRequest": {
+        "properties": {
+          "assetName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assetname"
+          },
+          "markdownPath": {
+            "type": "string",
+            "title": "Markdownpath"
+          }
+        },
+        "type": "object",
+        "required": [
+          "markdownPath"
+        ],
+        "title": "FixLatexWorkflowRequest"
+      },
+      "GroupModel": {
+        "properties": {
+          "groupIdx": {
+            "type": "integer",
+            "title": "Groupidx"
+          },
+          "blockIds": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Blockids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "groupIdx"
+        ],
+        "title": "GroupModel"
+      },
+      "GroupWorkflowRequest": {
+        "properties": {
+          "assetName": {
+            "type": "string",
+            "title": "Assetname"
+          },
+          "groupIdx": {
+            "type": "integer",
+            "title": "Groupidx"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetName",
+          "groupIdx"
+        ],
+        "title": "GroupWorkflowRequest"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "ok"
+          }
+        },
+        "type": "object",
+        "title": "HealthResponse"
+      },
+      "MarkdownContentModel": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "markdown": {
+            "type": "string",
+            "title": "Markdown"
+          },
+          "html": {
+            "type": "string",
+            "title": "Html"
+          },
+          "bodyHtml": {
+            "type": "string",
+            "title": "Bodyhtml"
+          },
+          "headHtml": {
+            "type": "string",
+            "title": "Headhtml"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "title",
+          "markdown",
+          "html",
+          "bodyHtml",
+          "headHtml"
+        ],
+        "title": "MarkdownContentModel"
+      },
+      "MarkdownTreeNodeModel": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/MarkdownTreeNodeModel"
+            },
+            "type": "array",
+            "title": "Children"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "title"
+        ],
+        "title": "MarkdownTreeNodeModel"
+      },
+      "MergeGroupRequest": {
+        "properties": {
+          "blockIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blockids"
+          },
+          "markdownContent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Markdowncontent"
+          },
+          "groupIdx": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Groupidx"
+          }
+        },
+        "type": "object",
+        "title": "MergeGroupRequest"
+      },
+      "MessageResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "MessageResponse"
+      },
+      "PdfMetadataModel": {
+        "properties": {
+          "pageCount": {
+            "type": "integer",
+            "title": "Pagecount"
+          },
+          "pageSizes": {
+            "items": {
+              "$ref": "#/components/schemas/SizeModel"
+            },
+            "type": "array",
+            "title": "Pagesizes"
+          },
+          "defaultDpi": {
+            "type": "integer",
+            "title": "Defaultdpi"
+          },
+          "minDpi": {
+            "type": "integer",
+            "title": "Mindpi"
+          },
+          "maxDpi": {
+            "type": "integer",
+            "title": "Maxdpi"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pageCount",
+          "pageSizes",
+          "defaultDpi",
+          "minDpi",
+          "maxDpi"
+        ],
+        "title": "PdfMetadataModel"
+      },
+      "ReTutorWorkflowRequest": {
+        "properties": {
+          "assetName": {
+            "type": "string",
+            "title": "Assetname"
+          },
+          "groupIdx": {
+            "type": "integer",
+            "title": "Groupidx"
+          },
+          "tutorIdx": {
+            "type": "integer",
+            "title": "Tutoridx"
+          },
+          "question": {
+            "type": "string",
+            "title": "Question"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetName",
+          "groupIdx",
+          "tutorIdx",
+          "question"
+        ],
+        "title": "ReTutorWorkflowRequest"
+      },
+      "RectModel": {
+        "properties": {
+          "x": {
+            "type": "number",
+            "title": "X"
+          },
+          "y": {
+            "type": "number",
+            "title": "Y"
+          },
+          "width": {
+            "type": "number",
+            "title": "Width"
+          },
+          "height": {
+            "type": "number",
+            "title": "Height"
+          }
+        },
+        "type": "object",
+        "required": [
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "title": "RectModel"
+      },
+      "ReorderMarkdownSiblingsRequest": {
+        "properties": {
+          "parentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentid"
+          },
+          "orderedNodeIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Orderednodeids"
+          }
+        },
+        "type": "object",
+        "title": "ReorderMarkdownSiblingsRequest"
+      },
+      "SizeModel": {
+        "properties": {
+          "width": {
+            "type": "number",
+            "title": "Width"
+          },
+          "height": {
+            "type": "number",
+            "title": "Height"
+          }
+        },
+        "type": "object",
+        "required": [
+          "width",
+          "height"
+        ],
+        "title": "SizeModel"
+      },
+      "TaskDetailModel": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "assetName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assetname"
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat"
+          },
+          "updatedAt": {
+            "type": "string",
+            "title": "Updatedat"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/TaskEventModel"
+            },
+            "type": "array",
+            "title": "Events"
+          },
+          "latestEvent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskEventModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "title",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "TaskDetailModel"
+      },
+      "TaskEventModel": {
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "title": "Taskid"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "eventType": {
+            "type": "string",
+            "title": "Eventtype"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress"
+          },
+          "artifactPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifactpath"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload"
+          },
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "taskId",
+          "kind",
+          "status",
+          "eventType",
+          "message",
+          "timestamp"
+        ],
+        "title": "TaskEventModel"
+      },
+      "TaskSummaryModel": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "assetName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assetname"
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat"
+          },
+          "updatedAt": {
+            "type": "string",
+            "title": "Updatedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "title",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "TaskSummaryModel"
+      },
+      "TutorSessionModel": {
+        "properties": {
+          "tutorIdx": {
+            "type": "integer",
+            "title": "Tutoridx"
+          },
+          "markdownPath": {
+            "type": "string",
+            "title": "Markdownpath"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tutorIdx",
+          "markdownPath"
+        ],
+        "title": "TutorSessionModel"
+      },
+      "TutorWorkflowRequest": {
+        "properties": {
+          "assetName": {
+            "type": "string",
+            "title": "Assetname"
+          },
+          "groupIdx": {
+            "type": "integer",
+            "title": "Groupidx"
+          },
+          "tutorIdx": {
+            "type": "integer",
+            "title": "Tutoridx"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetName",
+          "groupIdx",
+          "tutorIdx"
+        ],
+        "title": "TutorWorkflowRequest"
+      },
+      "UiStateModel": {
+        "properties": {
+          "currentPage": {
+            "type": "integer",
+            "title": "Currentpage",
+            "default": 1
+          },
+          "zoom": {
+            "type": "number",
+            "title": "Zoom",
+            "default": 1.0
+          },
+          "pdfScrollFraction": {
+            "type": "number",
+            "title": "Pdfscrollfraction",
+            "default": 0.0
+          },
+          "pdfScrollLeftFraction": {
+            "type": "number",
+            "title": "Pdfscrollleftfraction",
+            "default": 0.0
+          },
+          "currentMarkdownPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentmarkdownpath"
+          },
+          "openMarkdownPaths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Openmarkdownpaths"
+          },
+          "sidebarCollapsed": {
+            "type": "boolean",
+            "title": "Sidebarcollapsed",
+            "default": false
+          },
+          "sidebarCollapsedNodeIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sidebarcollapsednodeids"
+          },
+          "markdownScrollFractions": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Markdownscrollfractions"
+          }
+        },
+        "type": "object",
+        "title": "UiStateModel"
+      },
+      "UpdateMarkdownNodeAliasRequest": {
+        "properties": {
+          "nodeId": {
+            "type": "string",
+            "title": "Nodeid"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "alias": {
+            "type": "string",
+            "title": "Alias"
+          }
+        },
+        "type": "object",
+        "required": [
+          "nodeId",
+          "alias"
+        ],
+        "title": "UpdateMarkdownNodeAliasRequest"
+      },
+      "UpdateSelectionRequest": {
+        "properties": {
+          "mergeOrder": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Mergeorder"
+          }
+        },
+        "type": "object",
+        "title": "UpdateSelectionRequest"
+      },
+      "UpdateUiStateRequest": {
+        "properties": {
+          "currentPage": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentpage"
+          },
+          "zoom": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zoom"
+          },
+          "pdfScrollFraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdfscrollfraction"
+          },
+          "pdfScrollLeftFraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdfscrollleftfraction"
+          },
+          "currentMarkdownPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentmarkdownpath"
+          },
+          "openMarkdownPaths": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Openmarkdownpaths"
+          },
+          "sidebarCollapsed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sidebarcollapsed"
+          },
+          "sidebarCollapsedNodeIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sidebarcollapsednodeids"
+          },
+          "markdownScrollFractions": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Markdownscrollfractions"
+          }
+        },
+        "type": "object",
+        "title": "UpdateUiStateRequest"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
