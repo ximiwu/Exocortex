@@ -1,6 +1,7 @@
-import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { AssetSummary } from "../../app/types";
+import { ContextMenu } from "../shared/ContextMenu";
 
 interface AssetListProps {
   assets: AssetSummary[];
@@ -43,24 +44,7 @@ export function AssetList({
   onDeleteAsset,
 }: AssetListProps) {
   const [contextMenu, setContextMenu] = useState<AssetContextMenuState | null>(null);
-
-  useEffect(() => {
-    if (!contextMenu) {
-      return undefined;
-    }
-
-    const closeMenu = () => setContextMenu(null);
-    window.addEventListener("click", closeMenu);
-    window.addEventListener("scroll", closeMenu, true);
-    window.addEventListener("resize", closeMenu);
-    window.addEventListener("keydown", closeMenu);
-    return () => {
-      window.removeEventListener("click", closeMenu);
-      window.removeEventListener("scroll", closeMenu, true);
-      window.removeEventListener("resize", closeMenu);
-      window.removeEventListener("keydown", closeMenu);
-    };
-  }, [contextMenu]);
+  const contextMenuAssetName = contextMenu?.assetName ?? null;
 
   if (!assets.length) {
     return <div className="sidebar__empty">No assets are available yet.</div>;
@@ -71,30 +55,30 @@ export function AssetList({
   return (
     <div className="sidebar__assetList">
       {tree.map((node) => renderNode(node, 0))}
-      {contextMenu ? (
-        <div
-          className="markdown-contextMenu"
-          style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}
-          role="menu"
-          onClick={(event) => {
-            event.stopPropagation();
+      <ContextMenu
+        anchor={contextMenu}
+        open={contextMenu !== null}
+        onClose={() => {
+          setContextMenu(null);
+        }}
+      >
+        <button
+          className="markdown-contextMenu__item markdown-contextMenu__item--danger"
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            if (!contextMenuAssetName) {
+              return;
+            }
+
+            setContextMenu(null);
+            onDeleteAsset?.(contextMenuAssetName);
           }}
-          onContextMenu={(event) => event.preventDefault()}
+          disabled={!onDeleteAsset || !contextMenuAssetName}
         >
-          <button
-            className="markdown-contextMenu__item markdown-contextMenu__item--danger"
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setContextMenu(null);
-              onDeleteAsset?.(contextMenu.assetName);
-            }}
-            disabled={!onDeleteAsset}
-          >
-            delete
-          </button>
-        </div>
-      ) : null}
+          delete
+        </button>
+      </ContextMenu>
     </div>
   );
 

@@ -27,6 +27,7 @@ def isoformat_z(value: datetime) -> str:
 class TaskEvent:
     task_id: str
     kind: str
+    asset_name: str | None
     status: TaskStatus
     event_type: TaskEventType
     message: str
@@ -44,6 +45,7 @@ class TaskEvent:
         return {
             "taskId": self.task_id,
             "kind": self.kind,
+            "assetName": self.asset_name,
             "status": self.status,
             "eventType": self.event_type,
             "message": self.message,

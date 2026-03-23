@@ -7,6 +7,11 @@ export const PDF_MAX_ZOOM = 3;
 export const PDF_ZOOM_STEP = 0.15;
 export const PDF_PAGE_GAP = 28;
 export const PDF_VIEWPORT_BUFFER = 900;
+export const PDF_SCROLL_SETTLE_MS = 140;
+export const PDF_PREHEAT_AHEAD_PAGES = 3;
+export const PDF_PREHEAT_BEHIND_PAGES = 1;
+export const PDF_PAGE_TEXT_BOX_STALE_TIME_MS = 5 * 60 * 1000;
+export const PDF_TEXT_BOX_CONTAINMENT_EPSILON = 1e-6;
 export const MIN_SELECTION_SIZE = 4;
 
 export interface OverlayVisualStyle {

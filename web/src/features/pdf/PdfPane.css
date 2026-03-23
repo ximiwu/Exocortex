@@ -13,8 +13,8 @@
 .pdf-pane__toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 6px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--pdf-border);
   background: var(--pdf-toolbar-surface);
   backdrop-filter: blur(12px);
@@ -24,7 +24,7 @@
 .pdf-pane__toolbar-group {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
 
 .pdf-pane__toolbar-group--spacer {
@@ -47,11 +47,11 @@
 }
 
 .pdf-pane__page-input {
-  width: 4.25rem;
+  width: 4rem;
   border: 1px solid var(--pdf-input-border);
   border-radius: 999px;
   background: var(--pdf-input-surface);
-  padding: 0.34rem 0.7rem;
+  padding: 0.28rem 0.62rem;
   color: inherit;
 }
 
@@ -60,9 +60,10 @@
   border-radius: 999px;
   background: var(--pdf-button-primary);
   color: var(--pdf-button-primary-text);
-  padding: 0.38rem 0.74rem;
-  font-size: 0.82rem;
+  padding: 0.31rem 0.66rem;
+  font-size: 0.78rem;
   font-weight: 700;
+  line-height: 1.15;
   cursor: pointer;
   transition:
     transform 140ms ease,
@@ -144,6 +145,7 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
+  isolation: isolate;
   border-radius: 18px;
   background: var(--pdf-page-surface);
   box-shadow: var(--pdf-page-shadow);
@@ -158,10 +160,28 @@
   user-select: none;
   -webkit-user-drag: none;
 }
+.pdf-page__canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+.pdf-page__canvas--active {
+  opacity: 1;
+}
+
+.pdf-page__canvas--inactive {
+  opacity: 0;
+}
 
 .pdf-page__loading,
 .pdf-page__busy {
   position: absolute;
+  z-index: 4;
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
@@ -178,6 +198,10 @@
   right: 0.9rem;
 }
 
+.pdf-page__loading--preview {
+  background: color-mix(in srgb, var(--pdf-overlay-surface) 80%, #d9912b 20%);
+}
+
 .pdf-page__busy {
   left: 50%;
   bottom: 0.9rem;
@@ -186,6 +210,7 @@
 
 .pdf-page__label {
   position: absolute;
+  z-index: 4;
   top: 0.9rem;
   left: 0.9rem;
   padding: 0.45rem 0.8rem;
@@ -201,6 +226,7 @@
 .pdf-page__surface {
   position: absolute;
   inset: 0;
+  z-index: 2;
   touch-action: none;
 }
 
@@ -213,6 +239,14 @@
   position: absolute;
   pointer-events: none;
   border-radius: 14px;
+}
+
+.pdf-page__textBox {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 4px;
+  border: 1px solid rgba(217, 145, 43, 0.92);
+  background: rgba(217, 145, 43, 0.12);
 }
 
 .pdf-page__mergeActions {
@@ -251,14 +285,6 @@
   cursor: wait;
   transform: none;
   box-shadow: 0 8px 18px rgba(33, 37, 41, 0.16);
-}
-
-.pdf-page__mergeAction--image {
-  background: var(--pdf-merge-image);
-}
-
-.pdf-page__mergeAction--image:hover {
-  background: var(--pdf-merge-image-hover);
 }
 
 .pdf-page__mergeAction--markdown {

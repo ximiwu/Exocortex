@@ -40,18 +40,19 @@ def get_asset_state(asset_name: str) -> AssetStateModel:
 )
 def import_asset(
     source_file: UploadFile = File(...),
+    markdown_file: UploadFile = File(...),
+    content_list_file: UploadFile = File(...),
     asset_name: str = Form(...),
     asset_subfolder: str | None = Form(None),
-    skip_img2md_markdown_file: UploadFile | None = File(None),
-    compress_enabled: bool = Form(False),
     task_manager: TaskManager = Depends(get_task_manager),
 ) -> TaskSummaryModel:
     task = submit_asset_init_upload_task(
         task_manager=task_manager,
         source_file=source_file,
+        markdown_file=markdown_file,
+        content_list_file=content_list_file,
         asset_name=asset_name,
         asset_subfolder=asset_subfolder,
-        skip_img2md_markdown_file=skip_img2md_markdown_file,
         temp_prefix="exocortex_web_asset_import_",
     )
     return TaskSummaryModel(**task)
@@ -90,6 +91,15 @@ def delete_question(
 )
 def create_tutor_session(asset_name: str, group_idx: int, request: CreateTutorRequest) -> TutorSessionModel:
     return asset_service.create_tutor_session(asset_name, group_idx, request.focusMarkdown)
+
+
+@router.delete(
+    "/assets/{asset_name:path}/groups/{group_idx}/tutors/{tutor_idx}",
+    response_model=MessageResponse,
+)
+def delete_tutor_session(asset_name: str, group_idx: int, tutor_idx: int) -> MessageResponse:
+    asset_service.delete_tutor_session(asset_name, group_idx, tutor_idx)
+    return MessageResponse(message=f"Deleted tutor session '{group_idx}/{tutor_idx}'.")
 
 
 @router.delete("/assets/{asset_name:path}", response_model=MessageResponse)

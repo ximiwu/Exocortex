@@ -17,7 +17,7 @@ router = APIRouter(tags=["blocks"])
 
 @router.post("/assets/{asset_name:path}/blocks", response_model=AssetStateModel)
 def create_block(asset_name: str, request: CreateBlockRequest) -> AssetStateModel:
-    return asset_service.create_block(asset_name, request.pageIndex, request.rect)
+    return asset_service.create_block(asset_name, request.pageIndex, request.fractionRect)
 
 
 @router.delete("/assets/{asset_name:path}/blocks/{block_id}", response_model=AssetStateModel)
@@ -58,6 +58,8 @@ def update_ui_state(asset_name: str, request: UpdateUiStateRequest) -> AssetStat
         sidebar_collapsed=request.sidebarCollapsed,
         sidebar_collapsed_node_ids=request.sidebarCollapsedNodeIds,
         markdown_scroll_fractions=request.markdownScrollFractions,
+        sidebar_width_ratio=request.sidebarWidthRatio,
+        right_rail_width_ratio=request.rightRailWidthRatio,
     )
 
 

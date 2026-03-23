@@ -22,6 +22,7 @@ def asset_init(
     asset_name: str,
     progress_callback,
     rendered_pdf_path: str | Path | None = None,
+    content_list_path: str | Path | None = None,
     event_callback: WorkflowEventCallback | None = None,
 ) -> AssetInitResult:
     return _asset_init(
@@ -29,6 +30,7 @@ def asset_init(
         asset_name=asset_name,
         progress_callback=progress_callback,
         rendered_pdf_path=rendered_pdf_path,
+        content_list_path=content_list_path,
         event_callback=event_callback,
     )
 
@@ -54,6 +56,8 @@ def ask_tutor(
     group_idx: int,
     tutor_idx: int,
     *,
+    reasoning_effort: str = "medium",
+    with_global_context: bool = True,
     event_callback: WorkflowEventCallback | None = None,
 ) -> Path:
     return _ask_tutor(
@@ -61,6 +65,8 @@ def ask_tutor(
         asset_name,
         group_idx,
         tutor_idx,
+        reasoning_effort=reasoning_effort,
+        with_global_context=with_global_context,
         event_callback=event_callback,
     )
 

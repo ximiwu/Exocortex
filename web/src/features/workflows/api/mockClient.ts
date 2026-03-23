@@ -1,5 +1,7 @@
 import type { ExocortexApi } from "./client";
 import type {
+  AppSystemConfig,
+  AppSystemConfigUpdate,
   AssetState,
   AssetSummary,
   BlockRect,
@@ -8,9 +10,11 @@ import type {
   CompressTaskPayload,
   CreateTutorSessionPayload,
   DeleteQuestionPayload,
+  DeleteTutorSessionInput,
   GroupTaskPayload,
   ImportAssetPayload,
   MarkdownTreeNode,
+  PdfPageTextBoxes,
   TaskDetail,
   TaskEvent,
   TaskSummary,
@@ -43,12 +47,20 @@ class MockExocortexClient implements ExocortexApi {
   readonly mode = "mock" as const;
 
   readonly capabilities: ClientCapabilities = {
-    deleteQuestion: true
+    deleteQuestion: true,
+    deleteTutorSession: true,
   };
 
   private readonly assets = new Map<string, MockAssetRecord>();
   private readonly tasks = new Map<string, TaskDetail>();
   private readonly listeners = new Set<TaskListener>();
+  private systemConfig: AppSystemConfig = {
+    themeMode: "light",
+    sidebarTextLineClamp: 1,
+    sidebarFontSizePx: 14,
+    tutorReasoningEffort: "medium",
+    tutorWithGlobalContext: true,
+  };
 
   constructor() {
     for (const record of createSeedAssets()) {
@@ -104,6 +116,38 @@ class MockExocortexClient implements ExocortexApi {
     return content;
   }
 
+  async getSystemConfig(): Promise<AppSystemConfig> {
+    return deepClone(this.systemConfig);
+  }
+
+  async updateSystemConfig(config: AppSystemConfigUpdate): Promise<AppSystemConfig> {
+    this.systemConfig = {
+      themeMode:
+        config.themeMode === undefined
+          ? this.systemConfig.themeMode
+          : config.themeMode === "dark"
+            ? "dark"
+            : "light",
+      sidebarTextLineClamp:
+        config.sidebarTextLineClamp === undefined
+          ? this.systemConfig.sidebarTextLineClamp
+          : Math.max(1, Math.min(6, Math.floor(config.sidebarTextLineClamp))),
+      sidebarFontSizePx:
+        config.sidebarFontSizePx === undefined
+          ? this.systemConfig.sidebarFontSizePx
+          : Math.max(10, Math.min(24, Math.floor(config.sidebarFontSizePx))),
+      tutorReasoningEffort:
+        config.tutorReasoningEffort === undefined
+          ? this.systemConfig.tutorReasoningEffort
+          : config.tutorReasoningEffort,
+      tutorWithGlobalContext:
+        config.tutorWithGlobalContext === undefined
+          ? this.systemConfig.tutorWithGlobalContext
+          : config.tutorWithGlobalContext,
+    };
+    return deepClone(this.systemConfig);
+  }
+
   async updateAssetUiState(assetName: string, uiState: Partial<AssetState["uiState"]>): Promise<AssetState> {
     const asset = this.requireAsset(assetName);
     asset.state.uiState = {
@@ -139,20 +183,16 @@ class MockExocortexClient implements ExocortexApi {
       run: (taskId) => {
         this.emit(taskId, "started", "Upload received. Preparing asset...");
         this.emit(taskId, "log", `Reading ${payload.sourceFile.name}`);
-        this.emit(taskId, "progress", "Building img2md output...", 0.35);
+        this.emit(taskId, "log", `Reading ${payload.markdownFile.name}`);
+        this.emit(taskId, "log", `Storing ${payload.contentListFile.name} as content_list.json`);
+        this.emit(taskId, "progress", "Preparing PDF and markdown assets...", 0.35);
         this.emit(taskId, "progress", "Running extractors...", 0.72);
         const record = createImportedAssetRecord(
           assetName || payload.assetName,
           payload.sourceFile.name
         );
         this.assets.set(record.summary.name, record);
-        this.emit(
-          taskId,
-          "completed",
-          `Asset ${record.summary.name} is ready.`,
-          1,
-          `${record.summary.name}/references/background.md`
-        );
+        this.emit(taskId, "completed", `Asset ${record.summary.name} is ready.`, 1, record.summary.name);
       }
     });
   }
@@ -184,13 +224,24 @@ class MockExocortexClient implements ExocortexApi {
     };
   }
 
-  async createBlock(assetName: string, input: { pageIndex: number; rect: Rect }): Promise<AssetState> {
+  async getPdfPageTextBoxes(_assetName: string, pageIndex: number): Promise<PdfPageTextBoxes> {
+    return {
+      pageIndex,
+      items: [],
+    };
+  }
+
+  buildPdfFileUrl(assetName: string): string {
+    return `/api/assets/${encodeURIComponent(assetName)}/pdf/file`;
+  }
+
+  async createBlock(assetName: string, input: { pageIndex: number; fractionRect: Rect }): Promise<AssetState> {
     const asset = this.requireAsset(assetName);
     const blockId = asset.state.nextBlockId;
     asset.state.blocks.push({
       blockId,
       pageIndex: input.pageIndex,
-      rect: input.rect,
+      fractionRect: input.fractionRect,
       groupIdx: null,
     });
     asset.state.nextBlockId += 1;
@@ -336,11 +387,11 @@ class MockExocortexClient implements ExocortexApi {
           path: historyPath,
           children: []
         });
-        asset.state.uiState.currentMarkdownPath = answerPath;
+        asset.state.uiState.currentMarkdownPath = historyPath;
         this.emit(taskId, "started", "Sending question to tutor...");
         this.emit(taskId, "log", payload.question);
         this.emit(taskId, "progress", "Synthesizing answer...", 0.62);
-        this.emit(taskId, "completed", "Tutor response saved.", 1, answerPath);
+        this.emit(taskId, "completed", "Tutor response saved.", 1, historyPath);
       }
     });
   }
@@ -560,6 +611,18 @@ class MockExocortexClient implements ExocortexApi {
     asset.tree = removeTreePath(asset.tree, payload.markdownPath);
   }
 
+  async deleteTutorSession(payload: DeleteTutorSessionInput): Promise<void> {
+    const asset = this.requireAsset(payload.assetName);
+    const prefix = `group_data/${payload.groupIdx}/tutor_data/${payload.tutorIdx}/`;
+    for (const path of Object.keys(asset.documents)) {
+      if (path.startsWith(prefix)) {
+        delete asset.documents[path];
+      }
+    }
+
+    asset.tree = removeTutorNode(asset.tree, payload.groupIdx, payload.tutorIdx);
+  }
+
   private async queueTask(config: {
     kind: string;
     title: string;
@@ -571,6 +634,7 @@ class MockExocortexClient implements ExocortexApi {
     const queuedEvent = createTaskEvent({
       taskId,
       kind: config.kind,
+      assetName: config.assetName,
       status: "queued",
       eventType: "queued",
       message: "Task queued.",
@@ -627,6 +691,7 @@ class MockExocortexClient implements ExocortexApi {
     const event = createTaskEvent({
       taskId,
       kind: task.kind,
+      assetName: task.assetName,
       status,
       eventType,
       message,
@@ -795,13 +860,23 @@ function createAssetRecord(assetName: string, pageCount: number): MockAssetRecor
       {
         blockId: 1,
         pageIndex: 0,
-        rect: { x: 100, y: 130, width: 280, height: 120 },
+        fractionRect: {
+          x: 100 / 1024,
+          y: 130 / 1448,
+          width: 280 / 1024,
+          height: 120 / 1448,
+        },
         groupIdx: 1
       },
       {
         blockId: 2,
         pageIndex: 1,
-        rect: { x: 120, y: 220, width: 310, height: 140 },
+        fractionRect: {
+          x: 120 / 1024,
+          y: 220 / 1448,
+          width: 310 / 1024,
+          height: 140 / 1448,
+        },
         groupIdx: 2
       }
     ],
@@ -820,7 +895,9 @@ function createAssetRecord(assetName: string, pageCount: number): MockAssetRecor
       openMarkdownPaths: ["group_data/1/img_explainer_data/enhanced.md"],
       sidebarCollapsed: false,
       sidebarCollapsedNodeIds: [],
-      markdownScrollFractions: {}
+      markdownScrollFractions: {},
+      sidebarWidthRatio: 180 / 960,
+      rightRailWidthRatio: 340 / 960,
     }
   };
 
@@ -849,6 +926,9 @@ function createImportedAssetRecord(assetName: string, sourceName: string): MockA
   record.summary.name = assetName;
   record.state.asset.name = assetName;
   record.state.asset.pdfPath = `${assetName}/raw.pdf`;
+  record.tree[0]!.path = "group_data/1/img_explainer_data/enhanced.md";
+  record.state.uiState.currentMarkdownPath = "group_data/1/img_explainer_data/enhanced.md";
+  record.state.uiState.openMarkdownPaths = ["group_data/1/img_explainer_data/enhanced.md"];
   return record;
 }
 
@@ -963,6 +1043,23 @@ function removeTreePath(tree: MarkdownTreeNode[], path: string): MarkdownTreeNod
     }));
 }
 
+function removeTutorNode(tree: MarkdownTreeNode[], groupIdx: number, tutorIdx: number): MarkdownTreeNode[] {
+  const tutorId = `tutor:${groupIdx}:${tutorIdx}:focus`;
+  return tree.map((node) => {
+    if (node.id === `group:${groupIdx}`) {
+      return {
+        ...node,
+        children: node.children.filter((child) => child.id !== tutorId),
+      };
+    }
+
+    return {
+      ...node,
+      children: removeTutorNode(node.children, groupIdx, tutorIdx),
+    };
+  });
+}
+
 function nextHistoryIndex(asset: MockAssetRecord, tutorRoot: string): number {
   const prefix = `${tutorRoot}/ask_history/`;
   const indices = Object.keys(asset.documents)
@@ -993,6 +1090,7 @@ function rectLabel(rect: BlockRect): string {
 function createTaskEvent(args: {
   taskId: string;
   kind: string;
+  assetName: string | null;
   status: TaskSummary["status"];
   eventType: TaskEvent["eventType"];
   message: string;
@@ -1002,6 +1100,7 @@ function createTaskEvent(args: {
   return {
     taskId: args.taskId,
     kind: args.kind,
+    assetName: args.assetName,
     status: args.status,
     eventType: args.eventType,
     message: args.message,

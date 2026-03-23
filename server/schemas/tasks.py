@@ -33,6 +33,7 @@ class TaskResultModel(BaseModel):
 class TaskEventModel(BaseModel):
     taskId: str
     kind: str
+    assetName: str | None = None
     status: str
     eventType: str
     message: str

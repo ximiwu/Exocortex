@@ -4,14 +4,17 @@ import {
   PDF_MAX_ZOOM,
   PDF_MIN_ZOOM,
   PDF_PAGE_GAP,
+  PDF_TEXT_BOX_CONTAINMENT_EPSILON,
 } from "./constants";
 import type {
   NormalizedPageRect,
+  PdfBlockRecord,
   PdfGroupRecord,
   PdfMetadata,
   PdfPageLayout,
   PdfPageSize,
   PdfRect,
+  PdfTextBox,
 } from "./types";
 
 export function clamp(value: number, min: number, max: number): number {
@@ -107,6 +110,64 @@ export function normalizedPageRectToCssRect(
   };
 }
 
+export function rectFullyContainsRect(
+  container: NormalizedPageRect,
+  candidate: NormalizedPageRect,
+  epsilon = PDF_TEXT_BOX_CONTAINMENT_EPSILON,
+): boolean {
+  const normalizedContainer = normalizeRect(container);
+  const normalizedCandidate = normalizeRect(candidate);
+  const containerRight = normalizedContainer.x + normalizedContainer.width;
+  const containerBottom = normalizedContainer.y + normalizedContainer.height;
+  const candidateRight = normalizedCandidate.x + normalizedCandidate.width;
+  const candidateBottom = normalizedCandidate.y + normalizedCandidate.height;
+
+  return (
+    normalizedCandidate.x >= normalizedContainer.x - epsilon &&
+    normalizedCandidate.y >= normalizedContainer.y - epsilon &&
+    candidateRight <= containerRight + epsilon &&
+    candidateBottom <= containerBottom + epsilon
+  );
+}
+
+export function findContainedTextBoxes(
+  blocks: PdfBlockRecord[],
+  textBoxes: PdfTextBox[],
+  epsilon = PDF_TEXT_BOX_CONTAINMENT_EPSILON,
+): PdfTextBox[] {
+  if (!blocks.length || !textBoxes.length) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const matches: PdfTextBox[] = [];
+
+  for (const textBox of textBoxes) {
+    const contained = blocks.some((block) => {
+      const blockRect = block.fractionRect ?? block.rect;
+      if (!blockRect || block.pageIndex !== textBox.pageIndex) {
+        return false;
+      }
+      return rectFullyContainsRect(blockRect, textBox.fractionRect, epsilon);
+    });
+
+    if (!contained) {
+      continue;
+    }
+
+    const key = buildRectKey(textBox.fractionRect);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    matches.push(textBox);
+  }
+
+  return matches;
+}
+
+export const isRectFullyContained = rectFullyContainsRect;
+
 export function buildPageLayouts(
   pageSizes: PdfPageSize[],
   zoom: number,
@@ -185,6 +246,46 @@ export function findVisiblePageIndexes(
     .map((layout) => layout.pageIndex);
 }
 
+export function findPreheatPageIndexes(
+  pageCount: number,
+  visiblePageIndexes: number[],
+  options: {
+    currentPageIndex: number;
+    direction: 1 | -1 | 0;
+    aheadCount: number;
+    behindCount: number;
+  },
+): number[] {
+  if (pageCount <= 0) {
+    return [];
+  }
+
+  const visibleSet = new Set(visiblePageIndexes);
+  const indexes: number[] = [];
+  const directions =
+    options.direction >= 0
+      ? [1, -1] as const
+      : [-1, 1] as const;
+  const targetCount = options.aheadCount + options.behindCount;
+
+  for (const direction of directions) {
+    let distance = 1;
+    while (indexes.length < targetCount && distance < pageCount) {
+      const candidate = options.currentPageIndex + distance * direction;
+      distance += 1;
+      if (candidate < 0 || candidate >= pageCount) {
+        continue;
+      }
+      if (visibleSet.has(candidate) || indexes.includes(candidate)) {
+        continue;
+      }
+      indexes.push(candidate);
+    }
+  }
+
+  return indexes;
+}
+
 export function deriveRenderDpi(
   metadata: PdfMetadata,
   zoom: number,
@@ -216,4 +317,30 @@ export function buildGroupSizeMap(groups: PdfGroupRecord[]): Map<number, number>
   });
 
   return result;
+}
+
+function buildRectKey(rect: PdfRect): string {
+  const normalized = normalizeRect(rect);
+  return [normalized.x, normalized.y, normalized.width, normalized.height]
+    .map((value) => Math.round(value * 1_000_000))
+    .join(":");
+}
+
+export function getBlockFractionRect(block: PdfBlockRecord): NormalizedPageRect {
+  return block.fractionRect ?? block.rect ?? { x: 0, y: 0, width: 0, height: 0 };
+}
+
+export function collectContainedTextBoxesForPage(
+  pageIndex: number,
+  blocks: PdfBlockRecord[],
+  textBoxes: PdfTextBox[],
+): PdfTextBox[] {
+  if (!blocks.length || !textBoxes.length) {
+    return [];
+  }
+
+  return findContainedTextBoxes(
+    blocks.filter((block) => block.pageIndex === pageIndex),
+    textBoxes.filter((textBox) => textBox.pageIndex === pageIndex),
+  );
 }

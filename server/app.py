@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import mimetypes
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -10,6 +11,18 @@ from server.api import assets, blocks, health, markdown, pdf, system, tasks
 from server.config import API_PREFIX, APP_TITLE, APP_VERSION, WEB_DIST_DIR, WEB_INDEX_PATH
 from server.errors import register_exception_handlers
 from server.tasking import TaskManager
+
+
+def _register_frontend_static_mime_types() -> None:
+    # Windows can source MIME mappings from the local registry, so force stable
+    # module-script types for packaged frontend assets such as the pdf.js worker.
+    for suffix, media_type in (
+        (".js", "text/javascript"),
+        (".mjs", "text/javascript"),
+        (".wasm", "application/wasm"),
+    ):
+        mimetypes.add_type(media_type, suffix, strict=True)
+        mimetypes.add_type(media_type, suffix, strict=False)
 
 
 @asynccontextmanager
@@ -22,6 +35,7 @@ async def _lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    _register_frontend_static_mime_types()
     app = FastAPI(title=APP_TITLE, version=APP_VERSION, lifespan=_lifespan)
     register_exception_handlers(app)
 

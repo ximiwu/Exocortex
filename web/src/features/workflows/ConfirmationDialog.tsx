@@ -1,3 +1,5 @@
+import { Modal } from "../shared/Modal";
+
 interface ConfirmationDialogProps {
   open: boolean;
   title: string;
@@ -26,8 +28,8 @@ export function ConfirmationDialog({
   }
 
   return (
-    <div className="modal-scrim" role="presentation">
-      <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+    <Modal open={open} labelledBy="dialog-title">
+      <div>
         <p className="section-kicker">Confirmation</p>
         <h2 id="dialog-title">{title}</h2>
         <p className="modal-copy">{description}</p>
@@ -45,6 +47,6 @@ export function ConfirmationDialog({
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

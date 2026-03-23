@@ -1,4 +1,8 @@
 import type { AppMode, AssetState, PdfMetadata as WirePdfMetadata, Rect } from "../../generated/contracts";
+import type {
+  PdfPageTextBoxes as AppPdfPageTextBoxes,
+  PdfTextBox as AppPdfTextBox,
+} from "../../app/api/types";
 
 export type { AppMode };
 export type PdfRect = Rect;
@@ -10,11 +14,17 @@ export interface NormalizedPageRect {
   height: number;
 }
 
-export type PdfBlockRecord = AssetState["blocks"][number];
+type AssetBlockRecord = AssetState["blocks"][number];
+export type PdfBlockRecord = Omit<AssetBlockRecord, "rect" | "fractionRect"> & {
+  rect?: PdfRect;
+  fractionRect?: PdfRect;
+};
 export type PdfGroupRecord = AssetState["groups"][number];
 export type PdfAssetSummary = AssetState["asset"];
 export type PdfUiState = AssetState["uiState"];
 export type PdfAssetState = AssetState;
+export type PdfTextBox = AppPdfTextBox;
+export type PdfPageTextBoxes = AppPdfPageTextBoxes;
 
 export interface PdfPageSize {
   width: number;
@@ -34,5 +44,5 @@ export interface PdfPageLayout {
 
 export interface CreateBlockInput {
   pageIndex: number;
-  rect: PdfRect;
+  fractionRect: PdfRect;
 }

@@ -1,7 +1,30 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { createPortal } from "react-dom";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type DragEvent as ReactDragEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 
 import { MarkdownTreeNode } from "../../app/types";
+import { ContextMenu } from "../shared/ContextMenu";
+import { MathText } from "../shared/MathText";
+import { Modal } from "../shared/Modal";
+import {
+  collectGroupTutorFocusEntries,
+  collectNodeOpenPaths,
+  collectTutorAskEntries,
+  findNodeById,
+  findParentId,
+  findSiblings,
+  hasActiveDescendant,
+  parseAskContextFromNode,
+  parseGroupIdxFromNode,
+  parseTutorContextFromNode,
+  type OpenableTreeNode,
+} from "./treeUtils";
 
 type DropPosition = "before" | "after";
 
@@ -11,11 +34,18 @@ interface MarkdownTreeProps {
   fullTree: MarkdownTreeNode[];
   emptyMessage?: string;
   currentPath: string | null;
+  openPaths: string[];
   collapsedNodeIds: string[];
+  sidebarTextLineClamp: number;
+  sidebarFontSizePx: number;
   onToggleNode: (nodeId: string) => void;
   onOpenPath: (path: string, title: string, kind: string) => void;
-  onClosePath: (path: string) => void;
-  onCloseBranch: (paths: string[]) => void;
+  onOpenPaths: (nodes: OpenableTreeNode[]) => void;
+  onClosePaths: (paths: string[]) => void;
+  onLocateInPdf: (groupIdx: number) => Promise<void> | void;
+  onDeleteGroup: (groupIdx: number, node: MarkdownTreeNode) => Promise<void>;
+  onDeleteTutor: (groupIdx: number, tutorIdx: number, node: MarkdownTreeNode) => Promise<void>;
+  onDeleteAsk: (groupIdx: number, tutorIdx: number, path: string) => Promise<void>;
   onRenameAlias: (node: MarkdownTreeNode, alias: string) => Promise<void>;
   onReorderSiblings: (parentId: string | null, orderedNodeIds: string[]) => Promise<void>;
 }
@@ -37,22 +67,9 @@ interface DragOverState {
   position: DropPosition;
 }
 
-function hasActiveDescendant(node: MarkdownTreeNode, currentPath: string | null): boolean {
-  if (!currentPath) {
-    return false;
-  }
-  if (node.path === currentPath) {
-    return true;
-  }
-  return node.children.some((child) => hasActiveDescendant(child, currentPath));
-}
-
-function collectLeafPaths(node: MarkdownTreeNode): string[] {
-  if (node.path) {
-    return [node.path];
-  }
-
-  return node.children.flatMap(collectLeafPaths);
+interface HistoryModalState {
+  title: string;
+  entries: OpenableTreeNode[];
 }
 
 function buildRenderTree(
@@ -68,27 +85,6 @@ function buildRenderTree(
   }));
 }
 
-function findNode(nodes: MarkdownTreeNode[], nodeId: string): MarkdownTreeNode | null {
-  for (const node of nodes) {
-    if (node.id === nodeId) {
-      return node;
-    }
-    const child = findNode(node.children, nodeId);
-    if (child) {
-      return child;
-    }
-  }
-  return null;
-}
-
-function findSiblings(nodes: MarkdownTreeNode[], parentId: string | null): MarkdownTreeNode[] | null {
-  if (parentId === null) {
-    return nodes;
-  }
-  const parent = findNode(nodes, parentId);
-  return parent?.children ?? null;
-}
-
 function canRenameNode(node: MarkdownTreeNode): boolean {
   return node.kind === "group" || node.kind === "tutor" || (node.path !== null && node.children.length === 0);
 }
@@ -99,11 +95,18 @@ export function MarkdownTree({
   fullTree,
   emptyMessage,
   currentPath,
+  openPaths,
   collapsedNodeIds,
+  sidebarTextLineClamp,
+  sidebarFontSizePx,
   onToggleNode,
   onOpenPath,
-  onClosePath,
-  onCloseBranch,
+  onOpenPaths,
+  onClosePaths,
+  onLocateInPdf,
+  onDeleteGroup,
+  onDeleteTutor,
+  onDeleteAsk,
   onRenameAlias,
   onReorderSiblings,
 }: MarkdownTreeProps) {
@@ -113,28 +116,20 @@ export function MarkdownTree({
   const [savingNodeId, setSavingNodeId] = useState<string | null>(null);
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<DragOverState | null>(null);
+  const [historyModal, setHistoryModal] = useState<HistoryModalState | null>(null);
+  const [selectedHistoryPaths, setSelectedHistoryPaths] = useState<string[]>([]);
   const cancelRenameRef = useRef(false);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
   const renderNodes = useMemo(() => buildRenderTree(nodes, null, 0), [nodes]);
-
-  useEffect(() => {
-    if (!contextMenu) {
-      return undefined;
-    }
-
-    const closeMenu = () => setContextMenu(null);
-    const handleKeyDown = () => setContextMenu(null);
-
-    window.addEventListener("click", closeMenu);
-    window.addEventListener("scroll", closeMenu, true);
-    window.addEventListener("resize", closeMenu);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("click", closeMenu);
-      window.removeEventListener("scroll", closeMenu, true);
-      window.removeEventListener("resize", closeMenu);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [contextMenu]);
+  const openPathSet = useMemo(() => new Set(openPaths), [openPaths]);
+  const activeContextNode = contextMenu ? findNodeById(fullTree, contextMenu.nodeId) : null;
+  const activeContextOpenPaths = activeContextNode
+    ? collectNodeOpenPaths(activeContextNode, openPathSet)
+    : [];
+  const activeContextGroupIdx = activeContextNode ? parseGroupIdxFromNode(activeContextNode) : null;
+  const activeContextTutor = activeContextNode ? parseTutorContextFromNode(activeContextNode) : null;
+  const activeContextAsk = activeContextNode ? parseAskContextFromNode(activeContextNode) : null;
+  const canCloseContextNode = activeContextOpenPaths.length > 0;
 
   useEffect(() => {
     setContextMenu(null);
@@ -143,7 +138,37 @@ export function MarkdownTree({
     setSavingNodeId(null);
     setDraggingNodeId(null);
     setDragOver(null);
-  }, [currentPath, nodes]);
+  }, [currentPath]);
+
+  useEffect(() => {
+    if (contextMenu && !findNodeById(fullTree, contextMenu.nodeId)) {
+      setContextMenu(null);
+    }
+
+    if (editingNodeId && !findNodeById(fullTree, editingNodeId)) {
+      setEditingNodeId(null);
+      setEditingValue("");
+      setSavingNodeId(null);
+    }
+
+    if (draggingNodeId && !findNodeById(fullTree, draggingNodeId)) {
+      setDraggingNodeId(null);
+      setDragOver(null);
+    }
+
+    if (dragOver && !findNodeById(fullTree, dragOver.nodeId)) {
+      setDragOver(null);
+    }
+  }, [contextMenu, dragOver, draggingNodeId, editingNodeId, fullTree]);
+
+  useEffect(() => {
+    if (!editingNodeId || !renameInputRef.current) {
+      return;
+    }
+
+    renameInputRef.current.focus();
+    renameInputRef.current.select();
+  }, [editingNodeId]);
 
   if (!nodes.length) {
     if (!hasAsset) {
@@ -180,7 +205,14 @@ export function MarkdownTree({
   }
 
   function handleContextMenu(event: ReactMouseEvent<HTMLElement>, node: MarkdownTreeNode) {
-    if (!canRenameNode(node)) {
+    const nodeOpenPaths = collectNodeOpenPaths(node, openPathSet);
+    const hasNodeActions =
+      nodeOpenPaths.length > 0 ||
+      canRenameNode(node) ||
+      node.kind === "group" ||
+      node.kind === "tutor" ||
+      node.kind === "ask";
+    if (!hasNodeActions) {
       return;
     }
     event.preventDefault();
@@ -199,7 +231,7 @@ export function MarkdownTree({
       return;
     }
 
-    if (!findNode(fullTree, draggingNodeId)) {
+    if (!findNodeById(fullTree, draggingNodeId)) {
       setDraggingNodeId(null);
       setDragOver(null);
       return;
@@ -241,9 +273,12 @@ export function MarkdownTree({
         className="sidebarTreeNode__titleInput"
         type="text"
         value={editingValue}
-        autoFocus
         disabled={savingNodeId === node.id}
+        ref={renameInputRef}
+        onMouseDown={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => event.stopPropagation()}
+        onFocus={(event) => event.currentTarget.select()}
         onChange={(event) => setEditingValue(event.currentTarget.value)}
         onBlur={() => {
           if (cancelRenameRef.current) {
@@ -270,19 +305,28 @@ export function MarkdownTree({
   }
 
   function rowDragProps(node: TreeRenderNode) {
+    const disabled = editingNodeId === node.id;
+
     return {
-      draggable: true,
+      draggable: !disabled,
       onDragStart: (event: ReactDragEvent<HTMLElement>) => {
+        if (disabled) {
+          event.preventDefault();
+          return;
+        }
         event.dataTransfer.effectAllowed = "move";
         event.dataTransfer.setData("text/plain", node.id);
         setDraggingNodeId(node.id);
         setContextMenu(null);
       },
       onDragOver: (event: ReactDragEvent<HTMLElement>) => {
+        if (disabled) {
+          return;
+        }
         if (!draggingNodeId || draggingNodeId === node.id) {
           return;
         }
-        const sourceNode = findNode(fullTree, draggingNodeId);
+        const sourceNode = findNodeById(fullTree, draggingNodeId);
         if (!sourceNode) {
           return;
         }
@@ -315,10 +359,12 @@ export function MarkdownTree({
     const isActive = node.path !== null && node.path === currentPath;
     const isAncestor = !isActive && hasActiveDescendant(node, currentPath);
     const isExpanded = !collapsedNodeIds.includes(node.id);
-    const branchPaths = collectLeafPaths(node);
     const isDragging = draggingNodeId === node.id;
     const isDropTarget = dragOver?.nodeId === node.id;
     const dragClass = `${isDragging ? " is-dragging" : ""}${isDropTarget ? " is-drop-target" : ""}${dragOver?.position === "before" && isDropTarget ? " is-drop-before" : ""}${dragOver?.position === "after" && isDropTarget ? " is-drop-after" : ""}`;
+    const indentStyle = {
+      "--sidebar-node-indent": `${node.depth * 16}px`,
+    } as CSSProperties;
 
     if (isLeaf && node.path) {
       return (
@@ -327,7 +373,7 @@ export function MarkdownTree({
           key={node.id}
           data-sidebar-active={isActive ? "true" : undefined}
           data-sidebar-path={node.path}
-          style={{ marginLeft: `${node.depth * 16}px` }}
+          style={indentStyle}
           onContextMenu={(event) => handleContextMenu(event, node)}
           {...rowDragProps(node)}
         >
@@ -339,21 +385,9 @@ export function MarkdownTree({
               type="button"
               onClick={() => onOpenPath(node.path!, node.title, node.kind)}
             >
-              <span className="sidebarTreeLeaf__title">{node.title}</span>
+              <MathText className="sidebarTreeLeaf__title" text={node.title} />
             </button>
           )}
-
-          <button
-            className="sidebarTreeLeaf__close"
-            type="button"
-            aria-label={`Close ${node.title}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              onClosePath(node.path!);
-            }}
-          >
-            x
-          </button>
         </div>
       );
     }
@@ -364,7 +398,7 @@ export function MarkdownTree({
           className={`sidebarTreeNode__header${isActive ? " is-active" : ""}${isAncestor ? " is-ancestor" : ""}${dragClass}`}
           data-sidebar-active={isActive ? "true" : undefined}
           data-sidebar-path={node.path ?? undefined}
-          style={{ marginLeft: `${node.depth * 16}px` }}
+          style={indentStyle}
           onContextMenu={(event) => handleContextMenu(event, node)}
           {...rowDragProps(node)}
         >
@@ -401,23 +435,9 @@ export function MarkdownTree({
                 onToggleNode(node.id);
               }}
             >
-              <span className="sidebarTreeNode__title">{node.title}</span>
+              <MathText className="sidebarTreeNode__title" text={node.title} />
             </button>
           )}
-
-          {branchPaths.length ? (
-            <button
-              className="sidebarTreeNode__close"
-              type="button"
-              aria-label={`Close items in ${node.title}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                onCloseBranch(branchPaths);
-              }}
-            >
-              x
-            </button>
-          ) : null}
         </div>
 
         {isExpanded ? <div className="sidebarTreeNode__children">{node.children.map((child) => renderNode(child))}</div> : null}
@@ -425,48 +445,274 @@ export function MarkdownTree({
     );
   }
 
-  return (
-    <>
-      <div className="sidebar__tree">{renderNodes.map((node) => renderNode(node))}</div>
-      {contextMenu
-        ? createPortal(
-            <div
-              className="markdown-contextMenu"
-              style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}
-              role="menu"
-              onClick={(event) => event.stopPropagation()}
-              onContextMenu={(event) => event.preventDefault()}
-            >
-              <button
-                className="markdown-contextMenu__item"
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  const node = findNode(fullTree, contextMenu.nodeId);
-                  if (node) {
-                    beginRename(node);
-                  }
-                }}
-              >
-                rename alias
-              </button>
-            </div>,
-            document.body,
-          )
-        : null}
-    </>
-  );
-}
-
-function findParentId(nodes: MarkdownTreeNode[], nodeId: string, parentId: string | null = null): string | null {
-  for (const node of nodes) {
-    if (node.id === nodeId) {
-      return parentId;
-    }
-    const nested = findParentId(node.children, nodeId, node.id);
-    if (nested !== null) {
-      return nested;
+  async function runContextAction(action: () => Promise<void> | void) {
+    setContextMenu(null);
+    try {
+      await action();
+    } catch (error) {
+      console.error("Sidebar context action failed", error);
     }
   }
-  return null;
+
+  function openHistoryModal(entries: OpenableTreeNode[], title: string) {
+    setHistoryModal({
+      title,
+      entries,
+    });
+    setSelectedHistoryPaths([]);
+  }
+
+  const allHistorySelected = historyModal
+    ? historyModal.entries.length > 0 && selectedHistoryPaths.length === historyModal.entries.length
+    : false;
+
+  const treeStyle = {
+    "--sidebar-node-line-clamp": String(Math.max(1, Math.min(6, Math.floor(sidebarTextLineClamp)))),
+    "--sidebar-node-font-size": `${Math.max(10, Math.min(24, Math.floor(sidebarFontSizePx)))}px`,
+  } as CSSProperties;
+
+  return (
+    <>
+      <div className="sidebar__tree" style={treeStyle}>
+        {renderNodes.map((node) => renderNode(node))}
+      </div>
+      <ContextMenu
+        anchor={contextMenu}
+        open={contextMenu !== null}
+        onClose={() => {
+          setContextMenu(null);
+        }}
+      >
+        {canCloseContextNode ? (
+          <button
+            className="markdown-contextMenu__item markdown-contextMenu__item--danger"
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              if (!activeContextNode || !activeContextOpenPaths.length) {
+                return;
+              }
+
+              void runContextAction(() => {
+                onClosePaths(activeContextOpenPaths);
+              });
+            }}
+          >
+            close
+          </button>
+        ) : null}
+        {activeContextNode && canRenameNode(activeContextNode) ? (
+          <button
+            className="markdown-contextMenu__item"
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              if (!activeContextNode) {
+                return;
+              }
+
+              beginRename(activeContextNode);
+            }}
+          >
+            rename alias
+          </button>
+        ) : null}
+        {activeContextNode?.kind === "group" && activeContextGroupIdx !== null ? (
+          <>
+            <button
+              className="markdown-contextMenu__item"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                void runContextAction(() => onLocateInPdf(activeContextGroupIdx));
+              }}
+            >
+              locate in pdf
+            </button>
+            <button
+              className="markdown-contextMenu__item"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const entries = collectGroupTutorFocusEntries(activeContextNode);
+                setContextMenu(null);
+                openHistoryModal(entries, "history ask session");
+              }}
+            >
+              history ask session
+            </button>
+            <button
+              className="markdown-contextMenu__item markdown-contextMenu__item--danger"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                if (
+                  !activeContextNode ||
+                  activeContextGroupIdx === null ||
+                  typeof window !== "undefined" &&
+                    !window.confirm(`Delete ${activeContextNode.title}?`)
+                ) {
+                  return;
+                }
+
+                void runContextAction(() => onDeleteGroup(activeContextGroupIdx, activeContextNode));
+              }}
+            >
+              delete
+            </button>
+          </>
+        ) : null}
+        {activeContextNode?.kind === "tutor" && activeContextTutor !== null ? (
+          <>
+            <button
+              className="markdown-contextMenu__item"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const entries = collectTutorAskEntries(activeContextNode);
+                setContextMenu(null);
+                openHistoryModal(entries, "history question");
+              }}
+            >
+              history question
+            </button>
+            <button
+              className="markdown-contextMenu__item markdown-contextMenu__item--danger"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                if (
+                  !activeContextNode ||
+                  typeof window !== "undefined" &&
+                    !window.confirm(`Delete ${activeContextNode.title}?`)
+                ) {
+                  return;
+                }
+
+                void runContextAction(() =>
+                  onDeleteTutor(activeContextTutor.groupIdx, activeContextTutor.tutorIdx, activeContextNode),
+                );
+              }}
+            >
+              delete
+            </button>
+          </>
+        ) : null}
+        {activeContextNode?.kind === "ask" && activeContextAsk !== null && activeContextNode.path ? (
+          <button
+            className="markdown-contextMenu__item markdown-contextMenu__item--danger"
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              if (
+                !activeContextNode.path ||
+                typeof window !== "undefined" &&
+                  !window.confirm(`Delete ${activeContextNode.title}?`)
+              ) {
+                return;
+              }
+
+              void runContextAction(() =>
+                onDeleteAsk(activeContextAsk.groupIdx, activeContextAsk.tutorIdx, activeContextNode.path!),
+              );
+            }}
+          >
+            delete
+          </button>
+        ) : null}
+      </ContextMenu>
+      <Modal
+        open={historyModal !== null}
+        onClose={() => {
+          setHistoryModal(null);
+          setSelectedHistoryPaths([]);
+        }}
+        labelledBy="sidebar-history-modal-title"
+      >
+        <div className="sidebarHistoryModal">
+          <h2 id="sidebar-history-modal-title" className="sidebarHistoryModal__title">
+            {historyModal?.title ?? "history"}
+          </h2>
+          <div className="sidebarHistoryModal__list" role="list">
+            {(historyModal?.entries ?? []).map((entry) => {
+              const selected = selectedHistoryPaths.includes(entry.path);
+              return (
+                <label
+                  className="sidebarHistoryModal__row"
+                  key={entry.path}
+                  role="listitem"
+                  onDoubleClick={() => {
+                    onOpenPath(entry.path, entry.title, entry.kind);
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected}
+                    onChange={() => {
+                      setSelectedHistoryPaths((current) =>
+                        current.includes(entry.path)
+                          ? current.filter((path) => path !== entry.path)
+                          : [...current, entry.path],
+                      );
+                    }}
+                  />
+                  <MathText className="sidebarHistoryModal__rowTitle" text={entry.title} />
+                </label>
+              );
+            })}
+            {historyModal?.entries.length ? null : (
+              <p className="sidebarHistoryModal__empty">No history entries are available.</p>
+            )}
+          </div>
+          <div className="modal-actions">
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => {
+                if (!historyModal) {
+                  return;
+                }
+
+                setSelectedHistoryPaths(
+                  allHistorySelected ? [] : historyModal.entries.map((entry) => entry.path),
+                );
+              }}
+              disabled={!historyModal?.entries.length}
+            >
+              {allHistorySelected ? "clear all" : "select all"}
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => {
+                setHistoryModal(null);
+                setSelectedHistoryPaths([]);
+              }}
+            >
+              cancel
+            </button>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => {
+                if (!historyModal || !selectedHistoryPaths.length) {
+                  return;
+                }
+
+                const selectedEntries = historyModal.entries.filter((entry) =>
+                  selectedHistoryPaths.includes(entry.path),
+                );
+                onOpenPaths(selectedEntries);
+                setHistoryModal(null);
+                setSelectedHistoryPaths([]);
+              }}
+              disabled={!selectedHistoryPaths.length}
+            >
+              open selected
+            </button>
+          </div>
+        </div>
+      </Modal>
+    </>
+  );
 }

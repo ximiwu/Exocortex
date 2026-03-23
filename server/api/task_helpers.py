@@ -14,16 +14,18 @@ def submit_asset_init_upload_task(
     *,
     task_manager: TaskManager,
     source_file: UploadFile,
+    markdown_file: UploadFile,
+    content_list_file: UploadFile,
     asset_name: str,
     asset_subfolder: str | None,
-    skip_img2md_markdown_file: UploadFile | None,
     temp_prefix: str,
 ) -> JsonObject:
     prepared = prepare_asset_upload(
         source_file=source_file,
+        markdown_file=markdown_file,
+        content_list_file=content_list_file,
         asset_name=asset_name,
         asset_subfolder=asset_subfolder,
-        skip_img2md_markdown_file=skip_img2md_markdown_file,
         temp_prefix=temp_prefix,
         normalize=asset_service.normalize_asset_name,
     )
@@ -33,6 +35,7 @@ def submit_asset_init_upload_task(
             asset_name=prepared.asset_name,
             source_path=prepared.source_path,
             rendered_pdf_path=prepared.rendered_pdf_path,
+            content_list_path=prepared.content_list_path,
         ),
         cleanup_dir=prepared.cleanup_dir,
     )

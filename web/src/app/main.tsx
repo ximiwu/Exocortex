@@ -5,7 +5,6 @@ import App from "./App";
 import { ExocortexApiProvider } from "./api/ExocortexApiContext";
 import { createExocortexApi } from "./api/exocortexApi";
 import { AppProviders } from "./providers/AppProviders";
-import { WorkflowBridge } from "../features/workflows/WorkflowBridge";
 import { TaskCenterProvider } from "../features/tasks/TaskCenterContext";
 import { ToastProvider } from "../features/tasks/ToastProvider";
 import "../index.css";
@@ -25,7 +24,6 @@ function Root() {
         <ToastProvider>
           <TaskCenterProvider>
             <App />
-            <WorkflowBridge />
           </TaskCenterProvider>
         </ToastProvider>
       </AppProviders>

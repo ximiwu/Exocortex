@@ -6,6 +6,7 @@ interface AssetPickerOverlayProps {
   dataSource: ApiSource;
   loading: boolean;
   error: string | null;
+  reserveDesktopTitlebarSpace?: boolean;
   onCreateAsset: () => void;
   onSelect: (assetName: string) => void;
   onDeleteAsset?: (assetName: string) => void;
@@ -16,6 +17,7 @@ export function AssetPickerOverlay({
   dataSource,
   loading,
   error,
+  reserveDesktopTitlebarSpace = false,
   onCreateAsset,
   onSelect,
   onDeleteAsset,
@@ -23,23 +25,29 @@ export function AssetPickerOverlay({
   const hasAssets = assets.length > 0;
 
   return (
-    <div className="assetPicker" role="dialog" aria-modal="true" aria-labelledby="asset-picker-title">
+    <div
+      className={`assetPicker${reserveDesktopTitlebarSpace ? " assetPicker--reserveDesktopTitlebarSpace" : ""}`}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="asset-picker-title"
+    >
       <div className="assetPicker__card">
         {dataSource === "mock" ? <p className="section-kicker">Preview data</p> : null}
         <h2 id="asset-picker-title">Choose how to start</h2>
         <p className="assetPicker__copy">
-          Create a new asset from a PDF or Markdown source, or load an existing asset into the workbench.
+          Create a new asset from its PDF, markdown, and content list, or load an existing asset into the workbench.
         </p>
         <div className="assetPicker__split">
           <section className="assetPicker__panel assetPicker__panel--create" aria-labelledby="asset-picker-create-title">
             <p className="section-kicker">New Asset</p>
             <h3 id="asset-picker-create-title">Import from browser</h3>
             <p className="assetPicker__panelCopy">
-              Upload a PDF or Markdown file, set the asset path, and start the initialization flow directly from the browser.
+              Upload a PDF, a markdown file, and a matching JSON content list, set the asset path, and start the initialization flow directly from the browser.
             </p>
             <div className="assetPicker__featureList">
-              <p>PDF import supports the full init pipeline and optional compress mode.</p>
-              <p>Markdown import works for preprocessed content when PDF is not needed.</p>
+              <p>PDF stays as the raw source file for every new asset import.</p>
+              <p>Markdown is also required and is applied within the existing initialization flow.</p>
+              <p>The uploaded JSON file is stored in the asset directory as <code>content_list.json</code>.</p>
               <p>Subfolders let you organize assets as nested paths like <code>physics/paper_1</code>.</p>
             </div>
             <button className="primary-button assetPicker__primaryAction" type="button" onClick={onCreateAsset}>

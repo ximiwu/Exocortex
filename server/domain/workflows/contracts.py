@@ -29,12 +29,21 @@ class WorkflowCommand:
 class AssetInitCommand(WorkflowCommand):
     source_path: Path
     rendered_pdf_path: Path | None = None
+    content_list_path: Path | None = None
 
-    def __init__(self, *, asset_name: str, source_path: Path, rendered_pdf_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        asset_name: str,
+        source_path: Path,
+        rendered_pdf_path: Path | None = None,
+        content_list_path: Path | None = None,
+    ) -> None:
         object.__setattr__(self, "kind", "asset_init")
         object.__setattr__(self, "asset_name", asset_name)
         object.__setattr__(self, "source_path", source_path)
         object.__setattr__(self, "rendered_pdf_path", rendered_pdf_path)
+        object.__setattr__(self, "content_list_path", content_list_path)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -52,6 +61,8 @@ class TutorQuestionCommand(WorkflowCommand):
     group_idx: int
     tutor_idx: int
     question: str
+    reasoning_effort: Literal["low", "medium", "high", "xhigh"]
+    with_global_context: bool
 
     def __init__(
         self,
@@ -61,12 +72,16 @@ class TutorQuestionCommand(WorkflowCommand):
         group_idx: int,
         tutor_idx: int,
         question: str,
+        reasoning_effort: Literal["low", "medium", "high", "xhigh"] = "medium",
+        with_global_context: bool = True,
     ) -> None:
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "asset_name", asset_name)
         object.__setattr__(self, "group_idx", group_idx)
         object.__setattr__(self, "tutor_idx", tutor_idx)
         object.__setattr__(self, "question", question)
+        object.__setattr__(self, "reasoning_effort", reasoning_effort)
+        object.__setattr__(self, "with_global_context", with_global_context)
 
 
 @dataclass(frozen=True, slots=True, init=False)

@@ -30,12 +30,12 @@ _DETAILS_TAG_PATTERN = re.compile(r"<details\b([^>]*)>", re.IGNORECASE)
 _CLASS_ATTR_PATTERN = re.compile(r"\bclass\s*=\s*(\"([^\"]*)\"|'([^']*)')", re.IGNORECASE)
 _MARKDOWN_ATTR_PATTERN = re.compile(r"\bmarkdown\s*=", re.IGNORECASE)
 _DETAILS_BLOCK_PATTERN = re.compile(r"<details\b[^>]*>.*?</details>", re.IGNORECASE | re.DOTALL)
-
-_KATEX_VERSION = "0.16.38"
-_KATEX_CDN_BASE = f"https://cdn.jsdelivr.net/npm/katex@{_KATEX_VERSION}/dist"
-
-def _katex_dist_dir() -> Path:
-    return repo_root() / "web" / "node_modules" / "katex" / "dist"
+_KATEX_RUNTIME_FILES = (
+    Path("katex.min.css"),
+    Path("katex.min.js"),
+    Path("contrib") / "auto-render.min.js",
+    Path("contrib") / "copy-tex.min.js",
+)
 
 
 def normalize_math_content(content: str) -> str:
@@ -112,21 +112,39 @@ def _directory_uri(path: Path) -> str:
     return uri if uri.endswith("/") else f"{uri}/"
 
 
-def katex_assets() -> str:
-    katex_dir = _katex_dist_dir()
-    if (katex_dir / "katex.min.js").is_file() and (katex_dir / "contrib" / "auto-render.min.js").is_file():
+def _is_complete_katex_asset_dir(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    if not all((path / relative_path).is_file() for relative_path in _KATEX_RUNTIME_FILES):
+        return False
+    fonts_dir = path / "fonts"
+    return fonts_dir.is_dir() and any(fonts_dir.iterdir())
+
+
+def katex_asset_dir() -> Path | None:
+    root = repo_root()
+    candidates = (
+        root / "web" / "dist" / "vendor" / "katex",
+        root / "web" / "public" / "vendor" / "katex",
+    )
+    for candidate in candidates:
+        if _is_complete_katex_asset_dir(candidate):
+            return candidate
+    return None
+
+
+def katex_assets(*, asset_root: str | None = None) -> str:
+    base_url = asset_root.rstrip("/") if asset_root else None
+    if not base_url:
+        katex_dir = katex_asset_dir()
+        if katex_dir is None:
+            return ""
         base_url = _path_to_uri(katex_dir)
-        return (
-            f'<link rel="stylesheet" href="{base_url}/katex.min.css">'
-            f'<script src="{base_url}/katex.min.js"></script>'
-            f'<script src="{base_url}/contrib/copy-tex.min.js"></script>'
-            f'<script src="{base_url}/contrib/auto-render.min.js"></script>'
-        )
     return (
-        f'<link rel="stylesheet" href="{_KATEX_CDN_BASE}/katex.min.css">'
-        f'<script src="{_KATEX_CDN_BASE}/katex.min.js"></script>'
-        f'<script src="{_KATEX_CDN_BASE}/contrib/copy-tex.min.js"></script>'
-        f'<script src="{_KATEX_CDN_BASE}/contrib/auto-render.min.js"></script>'
+        f'<link rel="stylesheet" href="{base_url}/katex.min.css">'
+        f'<script src="{base_url}/katex.min.js"></script>'
+        f'<script src="{base_url}/contrib/copy-tex.min.js"></script>'
+        f'<script src="{base_url}/contrib/auto-render.min.js"></script>'
     )
 
 
@@ -421,6 +439,7 @@ def render_markdown_asset_to_pdf(markdown_path: Path, output_pdf: Path) -> Path:
 
 
 __all__ = [
+    "katex_asset_dir",
     "katex_assets",
     "normalize_details_attrs",
     "normalize_details_markdown",

@@ -190,7 +190,7 @@ function renderArithmatexNodes(root: HTMLElement) {
   });
 }
 
-function renderMath(root: HTMLElement) {
+export function enhanceMathContent(root: HTMLElement) {
   try {
     const hasArithmatexNodes = root.querySelector(".arithmatex") !== null;
     if (hasArithmatexNodes) {
@@ -215,5 +215,5 @@ function renderMath(root: HTMLElement) {
 export function enhanceMarkdownContent(root: HTMLElement) {
   ensureNoteContainers(root);
   buildDetailsTabGroups(root);
-  renderMath(root);
+  enhanceMathContent(root);
 }

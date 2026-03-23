@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildApiUrl, buildPdfPageImageUrl, resolveExocortexApiMode } from "./client";
+import { buildApiUrl, buildPdfFileUrl, resolveExocortexApiMode } from "./client";
 
 describe("workflow api client helpers", () => {
   it("normalizes api base and path joining", () => {
@@ -9,11 +9,8 @@ describe("workflow api client helpers", () => {
     expect(buildApiUrl("/health", "http://localhost:9000/api/")).toBe("http://localhost:9000/api/health");
   });
 
-  it("builds encoded pdf image url with normalized dpi", () => {
-    expect(buildPdfPageImageUrl("course/unit 1", 3, 180.6)).toBe(
-      "/api/assets/course%2Funit%201/pdf/pages/3/image?dpi=181",
-    );
-    expect(buildPdfPageImageUrl("asset-a", 0, 0)).toBe("/api/assets/asset-a/pdf/pages/0/image?dpi=1");
+  it("builds encoded raw pdf file urls", () => {
+    expect(buildPdfFileUrl("course/unit 1")).toBe("/api/assets/course%2Funit%201/pdf/file");
   });
 
   it("resolves api mode deterministically", () => {

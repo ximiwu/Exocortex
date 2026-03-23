@@ -14,6 +14,7 @@ from assets_manager import (
     load_group_records as _load_group_records,
     save_asset_config as _save_asset_config,
     save_block_data as _save_block_data,
+    write_unified_content_list as _write_unified_content_list,
 )
 from exocortex_core.contracts import BlockData, BlockRecord, BlockRect, GroupRecord
 
@@ -62,6 +63,14 @@ def list_assets() -> list[str]:
     return _list_assets()
 
 
+def write_unified_content_list(*, source_path: str | Path, pdf_path: str | Path, target_path: str | Path) -> int:
+    return _write_unified_content_list(
+        source_path=source_path,
+        pdf_path=pdf_path,
+        target_path=target_path,
+    )
+
+
 __all__ = [
     "BlockData",
     "BlockRecord",
@@ -78,4 +87,5 @@ __all__ = [
     "load_group_records",
     "save_asset_config",
     "save_block_data",
+    "write_unified_content_list",
 ]

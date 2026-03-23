@@ -21,7 +21,7 @@ class AssetStateAssetModel(BaseModel):
 class BlockModel(BaseModel):
     blockId: int
     pageIndex: int
-    rect: RectModel
+    fractionRect: RectModel
     groupIdx: int | None = None
 
 
@@ -40,6 +40,8 @@ class UiStateModel(BaseModel):
     sidebarCollapsed: bool = False
     sidebarCollapsedNodeIds: list[str] = Field(default_factory=list)
     markdownScrollFractions: dict[str, float] = Field(default_factory=dict)
+    sidebarWidthRatio: float | None = None
+    rightRailWidthRatio: float | None = None
 
 
 class AssetStateModel(BaseModel):
@@ -77,9 +79,19 @@ class PdfMetadataModel(BaseModel):
     maxDpi: int
 
 
+class PdfTextBoxModel(BaseModel):
+    pageIndex: int
+    fractionRect: RectModel
+
+
+class PdfPageTextBoxesModel(BaseModel):
+    pageIndex: int
+    items: list[PdfTextBoxModel] = Field(default_factory=list)
+
+
 class CreateBlockRequest(BaseModel):
     pageIndex: int
-    rect: RectModel
+    fractionRect: RectModel
 
 
 class UpdateSelectionRequest(BaseModel):
@@ -102,6 +114,8 @@ class UpdateUiStateRequest(BaseModel):
     sidebarCollapsed: bool | None = None
     sidebarCollapsedNodeIds: list[str] | None = None
     markdownScrollFractions: dict[str, float] | None = None
+    sidebarWidthRatio: float | None = None
+    rightRailWidthRatio: float | None = None
 
 
 class CreateTutorRequest(BaseModel):
@@ -139,6 +153,8 @@ __all__ = [
     "MarkdownTreeNodeModel",
     "MergeGroupRequest",
     "PdfMetadataModel",
+    "PdfPageTextBoxesModel",
+    "PdfTextBoxModel",
     "ReorderMarkdownSiblingsRequest",
     "TutorSessionModel",
     "UiStateModel",

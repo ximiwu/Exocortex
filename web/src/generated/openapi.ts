@@ -242,6 +242,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/assets/{asset_name}/groups/{group_idx}/tutors/{tutor_idx}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Tutor Session */
+        delete: operations["delete_tutor_session_api_assets__asset_name__groups__group_idx__tutors__tutor_idx__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/assets/{asset_name}": {
         parameters: {
             query?: never;
@@ -344,15 +361,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/assets/{asset_name}/pdf/pages/{page_index}/image": {
+    "/api/assets/{asset_name}/pdf/file": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Pdf Page Image */
-        get: operations["get_pdf_page_image_api_assets__asset_name__pdf_pages__page_index__image_get"];
+        /** Get Pdf File */
+        get: operations["get_pdf_file_api_assets__asset_name__pdf_file_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assets/{asset_name}/pdf/pages/{page_index}/text-boxes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Page Text Boxes */
+        get: operations["get_page_text_boxes_api_assets__asset_name__pdf_pages__page_index__text_boxes_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -582,10 +616,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/system/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get App Config */
+        get: operations["get_app_config_api_system_config_get"];
+        /** Update App Config */
+        put: operations["update_app_config_api_system_config_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AppConfigModel */
+        AppConfigModel: {
+            /**
+             * Thememode
+             * @default light
+             * @enum {string}
+             */
+            themeMode: "light" | "dark";
+            /**
+             * Sidebartextlineclamp
+             * @default 1
+             */
+            sidebarTextLineClamp: number;
+            /**
+             * Sidebarfontsizepx
+             * @default 14
+             */
+            sidebarFontSizePx: number;
+            /**
+             * Tutorreasoningeffort
+             * @default medium
+             * @enum {string}
+             */
+            tutorReasoningEffort: "low" | "medium" | "high" | "xhigh";
+            /**
+             * Tutorwithglobalcontext
+             * @default true
+             */
+            tutorWithGlobalContext: boolean;
+        };
         /** AskTutorWorkflowRequest */
         AskTutorWorkflowRequest: {
             /** Assetname */
@@ -646,7 +728,7 @@ export interface components {
             blockId: number;
             /** Pageindex */
             pageIndex: number;
-            rect: components["schemas"]["RectModel"];
+            fractionRect: components["schemas"]["RectModel"];
             /** Groupidx */
             groupIdx?: number | null;
         };
@@ -654,28 +736,27 @@ export interface components {
         Body_import_asset_api_assets_import_post: {
             /** Source File */
             source_file: string;
+            /** Markdown File */
+            markdown_file: string;
+            /** Content List File */
+            content_list_file: string;
             /** Asset Name */
             asset_name: string;
             /** Asset Subfolder */
             asset_subfolder?: string | null;
-            /** Skip Img2Md Markdown File */
-            skip_img2md_markdown_file?: string | null;
-            /**
-             * Compress Enabled
-             * @default false
-             */
-            compress_enabled: boolean;
         };
         /** Body_submit_asset_init_api_tasks_asset_init_post */
         Body_submit_asset_init_api_tasks_asset_init_post: {
             /** Source File */
             source_file: string;
+            /** Markdown File */
+            markdown_file: string;
+            /** Content List File */
+            content_list_file: string;
             /** Asset Name */
             asset_name: string;
             /** Asset Subfolder */
             asset_subfolder?: string | null;
-            /** Skip Img2Md Markdown File */
-            skip_img2md_markdown_file?: string | null;
         };
         /** Body_submit_bug_finder_api_tasks_bug_finder_post */
         Body_submit_bug_finder_api_tasks_bug_finder_post: {
@@ -715,7 +796,7 @@ export interface components {
         CreateBlockRequest: {
             /** Pageindex */
             pageIndex: number;
-            rect: components["schemas"]["RectModel"];
+            fractionRect: components["schemas"]["RectModel"];
         };
         /** CreateTutorRequest */
         CreateTutorRequest: {
@@ -820,6 +901,19 @@ export interface components {
             /** Maxdpi */
             maxDpi: number;
         };
+        /** PdfPageTextBoxesModel */
+        PdfPageTextBoxesModel: {
+            /** Pageindex */
+            pageIndex: number;
+            /** Items */
+            items?: components["schemas"]["PdfTextBoxModel"][];
+        };
+        /** PdfTextBoxModel */
+        PdfTextBoxModel: {
+            /** Pageindex */
+            pageIndex: number;
+            fractionRect: components["schemas"]["RectModel"];
+        };
         /** ReTutorWorkflowRequest */
         ReTutorWorkflowRequest: {
             /** Assetname */
@@ -875,10 +969,7 @@ export interface components {
             /** Events */
             events?: components["schemas"]["TaskEventModel"][];
             latestEvent?: components["schemas"]["TaskEventModel"] | null;
-            /** Result */
-            result?: {
-                [key: string]: unknown;
-            } | null;
+            result?: components["schemas"]["TaskResultModel"] | null;
         };
         /** TaskEventModel */
         TaskEventModel: {
@@ -886,6 +977,8 @@ export interface components {
             taskId: string;
             /** Kind */
             kind: string;
+            /** Assetname */
+            assetName?: string | null;
             /** Status */
             status: string;
             /** Eventtype */
@@ -897,11 +990,39 @@ export interface components {
             /** Artifactpath */
             artifactPath?: string | null;
             /** Payload */
-            payload?: {
-                [key: string]: unknown;
+            payload?: components["schemas"]["TaskFailurePayloadModel"] | {
+                [key: string]: string | number | boolean | unknown[] | {
+                    [key: string]: unknown;
+                } | null;
             } | null;
             /** Timestamp */
             timestamp: string;
+        };
+        /** TaskFailurePayloadModel */
+        TaskFailurePayloadModel: {
+            /** Code */
+            code: string;
+            /** Details */
+            details?: string | number | boolean | unknown[] | {
+                [key: string]: unknown;
+            } | null;
+            /** Exceptiontype */
+            exceptionType: string;
+            /** Statuscode */
+            statusCode?: number | null;
+        };
+        /** TaskResultModel */
+        TaskResultModel: {
+            /** Message */
+            message: string;
+            /** Artifactpath */
+            artifactPath?: string | null;
+            /** Payload */
+            payload?: components["schemas"]["TaskFailurePayloadModel"] | {
+                [key: string]: string | number | boolean | unknown[] | {
+                    [key: string]: unknown;
+                } | null;
+            } | null;
         };
         /** TaskSummaryModel */
         TaskSummaryModel: {
@@ -973,6 +1094,23 @@ export interface components {
             markdownScrollFractions?: {
                 [key: string]: number;
             };
+            /** Sidebarwidthratio */
+            sidebarWidthRatio?: number | null;
+            /** Rightrailwidthratio */
+            rightRailWidthRatio?: number | null;
+        };
+        /** UpdateAppConfigRequest */
+        UpdateAppConfigRequest: {
+            /** Thememode */
+            themeMode?: ("light" | "dark") | null;
+            /** Sidebartextlineclamp */
+            sidebarTextLineClamp?: number | null;
+            /** Sidebarfontsizepx */
+            sidebarFontSizePx?: number | null;
+            /** Tutorreasoningeffort */
+            tutorReasoningEffort?: ("low" | "medium" | "high" | "xhigh") | null;
+            /** Tutorwithglobalcontext */
+            tutorWithGlobalContext?: boolean | null;
         };
         /** UpdateMarkdownNodeAliasRequest */
         UpdateMarkdownNodeAliasRequest: {
@@ -1010,6 +1148,10 @@ export interface components {
             markdownScrollFractions?: {
                 [key: string]: number;
             } | null;
+            /** Sidebarwidthratio */
+            sidebarWidthRatio?: number | null;
+            /** Rightrailwidthratio */
+            rightRailWidthRatio?: number | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -1475,6 +1617,39 @@ export interface operations {
             };
         };
     };
+    delete_tutor_session_api_assets__asset_name__groups__group_idx__tutors__tutor_idx__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asset_name: string;
+                group_idx: number;
+                tutor_idx: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     delete_asset_api_assets__asset_name__delete: {
         parameters: {
             query?: never;
@@ -1671,11 +1846,40 @@ export interface operations {
             };
         };
     };
-    get_pdf_page_image_api_assets__asset_name__pdf_pages__page_index__image_get: {
+    get_pdf_file_api_assets__asset_name__pdf_file_get: {
         parameters: {
-            query?: {
-                dpi?: number;
+            query?: never;
+            header?: never;
+            path: {
+                asset_name: string;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_page_text_boxes_api_assets__asset_name__pdf_pages__page_index__text_boxes_get: {
+        parameters: {
+            query?: never;
             header?: never;
             path: {
                 asset_name: string;
@@ -1691,7 +1895,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PdfPageTextBoxesModel"];
                 };
             };
             /** @description Validation Error */
@@ -2102,6 +2306,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AssetRootResponse"];
+                };
+            };
+        };
+    };
+    get_app_config_api_system_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppConfigModel"];
+                };
+            };
+        };
+    };
+    update_app_config_api_system_config_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAppConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppConfigModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

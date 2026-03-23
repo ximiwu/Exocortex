@@ -4,15 +4,18 @@ import os
 import shutil
 import stat
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import fitz
 
+from exocortex_core.contracts import COORDINATE_SPACE_PAGE_FRACTION
+from server.config import DEFAULT_RENDER_DPI
 from server.domain.assets import (
     BlockData,
     BlockRecord,
     BlockRect,
     asset_root,
+    asset_config_write_lock,
     create_group_record,
     delete_group_record,
     get_asset_dir,
@@ -26,6 +29,7 @@ from server.domain.assets import (
     save_block_data,
 )
 from server.errors import ApiError
+from server.legacy.assets import write_unified_content_list
 from server.schemas import (
     AssetStateAssetModel,
     AssetStateModel,
@@ -35,10 +39,22 @@ from server.schemas import (
     RectModel,
     TutorSessionModel,
     UiStateModel,
+    SizeModel,
 )
 
 
 ASSETS_ROOT = asset_root()
+
+
+def _safe_rmtree(path: Path) -> None:
+    def _handle_remove_readonly(func, target, _exc_info):
+        try:
+            os.chmod(target, stat.S_IWRITE)
+        except Exception:
+            pass
+        func(target)
+
+    shutil.rmtree(path, onerror=_handle_remove_readonly)
 
 
 def _normalize_asset_name(asset_name: str) -> str:
@@ -112,6 +128,10 @@ def _page_count(pdf_path: Path) -> int:
         return doc.page_count
 
 
+def _resolve_content_list_paths(asset_dir: Path) -> tuple[Path, Path]:
+    return asset_dir / "content_list.json", asset_dir / "content_list_unified.json"
+
+
 def _list_reference_names(asset_name: str) -> list[str]:
     references_dir = resolve_asset_dir(asset_name) / "references"
     if not references_dir.is_dir():
@@ -183,6 +203,26 @@ def _load_ui_state(asset_name: str, page_count: int) -> UiStateModel:
                 continue
             markdown_scroll_fractions[raw_path] = min(1.0, max(0.0, fraction))
 
+    sidebar_width_ratio_raw = config.get("sidebar_width_ratio")
+    try:
+        sidebar_width_ratio = (
+            min(1.0, max(0.0, float(sidebar_width_ratio_raw)))
+            if sidebar_width_ratio_raw is not None
+            else None
+        )
+    except Exception:
+        sidebar_width_ratio = None
+
+    right_rail_width_ratio_raw = config.get("right_rail_width_ratio")
+    try:
+        right_rail_width_ratio = (
+            min(1.0, max(0.0, float(right_rail_width_ratio_raw)))
+            if right_rail_width_ratio_raw is not None
+            else None
+        )
+    except Exception:
+        right_rail_width_ratio = None
+
     return UiStateModel(
         currentPage=current_page,
         zoom=zoom_value,
@@ -193,7 +233,82 @@ def _load_ui_state(asset_name: str, page_count: int) -> UiStateModel:
         sidebarCollapsed=sidebar_collapsed,
         sidebarCollapsedNodeIds=sidebar_collapsed_node_ids,
         markdownScrollFractions=markdown_scroll_fractions,
+        sidebarWidthRatio=sidebar_width_ratio,
+        rightRailWidthRatio=right_rail_width_ratio,
     )
+
+
+def _block_rect_to_fraction(record: BlockRecord, page_sizes: Sequence[SizeModel]) -> BlockRect:
+    if record.page_index < 0 or record.page_index >= len(page_sizes):
+        return record.rect
+    page_size = page_sizes[record.page_index]
+    width_ref = float(page_size.width)
+    height_ref = float(page_size.height)
+    if width_ref <= 0 or height_ref <= 0:
+        return BlockRect(x=0.0, y=0.0, width=0.0, height=0.0)
+
+    x0_ref = min(max(float(record.rect.x), 0.0), width_ref)
+    y0_ref = min(max(float(record.rect.y), 0.0), height_ref)
+    x1_ref = min(max(float(record.rect.x + record.rect.width), 0.0), width_ref)
+    y1_ref = min(max(float(record.rect.y + record.rect.height), 0.0), height_ref)
+
+    return BlockRect(
+        x=x0_ref / width_ref,
+        y=y0_ref / height_ref,
+        width=max(0.0, x1_ref - x0_ref) / width_ref,
+        height=max(0.0, y1_ref - y0_ref) / height_ref,
+    )
+
+
+def _ensure_fraction_block_data(block_data: BlockData, page_sizes: Sequence[SizeModel]) -> tuple[BlockData, bool]:
+    if block_data.coordinate_space == COORDINATE_SPACE_PAGE_FRACTION:
+        return block_data, False
+
+    normalized_blocks: list[BlockRecord] = []
+    for record in block_data.blocks:
+        normalized_blocks.append(
+            BlockRecord(
+                block_id=record.block_id,
+                page_index=record.page_index,
+                rect=_block_rect_to_fraction(record, page_sizes),
+                group_idx=record.group_idx,
+            )
+        )
+
+    normalized_data = BlockData(
+        blocks=normalized_blocks,
+        merge_order=list(block_data.merge_order),
+        next_block_id=block_data.next_block_id,
+        coordinate_space=COORDINATE_SPACE_PAGE_FRACTION,
+    )
+    return normalized_data, True
+
+
+def _load_page_sizes_at_reference_dpi(pdf_path: Path) -> list[SizeModel]:
+    if not pdf_path.is_file():
+        return []
+
+    scale = DEFAULT_RENDER_DPI / 72.0
+    page_sizes: list[SizeModel] = []
+    with fitz.open(str(pdf_path)) as doc:
+        for page_index in range(doc.page_count):
+            page = doc.load_page(page_index)
+            page_sizes.append(SizeModel(width=page.rect.width * scale, height=page.rect.height * scale))
+    return page_sizes
+
+
+def _load_fraction_block_data(asset_name: str, pdf_path: Path) -> BlockData:
+    block_data = load_block_data(asset_name)
+    if block_data.coordinate_space == COORDINATE_SPACE_PAGE_FRACTION:
+        return block_data
+
+    page_sizes = _load_page_sizes_at_reference_dpi(pdf_path)
+    if not page_sizes:
+        return block_data
+    normalized_data, migrated = _ensure_fraction_block_data(block_data, page_sizes)
+    if migrated:
+        save_block_data(asset_name, normalized_data)
+    return normalized_data
 
 
 def build_asset_summary(asset_name: str) -> AssetSummaryModel:
@@ -213,18 +328,62 @@ def list_asset_summaries() -> list[AssetSummaryModel]:
     return [build_asset_summary(asset_name) for asset_name in list_assets()]
 
 
+def ensure_content_list_unified(asset_name: str) -> Path | None:
+    normalized = _normalize_asset_name(asset_name)
+    asset_dir = resolve_asset_dir(normalized)
+    content_list_path, content_list_unified_path = _resolve_content_list_paths(asset_dir)
+    if content_list_unified_path.is_file():
+        return content_list_unified_path
+    if not content_list_path.is_file():
+        return None
+
+    pdf_path = get_asset_pdf_path(normalized)
+    if not pdf_path.is_file():
+        raise ApiError(
+            500,
+            "content_list_unified_generation_failed",
+            f"Failed to generate content_list_unified.json for asset '{normalized}': raw.pdf is missing.",
+            details={"assetName": normalized, "pdfPath": str(pdf_path)},
+        )
+
+    try:
+        write_unified_content_list(
+            source_path=content_list_path,
+            pdf_path=pdf_path,
+            target_path=content_list_unified_path,
+        )
+    except ValueError as exc:
+        raise ApiError(
+            500,
+            "content_list_unified_generation_failed",
+            f"Failed to generate content_list_unified.json for asset '{normalized}'.",
+            details={"assetName": normalized, "reason": str(exc)},
+        ) from exc
+    except OSError as exc:
+        raise ApiError(
+            500,
+            "content_list_unified_generation_failed",
+            f"Failed to generate content_list_unified.json for asset '{normalized}'.",
+            details={"assetName": normalized, "reason": "filesystem_error"},
+        ) from exc
+
+    return content_list_unified_path
+
+
 def build_asset_state(asset_name: str) -> AssetStateModel:
     normalized = _normalize_asset_name(asset_name)
     asset_dir = resolve_asset_dir(normalized)
     pdf_path = get_asset_pdf_path(normalized)
-    page_count = _page_count(pdf_path)
-    block_data = load_block_data(normalized)
+    ensure_content_list_unified(normalized)
+    page_sizes = _load_page_sizes_at_reference_dpi(pdf_path)
+    page_count = len(page_sizes)
+    block_data = _load_fraction_block_data(normalized, pdf_path)
     group_records = load_group_records(normalized)
     blocks = [
         BlockModel(
             blockId=record.block_id,
             pageIndex=record.page_index,
-            rect=RectModel(
+            fractionRect=RectModel(
                 x=record.rect.x,
                 y=record.rect.y,
                 width=record.rect.width,
@@ -258,17 +417,22 @@ def _resolved_next_block_id(current_next: int, blocks: list[BlockRecord]) -> int
     return max(current_next, max((record.block_id for record in blocks), default=0) + 1, 1)
 
 
-def create_block(asset_name: str, page_index: int, rect: RectModel) -> AssetStateModel:
+def create_block(asset_name: str, page_index: int, fraction_rect: RectModel) -> AssetStateModel:
     normalized = _normalize_asset_name(asset_name)
     resolve_asset_dir(normalized)
-    data = load_block_data(normalized)
+    pdf_path = get_asset_pdf_path(normalized)
+    data = _load_fraction_block_data(normalized, pdf_path)
+    x = min(max(float(fraction_rect.x), 0.0), 1.0)
+    y = min(max(float(fraction_rect.y), 0.0), 1.0)
+    width = min(max(float(fraction_rect.width), 0.0), max(0.0, 1.0 - x))
+    height = min(max(float(fraction_rect.height), 0.0), max(0.0, 1.0 - y))
     block_id = _next_block_id(data)
     blocks = list(data.blocks)
     blocks.append(
         BlockRecord(
             block_id=block_id,
             page_index=page_index,
-            rect=BlockRect(x=rect.x, y=rect.y, width=rect.width, height=rect.height),
+            rect=BlockRect(x=x, y=y, width=width, height=height),
             group_idx=None,
         )
     )
@@ -278,6 +442,7 @@ def create_block(asset_name: str, page_index: int, rect: RectModel) -> AssetStat
             blocks=blocks,
             merge_order=list(data.merge_order),
             next_block_id=block_id + 1,
+            coordinate_space=COORDINATE_SPACE_PAGE_FRACTION,
         ),
     )
     return build_asset_state(normalized)
@@ -286,7 +451,8 @@ def create_block(asset_name: str, page_index: int, rect: RectModel) -> AssetStat
 def update_selection(asset_name: str, merge_order: Iterable[int]) -> AssetStateModel:
     normalized = _normalize_asset_name(asset_name)
     resolve_asset_dir(normalized)
-    data = load_block_data(normalized)
+    pdf_path = get_asset_pdf_path(normalized)
+    data = _load_fraction_block_data(normalized, pdf_path)
     valid_ids = {record.block_id for record in data.blocks if record.group_idx is None}
     filtered: list[int] = []
     for block_id in merge_order:
@@ -299,6 +465,7 @@ def update_selection(asset_name: str, merge_order: Iterable[int]) -> AssetStateM
             blocks=list(data.blocks),
             merge_order=filtered,
             next_block_id=data.next_block_id,
+            coordinate_space=COORDINATE_SPACE_PAGE_FRACTION,
         ),
     )
     return build_asset_state(normalized)
@@ -313,7 +480,8 @@ def merge_group(
 ) -> AssetStateModel:
     normalized = _normalize_asset_name(asset_name)
     resolve_asset_dir(normalized)
-    data = load_block_data(normalized)
+    pdf_path = get_asset_pdf_path(normalized)
+    data = _load_fraction_block_data(normalized, pdf_path)
     block_map = {record.block_id: record for record in data.blocks}
     selected = block_ids if block_ids else list(data.merge_order)
     if not selected:
@@ -343,6 +511,7 @@ def merge_group(
             blocks=updated_blocks,
             merge_order=[],
             next_block_id=data.next_block_id,
+            coordinate_space=COORDINATE_SPACE_PAGE_FRACTION,
         ),
     )
     if markdown_content is not None:
@@ -355,7 +524,8 @@ def merge_group(
 def delete_group(asset_name: str, group_idx: int) -> AssetStateModel:
     normalized = _normalize_asset_name(asset_name)
     resolve_asset_dir(normalized)
-    data = load_block_data(normalized)
+    pdf_path = get_asset_pdf_path(normalized)
+    data = _load_fraction_block_data(normalized, pdf_path)
     records = load_group_records(normalized)
     target = next((record for record in records if record.group_idx == group_idx), None)
     if target is None:
@@ -369,6 +539,7 @@ def delete_group(asset_name: str, group_idx: int) -> AssetStateModel:
             blocks=blocks,
             merge_order=merge_order,
             next_block_id=_resolved_next_block_id(data.next_block_id, blocks),
+            coordinate_space=COORDINATE_SPACE_PAGE_FRACTION,
         ),
     )
     delete_group_record(normalized, group_idx)
@@ -378,7 +549,8 @@ def delete_group(asset_name: str, group_idx: int) -> AssetStateModel:
 def delete_block(asset_name: str, block_id: int) -> AssetStateModel:
     normalized = _normalize_asset_name(asset_name)
     resolve_asset_dir(normalized)
-    data = load_block_data(normalized)
+    pdf_path = get_asset_pdf_path(normalized)
+    data = _load_fraction_block_data(normalized, pdf_path)
     target = next((record for record in data.blocks if record.block_id == block_id), None)
     if target is None:
         raise ApiError(404, "block_not_found", f"Block {block_id} not found.")
@@ -392,6 +564,7 @@ def delete_block(asset_name: str, block_id: int) -> AssetStateModel:
             blocks=blocks,
             merge_order=merge_order,
             next_block_id=_resolved_next_block_id(data.next_block_id, blocks),
+            coordinate_space=COORDINATE_SPACE_PAGE_FRACTION,
         ),
     )
     return build_asset_state(normalized)
@@ -409,56 +582,55 @@ def update_ui_state(
     sidebar_collapsed: bool | None = None,
     sidebar_collapsed_node_ids: list[str] | None = None,
     markdown_scroll_fractions: dict[str, float] | None = None,
+    sidebar_width_ratio: float | None = None,
+    right_rail_width_ratio: float | None = None,
 ) -> AssetStateModel:
     normalized = _normalize_asset_name(asset_name)
     resolve_asset_dir(normalized)
-    config = get_asset_config(normalized) or {}
-    if current_page is not None:
-        config["current_page"] = max(1, int(current_page))
-    if zoom is not None:
-        config["zoom"] = float(zoom)
-    if pdf_scroll_fraction is not None:
-        config["pdf_scroll_fraction"] = min(1.0, max(0.0, float(pdf_scroll_fraction)))
-    if pdf_scroll_left_fraction is not None:
-        config["pdf_scroll_left_fraction"] = min(1.0, max(0.0, float(pdf_scroll_left_fraction)))
-    if current_markdown_path is not None:
-        config["markdown_path"] = current_markdown_path
-    if open_markdown_paths is not None:
-        config["open_markdown_paths"] = [path for path in open_markdown_paths if isinstance(path, str) and path]
-    if sidebar_collapsed is not None:
-        config["sidebar_collapsed"] = bool(sidebar_collapsed)
-    if sidebar_collapsed_node_ids is not None:
-        deduped_node_ids: list[str] = []
-        for node_id in sidebar_collapsed_node_ids:
-            if isinstance(node_id, str) and node_id and node_id not in deduped_node_ids:
-                deduped_node_ids.append(node_id)
-        config["sidebar_collapsed_node_ids"] = deduped_node_ids
-    if markdown_scroll_fractions is not None:
-        normalized_scroll_fractions: dict[str, float] = {}
-        for path, raw_fraction in markdown_scroll_fractions.items():
-            if not isinstance(path, str) or not path:
-                continue
-            try:
-                fraction = float(raw_fraction)
-            except Exception:
-                continue
-            normalized_scroll_fractions[path] = min(1.0, max(0.0, fraction))
-        config["markdown_scroll_fractions"] = normalized_scroll_fractions
-    save_asset_config(normalized, config)
-    return build_asset_state(normalized)
+    with asset_config_write_lock(normalized):
+        config = get_asset_config(normalized) or {}
+        if current_page is not None:
+            config["current_page"] = max(1, int(current_page))
+        if zoom is not None:
+            config["zoom"] = float(zoom)
+        if pdf_scroll_fraction is not None:
+            config["pdf_scroll_fraction"] = min(1.0, max(0.0, float(pdf_scroll_fraction)))
+        if pdf_scroll_left_fraction is not None:
+            config["pdf_scroll_left_fraction"] = min(1.0, max(0.0, float(pdf_scroll_left_fraction)))
+        if current_markdown_path is not None:
+            config["markdown_path"] = current_markdown_path
+        if open_markdown_paths is not None:
+            config["open_markdown_paths"] = [path for path in open_markdown_paths if isinstance(path, str) and path]
+        if sidebar_collapsed is not None:
+            config["sidebar_collapsed"] = bool(sidebar_collapsed)
+        if sidebar_collapsed_node_ids is not None:
+            deduped_node_ids: list[str] = []
+            for node_id in sidebar_collapsed_node_ids:
+                if isinstance(node_id, str) and node_id and node_id not in deduped_node_ids:
+                    deduped_node_ids.append(node_id)
+            config["sidebar_collapsed_node_ids"] = deduped_node_ids
+        if markdown_scroll_fractions is not None:
+            normalized_scroll_fractions: dict[str, float] = {}
+            for path, raw_fraction in markdown_scroll_fractions.items():
+                if not isinstance(path, str) or not path:
+                    continue
+                try:
+                    fraction = float(raw_fraction)
+                except Exception:
+                    continue
+                normalized_scroll_fractions[path] = min(1.0, max(0.0, fraction))
+            config["markdown_scroll_fractions"] = normalized_scroll_fractions
+        if sidebar_width_ratio is not None:
+            config["sidebar_width_ratio"] = min(1.0, max(0.0, float(sidebar_width_ratio)))
+        if right_rail_width_ratio is not None:
+            config["right_rail_width_ratio"] = min(1.0, max(0.0, float(right_rail_width_ratio)))
+        save_asset_config(normalized, config)
+        return build_asset_state(normalized)
 
 
 def delete_asset(asset_name: str) -> None:
     asset_dir = resolve_asset_dir(asset_name)
-
-    def _handle_remove_readonly(func, target, _exc_info):
-        try:
-            os.chmod(target, stat.S_IWRITE)
-        except Exception:
-            pass
-        func(target)
-
-    shutil.rmtree(asset_dir, onerror=_handle_remove_readonly)
+    _safe_rmtree(asset_dir)
 
 
 def delete_question(asset_name: str, group_idx: int, tutor_idx: int, markdown_path: str) -> None:
@@ -509,16 +681,39 @@ def create_tutor_session(asset_name: str, group_idx: int, focus_markdown: str) -
     )
 
 
+def delete_tutor_session(asset_name: str, group_idx: int, tutor_idx: int) -> None:
+    normalized = _normalize_asset_name(asset_name)
+    asset_dir = resolve_asset_dir(normalized)
+    tutor_session_dir = asset_dir / "group_data" / str(group_idx) / "tutor_data" / str(tutor_idx)
+    try:
+        tutor_session_dir.resolve().relative_to(asset_dir.resolve())
+    except ValueError as exc:
+        raise ApiError(
+            400,
+            "invalid_tutor_session_path",
+            "Tutor session path must stay inside the asset directory.",
+        ) from exc
+    if not tutor_session_dir.is_dir():
+        raise ApiError(
+            404,
+            "tutor_session_not_found",
+            f"Tutor session {group_idx}/{tutor_idx} not found for asset '{normalized}'.",
+        )
+    _safe_rmtree(tutor_session_dir)
+
+
 __all__ = [
     "ASSETS_ROOT",
     "build_asset_state",
     "build_asset_summary",
     "create_block",
     "create_tutor_session",
+    "delete_tutor_session",
     "delete_asset",
     "delete_question",
     "delete_block",
     "delete_group",
+    "ensure_content_list_unified",
     "list_asset_summaries",
     "merge_group",
     "normalize_asset_name",

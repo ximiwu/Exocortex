@@ -1,11 +1,17 @@
-import { useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { useExocortexApi } from "../../app/api/ExocortexApiContext";
 import { queryKeys } from "../../app/api/exocortexApi";
-import { MarkdownTreeNode } from "../../app/types";
+import { AssetState, MarkdownTreeNode } from "../../app/types";
 import { useAppStore } from "../../app/store/appStore";
+import { Modal } from "../shared/Modal";
 import { MarkdownTree } from "./MarkdownTree";
+import {
+  collectLeafPaths,
+  filterTreeByPaths,
+  resolveLocatePageIndex,
+} from "./treeUtils";
 
 interface SidebarPaneProps {
   markdownTree: MarkdownTreeNode[];
@@ -14,6 +20,16 @@ interface SidebarPaneProps {
 }
 
 const EMPTY_NODE_IDS: string[] = [];
+const DEFAULT_LINE_CLAMP = 1;
+const DEFAULT_FONT_SIZE = 14;
+
+function clampLineClamp(value: number): number {
+  return Math.max(1, Math.min(6, Math.floor(value)));
+}
+
+function clampFontSize(value: number): number {
+  return Math.max(10, Math.min(24, Math.floor(value)));
+}
 
 export function SidebarPane({ markdownTree, treeLoading, treeError }: SidebarPaneProps) {
   const api = useExocortexApi();
@@ -28,10 +44,16 @@ export function SidebarPane({ markdownTree, treeLoading, treeError }: SidebarPan
   const toggleSidebarNode = useAppStore((state) => state.toggleSidebarNode);
   const openMarkdownTab = useAppStore((state) => state.openMarkdownTab);
   const openMarkdownTabs = useAppStore((state) => state.openMarkdownTabs);
-  const closeMarkdownTab = useAppStore((state) => state.closeMarkdownTab);
   const closeMarkdownTabs = useAppStore((state) => state.closeMarkdownTabs);
   const clearSidebarRevealTarget = useAppStore((state) => state.clearSidebarRevealTarget);
+  const requestPdfNavigation = useAppStore((state) => state.requestPdfNavigation);
   const treeScrollRef = useRef<HTMLDivElement | null>(null);
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [sidebarTextLineClamp, setSidebarTextLineClamp] = useState(DEFAULT_LINE_CLAMP);
+  const [sidebarFontSizePx, setSidebarFontSizePx] = useState(DEFAULT_FONT_SIZE);
+  const [lineClampDraft, setLineClampDraft] = useState(String(DEFAULT_LINE_CLAMP));
+  const [fontSizeDraft, setFontSizeDraft] = useState(String(DEFAULT_FONT_SIZE));
   const collapsedNodeIds = selectedAssetName
     ? sidebarCollapsedNodeIdsByAsset[selectedAssetName] ?? EMPTY_NODE_IDS
     : EMPTY_NODE_IDS;
@@ -39,7 +61,6 @@ export function SidebarPane({ markdownTree, treeLoading, treeError }: SidebarPan
     ? openTabs.filter((tab) => tab.assetName === selectedAssetName).map((tab) => tab.path)
     : [];
 
-  const openableNodes = flattenOpenableNodes(markdownTree);
   const visibleTree = filterTreeByPaths(markdownTree, new Set(openPaths));
   const activeScrollKey =
     selectedAssetName && currentMarkdownPath ? `${selectedAssetName}:${currentMarkdownPath}` : null;
@@ -90,6 +111,56 @@ export function SidebarPane({ markdownTree, treeLoading, treeError }: SidebarPan
     visibleTree,
   ]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    void api.system
+      .getConfig()
+      .then((config) => {
+        if (cancelled) {
+          return;
+        }
+
+        const nextLineClamp = clampLineClamp(config.sidebarTextLineClamp ?? DEFAULT_LINE_CLAMP);
+        const nextFontSize = clampFontSize(config.sidebarFontSizePx ?? DEFAULT_FONT_SIZE);
+        setSidebarTextLineClamp(nextLineClamp);
+        setSidebarFontSizePx(nextFontSize);
+        setLineClampDraft(String(nextLineClamp));
+        setFontSizeDraft(String(nextFontSize));
+      })
+      .catch((error) => {
+        console.warn("Failed to load sidebar display settings", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api.system]);
+
+  async function saveDisplaySettings() {
+    const nextLineClamp = clampLineClamp(Number(lineClampDraft) || DEFAULT_LINE_CLAMP);
+    const nextFontSize = clampFontSize(Number(fontSizeDraft) || DEFAULT_FONT_SIZE);
+
+    setSettingsSaving(true);
+    try {
+      const persisted = await api.system.updateConfig({
+        sidebarTextLineClamp: nextLineClamp,
+        sidebarFontSizePx: nextFontSize,
+      });
+      const persistedLineClamp = clampLineClamp(persisted.sidebarTextLineClamp ?? nextLineClamp);
+      const persistedFontSize = clampFontSize(persisted.sidebarFontSizePx ?? nextFontSize);
+      setSidebarTextLineClamp(persistedLineClamp);
+      setSidebarFontSizePx(persistedFontSize);
+      setLineClampDraft(String(persistedLineClamp));
+      setFontSizeDraft(String(persistedFontSize));
+      setSettingsModalOpen(false);
+    } catch (error) {
+      console.warn("Failed to save sidebar display settings", error);
+    } finally {
+      setSettingsSaving(false);
+    }
+  }
+
   return (
     <div className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`}>
       <div className="sidebar__toolbar">
@@ -108,38 +179,23 @@ export function SidebarPane({ markdownTree, treeLoading, treeError }: SidebarPan
           </svg>
         </button>
 
-        <div className="sidebar__toolbarTitle">Exocortex</div>
+        <div className="sidebar__toolbarTitle">Contents</div>
         <div className="sidebar__toolbarSpacer" />
         <div className="sidebar__toolbarActions">
           <button
             className="sidebar__toolbarButton"
             type="button"
             onClick={() => {
-              if (!selectedAssetName || !openableNodes.length) {
-                return;
-              }
-
-              openMarkdownTabs(
-                openableNodes.map((node) => ({
-                  assetName: selectedAssetName,
-                  path: node.path,
-                  title: node.title,
-                  kind: node.kind,
-                })),
-                currentMarkdownPath,
-              );
+              setLineClampDraft(String(sidebarTextLineClamp));
+              setFontSizeDraft(String(sidebarFontSizePx));
+              setSettingsModalOpen(true);
             }}
-            aria-label="Open all markdown under asset"
-            title="Open all markdown under asset"
-            disabled={!selectedAssetName || !openableNodes.length}
+            aria-label="Sidebar display settings"
+            title="Sidebar display settings"
           >
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
               <path
-                d="M8 1.5a.75.75 0 0 1 .75.75v5.19l1.72-1.72a.75.75 0 1 1 1.06 1.06L8 10.31 4.47 6.78a.75.75 0 1 1 1.06-1.06l1.72 1.72V2.25A.75.75 0 0 1 8 1.5z"
-                fill="currentColor"
-              />
-              <path
-                d="M2.5 10.5a.75.75 0 0 1 .75.75v1.25c0 .55.45 1 1 1h7.5c.55 0 1-.45 1-1v-1.25a.75.75 0 0 1 1.5 0v1.25c0 1.38-1.12 2.5-2.5 2.5h-7.5c-1.38 0-2.5-1.12-2.5-2.5v-1.25a.75.75 0 0 1 .75-.75z"
+                d="M9.72 1.7a.75.75 0 0 1 .96.45l.38 1.08a4.88 4.88 0 0 1 .92.53l1.08-.41a.75.75 0 0 1 .98.43l.58 1.39a.75.75 0 0 1-.38.99l-1.03.5c.03.17.04.34.04.52 0 .18-.01.35-.04.52l1.03.5a.75.75 0 0 1 .38.99l-.58 1.39a.75.75 0 0 1-.98.43l-1.08-.41a4.88 4.88 0 0 1-.92.53l-.38 1.08a.75.75 0 0 1-.96.45l-1.45-.46a.75.75 0 0 1-.5-.94l.34-1.08a4.83 4.83 0 0 1-.8-.58l-1.08.4a.75.75 0 0 1-.98-.43l-.58-1.39a.75.75 0 0 1 .38-.99l1.03-.5a4.13 4.13 0 0 1 0-1.04l-1.03-.5a.75.75 0 0 1-.38-.99l.58-1.39a.75.75 0 0 1 .98-.43l1.08.4c.24-.22.5-.41.8-.58l-.34-1.08a.75.75 0 0 1 .5-.94zM8 5.75a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5z"
                 fill="currentColor"
               />
             </svg>
@@ -158,7 +214,10 @@ export function SidebarPane({ markdownTree, treeLoading, treeError }: SidebarPan
               fullTree={markdownTree}
               emptyMessage="No markdown tabs are open in this asset."
               currentPath={currentMarkdownPath}
+              openPaths={openPaths}
               collapsedNodeIds={collapsedNodeIds}
+              sidebarTextLineClamp={sidebarTextLineClamp}
+              sidebarFontSizePx={sidebarFontSizePx}
               onToggleNode={(nodeId) => {
                 if (!selectedAssetName) {
                   return;
@@ -177,17 +236,85 @@ export function SidebarPane({ markdownTree, treeLoading, treeError }: SidebarPan
                   kind,
                 }, { source: "sidebar" });
               }}
-              onClosePath={(path) => {
+              onOpenPaths={(nodesToOpen) => {
                 if (!selectedAssetName) {
                   return;
                 }
-                closeMarkdownTab(selectedAssetName, path);
+
+                openMarkdownTabs(
+                  nodesToOpen.map((node) => ({
+                    assetName: selectedAssetName,
+                    path: node.path,
+                    title: node.title,
+                    kind: node.kind,
+                  })),
+                  currentMarkdownPath,
+                );
               }}
-              onCloseBranch={(paths) => {
+              onClosePaths={(paths) => {
                 if (!selectedAssetName) {
                   return;
                 }
                 closeMarkdownTabs(selectedAssetName, paths);
+              }}
+              onLocateInPdf={async (groupIdx) => {
+                if (!selectedAssetName) {
+                  return;
+                }
+
+                const cachedState = queryClient.getQueryData<AssetState>(
+                  queryKeys.assetState(selectedAssetName),
+                ) ?? null;
+                const state = cachedState ?? (await api.assets.getState(selectedAssetName));
+                const pageIndex = resolveLocatePageIndex(state, groupIdx);
+                if (pageIndex === null) {
+                  console.warn("Unable to locate group in PDF.", {
+                    assetName: selectedAssetName,
+                    groupIdx,
+                  });
+                  return;
+                }
+
+                requestPdfNavigation(selectedAssetName, pageIndex + 1);
+              }}
+              onDeleteGroup={async (groupIdx, node) => {
+                if (!selectedAssetName) {
+                  return;
+                }
+
+                closeMarkdownTabs(selectedAssetName, collectLeafPaths(node));
+                const nextState = await api.pdf.deleteGroup(selectedAssetName, groupIdx);
+                queryClient.setQueryData(queryKeys.assetState(selectedAssetName), nextState);
+                await queryClient.invalidateQueries({ queryKey: queryKeys.markdownTree(selectedAssetName) });
+              }}
+              onDeleteTutor={async (groupIdx, tutorIdx, node) => {
+                if (!selectedAssetName) {
+                  return;
+                }
+
+                closeMarkdownTabs(selectedAssetName, collectLeafPaths(node));
+                await api.workflows.deleteTutorSession({
+                  assetName: selectedAssetName,
+                  groupIdx,
+                  tutorIdx,
+                });
+                await queryClient.invalidateQueries({ queryKey: queryKeys.assetState(selectedAssetName) });
+                await queryClient.invalidateQueries({ queryKey: queryKeys.markdownTree(selectedAssetName) });
+              }}
+              onDeleteAsk={async (groupIdx, tutorIdx, path) => {
+                if (!selectedAssetName) {
+                  return;
+                }
+
+                closeMarkdownTabs(selectedAssetName, [path]);
+                await api.workflows.deleteQuestion({
+                  assetName: selectedAssetName,
+                  groupIdx,
+                  tutorIdx,
+                  markdownPath: path,
+                });
+                await queryClient.invalidateQueries({ queryKey: queryKeys.assetState(selectedAssetName) });
+                await queryClient.invalidateQueries({ queryKey: queryKeys.markdownTree(selectedAssetName) });
               }}
               onRenameAlias={async (node, alias) => {
                 if (!selectedAssetName) {
@@ -216,44 +343,66 @@ export function SidebarPane({ markdownTree, treeLoading, treeError }: SidebarPan
           ) : null}
         </div>
       </div>
+      <Modal
+        open={settingsModalOpen}
+        onClose={() => {
+          if (settingsSaving) {
+            return;
+          }
+          setSettingsModalOpen(false);
+        }}
+        labelledBy="sidebar-display-settings-title"
+      >
+        <div className="sidebarSettingsModal">
+          <h2 id="sidebar-display-settings-title">sidebar display settings</h2>
+          <div className="form-grid">
+            <label className="form-field">
+              <span>line clamp (1-6)</span>
+              <input
+                type="number"
+                min={1}
+                max={6}
+                value={lineClampDraft}
+                onChange={(event) => setLineClampDraft(event.currentTarget.value)}
+              />
+            </label>
+            <label className="form-field">
+              <span>font size px (10-24)</span>
+              <input
+                type="number"
+                min={10}
+                max={24}
+                value={fontSizeDraft}
+                onChange={(event) => setFontSizeDraft(event.currentTarget.value)}
+              />
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => {
+                if (settingsSaving) {
+                  return;
+                }
+                setSettingsModalOpen(false);
+              }}
+            >
+              cancel
+            </button>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => {
+                void saveDisplaySettings();
+              }}
+              disabled={settingsSaving}
+            >
+              save
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
-}
-
-function flattenOpenableNodes(nodes: MarkdownTreeNode[]): Array<{ path: string; title: string; kind: string }> {
-  const result: Array<{ path: string; title: string; kind: string }> = [];
-
-  for (const node of nodes) {
-    if (node.path) {
-      result.push({
-        path: node.path,
-        title: node.title,
-        kind: node.kind,
-      });
-    }
-
-    if (node.children.length) {
-      result.push(...flattenOpenableNodes(node.children));
-    }
-  }
-
-  return result;
-}
-
-function filterTreeByPaths(nodes: MarkdownTreeNode[], openPaths: Set<string>): MarkdownTreeNode[] {
-  return nodes.flatMap((node) => {
-    const children = filterTreeByPaths(node.children, openPaths);
-    const isOpenLeaf = Boolean(node.path && openPaths.has(node.path));
-
-    if (!isOpenLeaf && children.length === 0) {
-      return [];
-    }
-
-    return [
-      {
-        ...node,
-        children,
-      },
-    ];
-  });
 }

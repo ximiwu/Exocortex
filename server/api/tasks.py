@@ -41,17 +41,19 @@ def get_task(task_id: str, task_manager: TaskManager = Depends(get_task_manager)
 @router.post("/tasks/asset-init", response_model=TaskSummaryModel, status_code=status.HTTP_202_ACCEPTED)
 def submit_asset_init(
     source_file: UploadFile = File(...),
+    markdown_file: UploadFile = File(...),
+    content_list_file: UploadFile = File(...),
     asset_name: str = Form(...),
     asset_subfolder: str | None = Form(None),
-    skip_img2md_markdown_file: UploadFile | None = File(None),
     task_manager: TaskManager = Depends(get_task_manager),
 ) -> TaskSummaryModel:
     task = submit_asset_init_upload_task(
         task_manager=task_manager,
         source_file=source_file,
+        markdown_file=markdown_file,
+        content_list_file=content_list_file,
         asset_name=asset_name,
         asset_subfolder=asset_subfolder,
-        skip_img2md_markdown_file=skip_img2md_markdown_file,
         temp_prefix="exocortex_web_asset_task_",
     )
     return TaskSummaryModel(**task)

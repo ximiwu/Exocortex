@@ -3,7 +3,6 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { useExocortexApi } from "../../app/api/ExocortexApiContext";
 import { queryKeys } from "../../app/api/exocortexApi";
-import { enhanceMarkdownContent } from "../../app/lib/markdown";
 import { queryClient } from "../../app/lib/queryClient";
 import { useAppStore } from "../../app/store/appStore";
 import {
@@ -11,6 +10,7 @@ import {
   groupIdxFromMarkdownPath,
   isInlineTutorSelectionEnabled,
 } from "./tutorSelection";
+import { enhanceMarkdownContent } from "./renderAdapter";
 
 interface MarkdownDocumentProps {
   assetName: string | null;

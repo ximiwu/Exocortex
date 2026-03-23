@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -7,6 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from fastapi import UploadFile
+from server.errors import ApiError
 
 
 @dataclass(frozen=True)
@@ -15,6 +17,7 @@ class PreparedAssetUpload:
     asset_name: str
     cleanup_dir: Path
     rendered_pdf_path: Path | None = None
+    content_list_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,19 @@ def copy_upload(upload: UploadFile, target_dir: Path, *, fallback_name: str) -> 
     with target.open("wb") as handle:
         shutil.copyfileobj(upload.file, handle)
     return target
+
+
+def require_upload_suffix(upload: UploadFile, suffix: str, *, code: str, label: str) -> None:
+    filename = upload.filename or ""
+    if Path(filename).suffix.lower() != suffix.lower():
+        raise ApiError(400, code, f"{label} must be a {suffix} file.")
+
+
+def validate_json_upload(path: Path) -> None:
+    try:
+        json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception as exc:
+        raise ApiError(400, "invalid_content_list_json", "content list file must contain valid JSON.") from exc
 
 
 def resolve_asset_name(
@@ -57,19 +73,22 @@ def parse_asset_name(
 def prepare_asset_upload(
     *,
     source_file: UploadFile,
+    markdown_file: UploadFile,
+    content_list_file: UploadFile,
     asset_name: str,
     asset_subfolder: str | None,
-    skip_img2md_markdown_file: UploadFile | None,
     temp_prefix: str,
     normalize: Callable[[str], str],
 ) -> PreparedAssetUpload:
     cleanup_dir = Path(tempfile.mkdtemp(prefix=temp_prefix))
     try:
-        source_path = copy_upload(source_file, cleanup_dir, fallback_name="source.pdf")
-        rendered_pdf_path: Path | None = None
-        if skip_img2md_markdown_file is not None:
-            rendered_pdf_path = source_path
-            source_path = copy_upload(skip_img2md_markdown_file, cleanup_dir, fallback_name="skip.md")
+        require_upload_suffix(source_file, ".pdf", code="invalid_source_upload", label="source file")
+        require_upload_suffix(markdown_file, ".md", code="invalid_markdown_upload", label="markdown file")
+        require_upload_suffix(content_list_file, ".json", code="invalid_content_list_upload", label="content list file")
+        rendered_pdf_path = copy_upload(source_file, cleanup_dir, fallback_name="source.pdf")
+        source_path = copy_upload(markdown_file, cleanup_dir, fallback_name="source.md")
+        content_list_path = copy_upload(content_list_file, cleanup_dir, fallback_name="content_list.json")
+        validate_json_upload(content_list_path)
         resolved_asset_name = parse_asset_name(
             asset_name,
             normalize=normalize,
@@ -80,6 +99,7 @@ def prepare_asset_upload(
             asset_name=resolved_asset_name,
             cleanup_dir=cleanup_dir,
             rendered_pdf_path=rendered_pdf_path,
+            content_list_path=content_list_path,
         )
     except Exception:
         shutil.rmtree(cleanup_dir, ignore_errors=True)

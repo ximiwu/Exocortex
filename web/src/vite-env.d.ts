@@ -8,3 +8,8 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+declare module "*.worker.js?url";
+declare module "*.worker.min.js?url";
+declare module "*.worker.mjs?url";
+declare module "*.worker.min.mjs?url";

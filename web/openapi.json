@@ -678,6 +678,66 @@
         }
       }
     },
+    "/api/assets/{asset_name}/groups/{group_idx}/tutors/{tutor_idx}": {
+      "delete": {
+        "tags": [
+          "assets"
+        ],
+        "summary": "Delete Tutor Session",
+        "operationId": "delete_tutor_session_api_assets__asset_name__groups__group_idx__tutors__tutor_idx__delete",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          },
+          {
+            "name": "group_idx",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Group Idx"
+            }
+          },
+          {
+            "name": "tutor_idx",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Tutor Idx"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/assets/{asset_name}": {
       "delete": {
         "tags": [
@@ -963,13 +1023,53 @@
         }
       }
     },
-    "/api/assets/{asset_name}/pdf/pages/{page_index}/image": {
+    "/api/assets/{asset_name}/pdf/file": {
       "get": {
         "tags": [
           "pdf"
         ],
-        "summary": "Get Pdf Page Image",
-        "operationId": "get_pdf_page_image_api_assets__asset_name__pdf_pages__page_index__image_get",
+        "summary": "Get Pdf File",
+        "operationId": "get_pdf_file_api_assets__asset_name__pdf_file_get",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assets/{asset_name}/pdf/pages/{page_index}/text-boxes": {
+      "get": {
+        "tags": [
+          "pdf"
+        ],
+        "summary": "Get Page Text Boxes",
+        "operationId": "get_page_text_boxes_api_assets__asset_name__pdf_pages__page_index__text_boxes_get",
         "parameters": [
           {
             "name": "asset_name",
@@ -988,18 +1088,6 @@
               "type": "integer",
               "title": "Page Index"
             }
-          },
-          {
-            "name": "dpi",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 1200,
-              "minimum": 72,
-              "default": 130,
-              "title": "Dpi"
-            }
           }
         ],
         "responses": {
@@ -1007,7 +1095,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PdfPageTextBoxesModel"
+                }
               }
             }
           },
@@ -1521,10 +1611,115 @@
           }
         }
       }
+    },
+    "/api/system/config": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Get App Config",
+        "operationId": "get_app_config_api_system_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConfigModel"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Update App Config",
+        "operationId": "update_app_config_api_system_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAppConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConfigModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AppConfigModel": {
+        "properties": {
+          "themeMode": {
+            "type": "string",
+            "enum": [
+              "light",
+              "dark"
+            ],
+            "title": "Thememode",
+            "default": "light"
+          },
+          "sidebarTextLineClamp": {
+            "type": "integer",
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "title": "Sidebartextlineclamp",
+            "default": 1
+          },
+          "sidebarFontSizePx": {
+            "type": "integer",
+            "maximum": 24.0,
+            "minimum": 10.0,
+            "title": "Sidebarfontsizepx",
+            "default": 14
+          },
+          "tutorReasoningEffort": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ],
+            "title": "Tutorreasoningeffort",
+            "default": "medium"
+          },
+          "tutorWithGlobalContext": {
+            "type": "boolean",
+            "title": "Tutorwithglobalcontext",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "AppConfigModel"
+      },
       "AskTutorWorkflowRequest": {
         "properties": {
           "assetName": {
@@ -1675,7 +1870,7 @@
             "type": "integer",
             "title": "Pageindex"
           },
-          "rect": {
+          "fractionRect": {
             "$ref": "#/components/schemas/RectModel"
           },
           "groupIdx": {
@@ -1694,7 +1889,7 @@
         "required": [
           "blockId",
           "pageIndex",
-          "rect"
+          "fractionRect"
         ],
         "title": "BlockModel"
       },
@@ -1704,6 +1899,16 @@
             "type": "string",
             "contentMediaType": "application/octet-stream",
             "title": "Source File"
+          },
+          "markdown_file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Markdown File"
+          },
+          "content_list_file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Content List File"
           },
           "asset_name": {
             "type": "string",
@@ -1719,28 +1924,13 @@
               }
             ],
             "title": "Asset Subfolder"
-          },
-          "skip_img2md_markdown_file": {
-            "anyOf": [
-              {
-                "type": "string",
-                "contentMediaType": "application/octet-stream"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Skip Img2Md Markdown File"
-          },
-          "compress_enabled": {
-            "type": "boolean",
-            "title": "Compress Enabled",
-            "default": false
           }
         },
         "type": "object",
         "required": [
           "source_file",
+          "markdown_file",
+          "content_list_file",
           "asset_name"
         ],
         "title": "Body_import_asset_api_assets_import_post"
@@ -1752,6 +1942,16 @@
             "contentMediaType": "application/octet-stream",
             "title": "Source File"
           },
+          "markdown_file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Markdown File"
+          },
+          "content_list_file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Content List File"
+          },
           "asset_name": {
             "type": "string",
             "title": "Asset Name"
@@ -1766,23 +1966,13 @@
               }
             ],
             "title": "Asset Subfolder"
-          },
-          "skip_img2md_markdown_file": {
-            "anyOf": [
-              {
-                "type": "string",
-                "contentMediaType": "application/octet-stream"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Skip Img2Md Markdown File"
           }
         },
         "type": "object",
         "required": [
           "source_file",
+          "markdown_file",
+          "content_list_file",
           "asset_name"
         ],
         "title": "Body_submit_asset_init_api_tasks_asset_init_post"
@@ -1862,14 +2052,14 @@
             "type": "integer",
             "title": "Pageindex"
           },
-          "rect": {
+          "fractionRect": {
             "$ref": "#/components/schemas/RectModel"
           }
         },
         "type": "object",
         "required": [
           "pageIndex",
-          "rect"
+          "fractionRect"
         ],
         "title": "CreateBlockRequest"
       },
@@ -2159,6 +2349,43 @@
         ],
         "title": "PdfMetadataModel"
       },
+      "PdfPageTextBoxesModel": {
+        "properties": {
+          "pageIndex": {
+            "type": "integer",
+            "title": "Pageindex"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PdfTextBoxModel"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pageIndex"
+        ],
+        "title": "PdfPageTextBoxesModel"
+      },
+      "PdfTextBoxModel": {
+        "properties": {
+          "pageIndex": {
+            "type": "integer",
+            "title": "Pageindex"
+          },
+          "fractionRect": {
+            "$ref": "#/components/schemas/RectModel"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pageIndex",
+          "fractionRect"
+        ],
+        "title": "PdfTextBoxModel"
+      },
       "ReTutorWorkflowRequest": {
         "properties": {
           "assetName": {
@@ -2314,14 +2541,12 @@
           "result": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/TaskResultModel"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Result"
+            ]
           }
         },
         "type": "object",
@@ -2344,6 +2569,17 @@
           "kind": {
             "type": "string",
             "title": "Kind"
+          },
+          "assetName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assetname"
           },
           "status": {
             "type": "string",
@@ -2382,7 +2618,36 @@
           "payload": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "$ref": "#/components/schemas/TaskFailurePayloadModel"
+              },
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "items": {},
+                      "type": "array"
+                    },
+                    {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "type": "object"
               },
               {
@@ -2406,6 +2671,128 @@
           "timestamp"
         ],
         "title": "TaskEventModel"
+      },
+      "TaskFailurePayloadModel": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "exceptionType": {
+            "type": "string",
+            "title": "Exceptiontype"
+          },
+          "statusCode": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statuscode"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "exceptionType"
+        ],
+        "title": "TaskFailurePayloadModel"
+      },
+      "TaskResultModel": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "artifactPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifactpath"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskFailurePayloadModel"
+              },
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "items": {},
+                      "type": "array"
+                    },
+                    {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "TaskResultModel"
       },
       "TaskSummaryModel": {
         "properties": {
@@ -2555,10 +2942,107 @@
             },
             "type": "object",
             "title": "Markdownscrollfractions"
+          },
+          "sidebarWidthRatio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sidebarwidthratio"
+          },
+          "rightRailWidthRatio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rightrailwidthratio"
           }
         },
         "type": "object",
         "title": "UiStateModel"
+      },
+      "UpdateAppConfigRequest": {
+        "properties": {
+          "themeMode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "light",
+                  "dark"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thememode"
+          },
+          "sidebarTextLineClamp": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 6.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sidebartextlineclamp"
+          },
+          "sidebarFontSizePx": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 24.0,
+                "minimum": 10.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sidebarfontsizepx"
+          },
+          "tutorReasoningEffort": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tutorreasoningeffort"
+          },
+          "tutorWithGlobalContext": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tutorwithglobalcontext"
+          }
+        },
+        "type": "object",
+        "title": "UpdateAppConfigRequest"
       },
       "UpdateMarkdownNodeAliasRequest": {
         "properties": {
@@ -2711,6 +3195,28 @@
               }
             ],
             "title": "Markdownscrollfractions"
+          },
+          "sidebarWidthRatio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sidebarwidthratio"
+          },
+          "rightRailWidthRatio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rightrailwidthratio"
           }
         },
         "type": "object",

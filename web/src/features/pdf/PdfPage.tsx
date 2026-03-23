@@ -1,45 +1,46 @@
 import {
   useEffect,
+  useRef,
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 
-import { buildPageImageUrl } from "../../app/api/exocortexApi";
 import { DragSelectionOverlay, type SelectionRect } from "../selection";
 import { BLOCK_VISUAL_STYLES } from "./constants";
 import {
+  collectContainedTextBoxesForPage,
+  getBlockFractionRect,
   normalizedPageRectToCssRect,
-  toCssRect,
 } from "./geometry";
+import {
+  ensureRenderedBitmap,
+  hasExactCachedBitmap,
+  peekCachedBitmap,
+  type PdfRenderQuality,
+} from "./renderCache";
 import type {
   AppMode,
   NormalizedPageRect,
   PdfBlockRecord,
   PdfPageLayout,
-  PdfPageSize,
+  PdfTextBox,
 } from "./types";
 
 interface PdfPageProps {
   assetName: string;
   appMode: AppMode;
   pageLayout: PdfPageLayout;
-  pageSize: PdfPageSize;
-  zoom: number;
-  renderDpi: number;
   blocks: PdfBlockRecord[];
+  textBoxes: PdfTextBox[];
   hoveredBlockId: number | null;
   hoveredGroupIdx: number | null;
   selectionOrderByBlock: Map<number, number>;
   compressSelection: NormalizedPageRect | null;
   mergeSelectionAction: {
     pageIndex: number;
-    rect: {
-      x: number;
-      y: number;
-      width: number;
-      height: number;
-    };
+    rect: NormalizedPageRect;
     totalSelectedCount: number;
   } | null;
   mergeSelectionBusy: boolean;
@@ -52,20 +53,20 @@ interface PdfPageProps {
   onSurfacePointerCancel: () => void;
   onBlockClick: (block: PdfBlockRecord) => void;
   onBlockDelete: (block: PdfBlockRecord) => void;
-  onMergeSelectionByImage: () => void;
   onMergeSelectionByMarkdown: () => void;
   onBlockHoverEnter: (block: PdfBlockRecord) => void;
   onBlockHoverLeave: (block: PdfBlockRecord) => void;
+  pdfDocument: PDFDocumentProxy | null;
+  renderQuality: PdfRenderQuality;
+  zoom: number;
 }
 
 export function PdfPage({
   assetName,
   appMode,
   pageLayout,
-  pageSize,
-  zoom,
-  renderDpi,
   blocks,
+  textBoxes,
   hoveredBlockId,
   hoveredGroupIdx,
   selectionOrderByBlock,
@@ -81,17 +82,128 @@ export function PdfPage({
   onSurfacePointerCancel,
   onBlockClick,
   onBlockDelete,
-  onMergeSelectionByImage,
   onMergeSelectionByMarkdown,
   onBlockHoverEnter,
   onBlockHoverLeave,
+  pdfDocument,
+  renderQuality,
+  zoom,
 }: PdfPageProps) {
-  const imageSrc = buildPageImageUrl(assetName, pageLayout.pageIndex, renderDpi);
-  const [loaded, setLoaded] = useState(false);
+  const canvasRefs = useRef<[HTMLCanvasElement | null, HTMLCanvasElement | null]>([null, null]);
+  const activeBufferIndexRef = useRef(0);
+  const displayedBitmapKeyRef = useRef<string | null>(null);
+  const [rendered, setRendered] = useState(false);
+  const [renderingPreview, setRenderingPreview] = useState(false);
+
+  function swapVisibleBuffer(nextVisibleIndex: number): void {
+    activeBufferIndexRef.current = nextVisibleIndex;
+    canvasRefs.current.forEach((canvas, index) => {
+      if (!canvas) {
+        return;
+      }
+      applyBufferVisibility(canvas, index === nextVisibleIndex);
+    });
+  }
 
   useEffect(() => {
-    setLoaded(false);
-  }, [imageSrc]);
+    const [primaryCanvas, secondaryCanvas] = canvasRefs.current;
+    if (!primaryCanvas || !secondaryCanvas || !pdfDocument) {
+      setRendered(false);
+      setRenderingPreview(false);
+      displayedBitmapKeyRef.current = null;
+      return;
+    }
+
+    const controller = new AbortController();
+    const pixelRatio = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+    const request = {
+      assetName,
+      pageIndex: pageLayout.pageIndex,
+      pageWidth: pageLayout.width,
+      pageHeight: pageLayout.height,
+      zoom,
+      pixelRatio,
+      quality: renderQuality,
+    } as const;
+    const visibleCanvas = canvasRefs.current[activeBufferIndexRef.current];
+    const hiddenCanvas = canvasRefs.current[(activeBufferIndexRef.current + 1) % 2];
+    if (!visibleCanvas || !hiddenCanvas) {
+      return;
+    }
+
+    const cached = peekCachedBitmap(request);
+    const hasExactCached = hasExactCachedBitmap(request);
+    if (cached) {
+      if (displayedBitmapKeyRef.current !== cached.key) {
+        const visibleContext = visibleCanvas.getContext("2d");
+        if (visibleContext) {
+          drawBitmapToCanvas(
+            visibleCanvas,
+            visibleContext,
+            cached.bitmap,
+            pageLayout.width,
+            pageLayout.height,
+          );
+          displayedBitmapKeyRef.current = cached.key;
+          setRendered(true);
+          setRenderingPreview(cached.quality !== "final");
+        }
+      }
+      if (hasExactCached && (cached.quality === "final" || renderQuality !== "final")) {
+        return () => {
+          controller.abort();
+        };
+      }
+    } else {
+      setRendered(false);
+      setRenderingPreview(renderQuality === "preview");
+      displayedBitmapKeyRef.current = null;
+    }
+
+    void ensureRenderedBitmap(pdfDocument, request, {
+      priority: renderQuality === "final" ? 100 : 50,
+      signal: controller.signal,
+    })
+      .then((entry) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        const nextVisibleIndex = (activeBufferIndexRef.current + 1) % 2;
+        const nextVisibleCanvas = canvasRefs.current[nextVisibleIndex];
+        const nextVisibleContext = nextVisibleCanvas?.getContext("2d");
+        if (!nextVisibleCanvas || !nextVisibleContext) {
+          return;
+        }
+        drawBitmapToCanvas(
+          nextVisibleCanvas,
+          nextVisibleContext,
+          entry.bitmap,
+          pageLayout.width,
+          pageLayout.height,
+        );
+        displayedBitmapKeyRef.current = entry.key;
+        swapVisibleBuffer(nextVisibleIndex);
+        setRendered(true);
+        setRenderingPreview(entry.quality !== "final");
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          console.warn("Failed to render PDF page", err);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [
+    assetName,
+    pdfDocument,
+    pageLayout.pageIndex,
+    pageLayout.width,
+    pageLayout.height,
+    renderQuality,
+    zoom,
+  ]);
 
   const pageStyle: CSSProperties = {
     top: pageLayout.top,
@@ -99,34 +211,51 @@ export function PdfPage({
     height: pageLayout.height,
   };
 
-  const compressRect = compressSelection
-    ? normalizedPageRectToCssRect(compressSelection, pageSize)
-    : null;
+  const compressRect = compressSelection ? normalizedPageRectToCssRect(compressSelection, pageLayout) : null;
   const mergeActionStyle =
     mergeSelectionAction != null
-      ? buildMergeActionStyle(toCssRect(mergeSelectionAction.rect, zoom))
+      ? buildMergeActionStyle(normalizedPageRectToCssRect(mergeSelectionAction.rect, pageLayout))
       : null;
+  const containedTextBoxes = collectContainedTextBoxesForPage(
+    pageLayout.pageIndex,
+    blocks,
+    textBoxes,
+  );
 
   return (
     <article className="pdf-page" style={pageStyle}>
       <div className="pdf-page__frame">
-        <img
-          alt={`Page ${pageLayout.pageIndex + 1}`}
-          className="pdf-page__image"
-          draggable={false}
-          loading="lazy"
-          onLoad={() => {
-            setLoaded(true);
+        <canvas
+          ref={(element) => {
+            canvasRefs.current[0] = element;
+            if (element) {
+              applyBufferVisibility(element, 0 === activeBufferIndexRef.current);
+            }
           }}
-          src={imageSrc}
-          style={{
-            width: pageLayout.width,
-            height: pageLayout.height,
-          }}
+          aria-hidden="true"
+          className="pdf-page__canvas"
+          data-buffer-index="0"
+          role="presentation"
         />
-        {!loaded ? (
+        <canvas
+          ref={(element) => {
+            canvasRefs.current[1] = element;
+            if (element) {
+              applyBufferVisibility(element, 1 === activeBufferIndexRef.current);
+            }
+          }}
+          aria-hidden="true"
+          className="pdf-page__canvas"
+          data-buffer-index="1"
+          role="presentation"
+        />
+        {!rendered ? (
           <div className="pdf-page__loading">
             <span>Rendering page {pageLayout.pageIndex + 1}</span>
+          </div>
+        ) : renderingPreview ? (
+          <div className="pdf-page__loading pdf-page__loading--preview">
+            <span>Previewing page {pageLayout.pageIndex + 1}</span>
           </div>
         ) : null}
         <div className="pdf-page__label">Page {pageLayout.pageIndex + 1}</div>
@@ -165,26 +294,6 @@ export function PdfPage({
               style={mergeActionStyle}
             >
               <button
-                className="pdf-page__mergeAction pdf-page__mergeAction--image"
-                disabled={mergeSelectionBusy}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onMergeSelectionByImage();
-                }}
-                onPointerDown={(event) => {
-                  event.stopPropagation();
-                }}
-                title={
-                  mergeSelectionAction.totalSelectedCount > 1
-                    ? `Merge ${mergeSelectionAction.totalSelectedCount} selected blocks by image`
-                    : "Create a group from the selected block by image"
-                }
-                type="button"
-              >
-                Merge by image
-              </button>
-              <button
                 className="pdf-page__mergeAction pdf-page__mergeAction--markdown"
                 disabled={mergeSelectionBusy}
                 onClick={(event) => {
@@ -206,9 +315,26 @@ export function PdfPage({
               </button>
             </div>
           ) : null}
+          {containedTextBoxes.map((textBox, index) => {
+            const rect = normalizedPageRectToCssRect(textBox.fractionRect, pageLayout);
+            return (
+              <div
+                aria-hidden="true"
+                className="pdf-page__textBox"
+                data-testid="pdf-text-box-overlay"
+                key={`${textBox.pageIndex}:${textBox.fractionRect.x}:${textBox.fractionRect.y}:${textBox.fractionRect.width}:${textBox.fractionRect.height}:${index}`}
+                style={{
+                  left: rect.x,
+                  top: rect.y,
+                  width: rect.width,
+                  height: rect.height,
+                }}
+              />
+            );
+          })}
           {blocks.map((block) => {
             const variant = blockVariant(block, hoveredBlockId, hoveredGroupIdx, selectionOrderByBlock);
-            const rect = toCssRect(block.rect, zoom);
+            const rect = normalizedPageRectToCssRect(getBlockFractionRect(block), pageLayout);
             const selectionIndex = selectionOrderByBlock.get(block.blockId) ?? null;
             const visual = BLOCK_VISUAL_STYLES[variant];
             const style: CSSProperties = {
@@ -288,6 +414,27 @@ export function PdfPage({
       </div>
     </article>
   );
+}
+
+function drawBitmapToCanvas(
+  canvas: HTMLCanvasElement,
+  context: CanvasRenderingContext2D,
+  bitmap: HTMLCanvasElement,
+  cssWidth: number,
+  cssHeight: number,
+): void {
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  canvas.style.width = `${cssWidth}px`;
+  canvas.style.height = `${cssHeight}px`;
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height);
+}
+
+function applyBufferVisibility(canvas: HTMLCanvasElement, visible: boolean): void {
+  canvas.style.opacity = visible ? "1" : "0";
+  canvas.style.visibility = visible ? "visible" : "hidden";
+  canvas.style.zIndex = visible ? "1" : "0";
 }
 
 function blockVariant(

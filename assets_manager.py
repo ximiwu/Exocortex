@@ -9,10 +9,19 @@ import stat
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterable
 
-from exocortex_core.contracts import AssetInitResult, BlockData, BlockRecord, GroupRecord
+from exocortex_core.contracts import (
+    AssetInitResult,
+    BlockData,
+    BlockRecord,
+    BlockRect,
+    GroupRecord,
+    COORDINATE_SPACE_PAGE_FRACTION,
+)
+from exocortex_core.fs import atomic_write_text
 from exocortex_core.markdown_web import render_markdown_asset_to_pdf
 from exocortex_core.pdf_images import (
     crop_blocks_to_images,
+    get_page_pixel_sizes,
     render_pdf_to_png_files,
     stack_images_vertically,
 )
@@ -20,6 +29,8 @@ from exocortex_core.settings import (
     ASSETS_ROOT,
     BUG_FINDER_GEMINI_PROMPT,
     CODEX_MODEL,
+    CODEX_REASONING_HIGH,
+    CODEX_REASONING_LOW,
     CODEX_REASONING_MEDIUM,
     CODEX_REASONING_XHIGH,
     ENHANCER_CODEX_PROMPT,
@@ -43,9 +54,11 @@ from agent_manager import (
     AgentJob,
     RunnerConfig,
     clean_markdown_file as _agent_clean_markdown_file,
+    create_workspace,
     merge_outputs,
     run_agent_job,
     run_agent_jobs,
+    run_codex_capture_last_message,
 )
 
 
@@ -140,12 +153,8 @@ def save_asset_config(asset_name: str, data: dict[str, object]) -> Path:
     Persist per-asset UI config using an atomic replace.
     """
     path = get_asset_config_path(asset_name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".tmp")
     serialized = json.dumps(data, ensure_ascii=False, indent=2)
-    tmp_path.write_text(serialized, encoding="utf-8")
-    tmp_path.replace(path)
-    return path
+    return atomic_write_text(path, serialized)
 
 
 def get_group_data_dir(asset_name: str) -> Path:
@@ -194,12 +203,8 @@ def save_group_record(asset_name: str, record: GroupRecord) -> Path:
     Persist a group record for an asset using an atomic replace.
     """
     path = get_group_record_path(asset_name, record.group_idx)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".tmp")
     serialized = json.dumps(record.to_dict(), ensure_ascii=False, indent=2)
-    tmp_path.write_text(serialized, encoding="utf-8")
-    tmp_path.replace(path)
-    return path
+    return atomic_write_text(path, serialized)
 
 
 def create_group_record(asset_name: str, block_ids: list[int], group_idx: int | None = None) -> GroupRecord:
@@ -320,10 +325,7 @@ def _markdown_alias_path(markdown_path: Path) -> Path:
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(text, encoding="utf-8", newline="\n")
-    tmp_path.replace(path)
+    atomic_write_text(path, text, newline="\n")
 
 
 def _set_markdown_alias(markdown_path: Path, alias: str) -> None:
@@ -351,6 +353,21 @@ def _first_line_alias(markdown_text: str) -> str:
         if stripped:
             return stripped
     return ""
+
+
+def _flatten_prompt_text(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "").strip()
+
+
+def _normalize_reasoning_effort(reasoning_effort: str) -> str:
+    if reasoning_effort in {
+        CODEX_REASONING_LOW,
+        CODEX_REASONING_MEDIUM,
+        CODEX_REASONING_HIGH,
+        CODEX_REASONING_XHIGH,
+    }:
+        return reasoning_effort
+    return CODEX_REASONING_MEDIUM
 
 
 def _safe_rmtree(path: Path) -> None:
@@ -487,8 +504,8 @@ def _render_blocks_to_images(
     """
     Render each block rect to a Pillow image cropped from its page(s).
 
-    Block coordinates are stored in reference_dpi space (GUI reference render DPI) and must
-    be scaled to the target renderer DPI before cropping.
+    Block coordinates are stored as per-page fractions and are converted back into the
+    reference render space before cropping.
     """
     return crop_blocks_to_images(
         pdf_path,
@@ -529,6 +546,158 @@ def list_assets() -> list[str]:
     return sorted(dict.fromkeys(assets))
 
 
+def _block_rect_to_fraction(record: BlockRecord, page_sizes: list[tuple[int, int]]) -> BlockRect:
+    if record.page_index < 0 or record.page_index >= len(page_sizes):
+        return record.rect
+
+    width_ref, height_ref = page_sizes[record.page_index]
+    width_ref_value = float(width_ref)
+    height_ref_value = float(height_ref)
+    if width_ref_value <= 0 or height_ref_value <= 0:
+        return BlockRect(x=0.0, y=0.0, width=0.0, height=0.0)
+
+    x0_ref = min(max(float(record.rect.x), 0.0), width_ref_value)
+    y0_ref = min(max(float(record.rect.y), 0.0), height_ref_value)
+    x1_ref = min(max(float(record.rect.x + record.rect.width), 0.0), width_ref_value)
+    y1_ref = min(max(float(record.rect.y + record.rect.height), 0.0), height_ref_value)
+
+    return BlockRect(
+        x=x0_ref / width_ref_value,
+        y=y0_ref / height_ref_value,
+        width=max(0.0, x1_ref - x0_ref) / width_ref_value,
+        height=max(0.0, y1_ref - y0_ref) / height_ref_value,
+    )
+
+
+def _parse_content_list_items(payload: object) -> list[object]:
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        items = payload.get("items")
+        if isinstance(items, list):
+            return items
+    raise ValueError("content list JSON must be an array of items or an object with an 'items' array.")
+
+
+def _require_content_list_number(value: object, *, field_name: str, item_index: int) -> float:
+    try:
+        return float(value)
+    except Exception as exc:
+        raise ValueError(f"content list item {item_index} has an invalid {field_name} value.") from exc
+
+
+def _normalize_content_list_entry(
+    entry: object,
+    *,
+    item_index: int,
+    page_count: int,
+) -> dict[str, object]:
+    if not isinstance(entry, dict):
+        raise ValueError(f"content list item {item_index} must be an object.")
+
+    try:
+        page_index = int(entry["page_idx"])
+    except Exception as exc:
+        raise ValueError(f"content list item {item_index} must include an integer page_idx field.") from exc
+
+    if page_index < 0 or page_index >= page_count:
+        raise ValueError(
+            f"content list item {item_index} references page_idx {page_index}, which is outside the PDF page range."
+        )
+
+    bbox = entry.get("bbox")
+    if not isinstance(bbox, list) or len(bbox) != 4:
+        raise ValueError(f"content list item {item_index} must include a bbox array with four numbers.")
+
+    left = _require_content_list_number(bbox[0], field_name="bbox[0]", item_index=item_index)
+    top = _require_content_list_number(bbox[1], field_name="bbox[1]", item_index=item_index)
+    right = _require_content_list_number(bbox[2], field_name="bbox[2]", item_index=item_index)
+    bottom = _require_content_list_number(bbox[3], field_name="bbox[3]", item_index=item_index)
+    if right < left or bottom < top:
+        raise ValueError(f"content list item {item_index} has an invalid bbox ordering.")
+
+    normalized_entry = dict(entry)
+    normalized_entry["page_idx"] = page_index + 1
+    normalized_entry.pop("bbox", None)
+    normalized_entry["x"] = left / 1000.0
+    normalized_entry["y"] = top / 1000.0
+    normalized_entry["width"] = (right - left) / 1000.0
+    normalized_entry["height"] = (bottom - top) / 1000.0
+    return normalized_entry
+
+
+def write_unified_content_list(
+    *,
+    source_path: str | Path,
+    pdf_path: str | Path,
+    target_path: str | Path,
+) -> int:
+    resolved_source_path = Path(source_path)
+    resolved_pdf_path = Path(pdf_path)
+    resolved_target_path = Path(target_path)
+    if not resolved_pdf_path.is_file():
+        raise ValueError("Cannot normalize content list without a readable PDF.")
+    payload = json.loads(resolved_source_path.read_text(encoding="utf-8-sig"))
+    page_count = len(get_page_pixel_sizes(resolved_pdf_path, dpi=REFERENCE_RENDER_DPI))
+    if page_count <= 0:
+        raise ValueError("Cannot normalize content list without a readable PDF.")
+
+    normalized_items = [
+        _normalize_content_list_entry(entry, item_index=item_index, page_count=page_count)
+        for item_index, entry in enumerate(_parse_content_list_items(payload), start=1)
+    ]
+    serialized = json.dumps(normalized_items, ensure_ascii=False, indent=2)
+    atomic_write_text(resolved_target_path, serialized)
+    return len(normalized_items)
+
+
+def save_asset_content_lists(
+    *,
+    asset_dir: str | Path,
+    source_path: str | Path,
+    pdf_path: str | Path,
+) -> tuple[Path, Path, int]:
+    resolved_asset_dir = Path(asset_dir)
+    resolved_source_path = Path(source_path)
+    content_list_path = resolved_asset_dir / "content_list.json"
+    content_list_unified_path = resolved_asset_dir / "content_list_unified.json"
+    atomic_write_text(content_list_path, resolved_source_path.read_text(encoding="utf-8-sig"))
+    item_count = write_unified_content_list(
+        source_path=resolved_source_path,
+        pdf_path=pdf_path,
+        target_path=content_list_unified_path,
+    )
+    return content_list_path, content_list_unified_path, item_count
+
+
+def _normalize_block_data_coordinate_space(asset_name: str, data: BlockData) -> BlockData:
+    if data.coordinate_space == COORDINATE_SPACE_PAGE_FRACTION:
+        return data
+
+    pdf_path = get_asset_pdf_path(asset_name)
+    if not pdf_path.is_file():
+        return data
+
+    page_sizes = get_page_pixel_sizes(pdf_path, dpi=REFERENCE_RENDER_DPI)
+    normalized_blocks = [
+        BlockRecord(
+            block_id=record.block_id,
+            page_index=record.page_index,
+            rect=_block_rect_to_fraction(record, page_sizes),
+            group_idx=record.group_idx,
+        )
+        for record in data.blocks
+    ]
+    normalized_data = BlockData(
+        blocks=normalized_blocks,
+        merge_order=list(data.merge_order),
+        next_block_id=data.next_block_id,
+        coordinate_space=COORDINATE_SPACE_PAGE_FRACTION,
+    )
+    save_block_data(asset_name, normalized_data)
+    return normalized_data
+
+
 def load_block_data(asset_name: str) -> BlockData:
     """
     Load block data for an asset. Returns empty data if file is missing or invalid.
@@ -538,7 +707,8 @@ def load_block_data(asset_name: str) -> BlockData:
         return BlockData.empty()
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        return BlockData.from_dict(raw)
+        data = BlockData.from_dict(raw)
+        return _normalize_block_data_coordinate_space(asset_name, data)
     except Exception as exc:  # pragma: no cover - defensive path
         logging.warning("Failed to load block data for '%s': %s", asset_name, exc)
         return BlockData.empty()
@@ -549,12 +719,8 @@ def save_block_data(asset_name: str, data: BlockData) -> Path:
     Persist block data for an asset using an atomic replace.
     """
     path = get_block_data_path(asset_name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".tmp")
     serialized = json.dumps(data.to_dict(), ensure_ascii=False, indent=2)
-    tmp_path.write_text(serialized, encoding="utf-8")
-    tmp_path.replace(path)
-    return path
+    return atomic_write_text(path, serialized)
 
 
 def _resolve_asset_img2md_output_markdown(asset_name: str) -> Path:
@@ -872,6 +1038,8 @@ def ask_tutor(
     group_idx: int,
     tutor_idx: int,
     *,
+    reasoning_effort: str = CODEX_REASONING_MEDIUM,
+    with_global_context: bool = True,
     event_callback: WorkflowEventCallback | None = None,
 ) -> Path:
     """
@@ -882,11 +1050,10 @@ def ask_tutor(
     2) Invoke tutor agent with the question.
     3) Move output.md into ask_history as the next sequential markdown (1, 2, ...), clean it, and prefix with Q/A headings.
     """
-    normalized_question = (
-        question.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "").strip()
-    )
+    normalized_question = _flatten_prompt_text(question)
     if not normalized_question:
         raise ValueError("Question is required.")
+    resolved_reasoning_effort = _normalize_reasoning_effort(reasoning_effort)
     _emit_asset_event(
         event_callback,
         "started",
@@ -945,6 +1112,52 @@ def ask_tutor(
     ask_history_dir.mkdir(parents=True, exist_ok=True)
     next_idx = _next_markdown_index(ask_history_dir)
     output_name = f"{next_idx}.md"
+    moved_output = ask_history_dir / output_name
+
+    if not with_global_context:
+        _emit_asset_event(
+            event_callback,
+            "log",
+            f"Running tutor without global context for asset '{asset_name}', group {group_idx}, tutor {tutor_idx}.",
+            payload=_asset_payload(
+                asset_name,
+                group_idx=group_idx,
+                tutor_idx=tutor_idx,
+                extra={"reasoning_effort": resolved_reasoning_effort, "with_global_context": False},
+            ),
+        )
+        workspace = create_workspace()
+        prompt = _flatten_prompt_text(tutor_input_path.read_text(encoding="utf-8")) + normalized_question
+        answer = run_codex_capture_last_message(
+            prompt,
+            workspace,
+            output_last_message_path=workspace / "last_message.md",
+            model=CODEX_MODEL,
+            model_reasoning_effort=resolved_reasoning_effort,
+            new_console=True,
+        )
+        moved_output.write_text(answer, encoding="utf-8", newline="\n")
+        _clean_markdown_file(moved_output)
+        answer = moved_output.read_text(encoding="utf-8")
+        header = f"## 提问：\n\n{normalized_question}\n\n## 回答：\n\n"
+        moved_output.write_text(header + answer.lstrip(), encoding="utf-8", newline="\n")
+        try:
+            _set_markdown_alias(moved_output, normalized_question)
+        except Exception as exc:  # pragma: no cover - best-effort UX
+            logger.warning("Failed to write ask_history alias at %s: %s", moved_output, exc)
+        _emit_asset_event(
+            event_callback,
+            "completed",
+            f"Completed tutor flow for asset '{asset_name}', group {group_idx}, tutor {tutor_idx}.",
+            artifact_path=moved_output,
+            payload=_asset_payload(
+                asset_name,
+                group_idx=group_idx,
+                tutor_idx=tutor_idx,
+                extra={"question": normalized_question},
+            ),
+        )
+        return moved_output
 
     reference_files, reference_rename = _collect_reference_files(
         asset_name,
@@ -958,7 +1171,7 @@ def ask_tutor(
                 runner="codex",
                 prompt_path=TUTOR_CODEX_PROMPT,
                 model=CODEX_MODEL,
-                reasoning_effort=CODEX_REASONING_MEDIUM,
+                reasoning_effort=resolved_reasoning_effort,
                 new_console=True,
                 extra_message=f"{normalized_question}把讲解保存至 output/output.md",
             )
@@ -1723,6 +1936,7 @@ def asset_init(
     progress_callback: Callable[[str], None] | None = None,
     *,
     rendered_pdf_path: str | Path | None = None,
+    content_list_path: str | Path | None = None,
     event_callback: WorkflowEventCallback | None = None,
 ) -> AssetInitResult:
     """
@@ -1810,10 +2024,28 @@ def asset_init(
         else:
             _notify("Rendering markdown to PDF...", progress=0.2)
             raw_pdf_path = _render_markdown_to_pdf(output_md, asset_dir / "raw.pdf")
+        if content_list_path is not None:
+            _notify("Saving content list JSON...", progress=0.24)
+            saved_path, unified_path, item_count = save_asset_content_lists(
+                asset_dir=asset_dir,
+                source_path=content_list_path,
+                pdf_path=raw_pdf_path,
+            )
+            _notify(f"Stored {saved_path.name}.")
+            _notify(f"Stored {unified_path.name} with {item_count} item(s).")
     else:
         _notify("Copying PDF and preparing directories...", progress=0.05)
         logger.info("Preparing asset '%s' from %s", resolved_asset_name, source_path)
         raw_pdf_path = _copy_raw_pdf(source_path, asset_dir)
+        if content_list_path is not None:
+            _notify("Saving content list JSON...", progress=0.08)
+            saved_path, unified_path, item_count = save_asset_content_lists(
+                asset_dir=asset_dir,
+                source_path=content_list_path,
+                pdf_path=raw_pdf_path,
+            )
+            _notify(f"Stored {saved_path.name}.")
+            _notify(f"Stored {unified_path.name} with {item_count} item(s).")
         _clean_directory(references_dir)
 
         images_dir = asset_dir / "img2md_images"

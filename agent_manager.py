@@ -352,23 +352,78 @@ def run_codex(
         creation_flags = subprocess.CREATE_NEW_CONSOLE
 
     return subprocess.run(
-        [
+        _build_codex_exec_command(
             codex_exe,
-            "exec",
-            "--skip-git-repo-check",
-            "--sandbox",
-            "danger-full-access",
-            "--model",
-            model,
-            "-c",
-            f'model_reasoning_effort="{model_reasoning_effort}"',
-            "--",
-            message,
-        ],
+            model=model,
+            model_reasoning_effort=model_reasoning_effort,
+            message=message,
+        ),
         cwd=workdir,
         check=True,
         creationflags=creation_flags,
     )
+
+
+def _build_codex_exec_command(
+    codex_exe: str,
+    *,
+    model: str,
+    model_reasoning_effort: str,
+    message: str,
+    output_last_message_path: Path | None = None,
+) -> list[str]:
+    command = [
+        codex_exe,
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "danger-full-access",
+        "--model",
+        model,
+        "-c",
+        f'model_reasoning_effort="{model_reasoning_effort}"',
+    ]
+    if output_last_message_path is not None:
+        command.extend(["--output-last-message", str(output_last_message_path)])
+    command.extend(["--", message])
+    return command
+
+
+def run_codex_capture_last_message(
+    message: str,
+    workdir: Path,
+    *,
+    output_last_message_path: Path,
+    model: str = CODEX_MODEL,
+    model_reasoning_effort: str = "high",
+    new_console: bool = False,
+) -> str:
+    codex_exe = shutil.which("codex")
+    if not codex_exe:
+        path_env = os.environ.get("PATH", "")
+        raise FileNotFoundError(f"`codex` not found on PATH; current PATH={path_env}")
+
+    output_last_message_path.parent.mkdir(parents=True, exist_ok=True)
+
+    creation_flags = 0
+    if new_console and hasattr(subprocess, "CREATE_NEW_CONSOLE"):
+        creation_flags = subprocess.CREATE_NEW_CONSOLE
+
+    subprocess.run(
+        _build_codex_exec_command(
+            codex_exe,
+            model=model,
+            model_reasoning_effort=model_reasoning_effort,
+            message=message,
+            output_last_message_path=output_last_message_path,
+        ),
+        cwd=workdir,
+        check=True,
+        creationflags=creation_flags,
+    )
+    if not output_last_message_path.is_file():
+        raise FileNotFoundError(f"Codex last message not found: {output_last_message_path}")
+    return output_last_message_path.read_text(encoding="utf-8")
 
 
 def run_gemini(

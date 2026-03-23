@@ -25,6 +25,7 @@ from server.domain.workflows.contracts import (
 from server.errors import ApiError
 from server.tasking import JsonObject, TaskContext, TaskManager, TaskResult
 
+from . import system as system_service
 from .assets import normalize_asset_name, resolve_asset_dir, resolve_relative_file
 
 
@@ -147,6 +148,7 @@ def submit_asset_init_task(
         asset_name=normalized,
         source_path=command.source_path,
         rendered_pdf_path=command.rendered_pdf_path,
+        content_list_path=command.content_list_path,
     )
 
     def _runner(context: TaskContext) -> TaskResult:
@@ -210,12 +212,15 @@ def submit_ask_tutor_task(
     question: str,
 ) -> JsonObject:
     normalized = normalize_asset_name(asset_name)
+    app_config = system_service.get_app_config()
     command = TutorQuestionCommand(
         kind="ask_tutor",
         asset_name=normalized,
         group_idx=group_idx,
         tutor_idx=tutor_idx,
         question=question,
+        reasoning_effort=app_config.tutorReasoningEffort,
+        with_global_context=app_config.tutorWithGlobalContext,
     )
 
     def _runner(context: TaskContext) -> TaskResult:

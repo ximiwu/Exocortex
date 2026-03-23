@@ -1,8 +1,5 @@
 ﻿## 任务
-output/output.md 在md渲染器中，latex公式渲染出错了，或者没有渲染。仔细检查然后修好它。
-提示：
-如果有{aligned}块，拆成多个$$包裹的公式块
-latex公式要用$包裹，用其他符号包裹会导致无法渲染
+output/output.md 的latex公式渲染出错了，仔细检查然后修好它。如果有{aligned}块，拆成多个$$包裹的公式块。如果有latex公式被`包裹，改成用$包裹
 
 
 ## File I/O Protocol (UTF-8 Enforced)

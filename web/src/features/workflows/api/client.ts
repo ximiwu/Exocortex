@@ -11,15 +11,19 @@ import type {
   TutorSession,
 } from "../../../generated/contracts";
 import type {
+  AppSystemConfig,
+  AppSystemConfigUpdate,
   BugFinderTaskPayload,
   ClientCapabilities,
   CompressTaskPayload,
   CreateTutorSessionPayload,
   DeleteQuestionPayload,
+  DeleteTutorSessionInput,
   FixLatexTaskPayload,
   GroupTaskPayload,
   ImportAssetPayload,
   IntegrateTaskPayload,
+  PdfPageTextBoxes,
   TutorTaskPayload,
 } from "./schema";
 import { createMockExocortexApi } from "./mockClient";
@@ -27,6 +31,8 @@ import { createMockExocortexApi } from "./mockClient";
 export interface ExocortexClient {
   readonly mode: "live" | "mock";
   readonly capabilities: ClientCapabilities;
+  getSystemConfig(): Promise<AppSystemConfig>;
+  updateSystemConfig(config: AppSystemConfigUpdate): Promise<AppSystemConfig>;
   listAssets(): Promise<AssetSummary[]>;
   getAssetState(assetName: string): Promise<AssetState>;
   getMarkdownTree(assetName: string): Promise<MarkdownTreeNode[]>;
@@ -38,7 +44,9 @@ export interface ExocortexClient {
   deleteAsset(assetName: string): Promise<void>;
   revealAsset(assetName: string, path?: string | null): Promise<void>;
   getPdfMetadata(assetName: string): Promise<PdfMetadata>;
-  createBlock(assetName: string, input: { pageIndex: number; rect: Rect }): Promise<AssetState>;
+  getPdfPageTextBoxes(assetName: string, pageIndex: number): Promise<PdfPageTextBoxes>;
+  buildPdfFileUrl(assetName: string): string;
+  createBlock(assetName: string, input: { pageIndex: number; fractionRect: Rect }): Promise<AssetState>;
   deleteBlock(assetName: string, blockId: number): Promise<AssetState>;
   deleteGroup(assetName: string, groupIdx: number): Promise<AssetState>;
   updateBlockSelection(assetName: string, mergeOrder: number[]): Promise<AssetState>;
@@ -72,6 +80,7 @@ export interface ExocortexClient {
     orderedNodeIds: string[];
   }): Promise<{ parentId: string | null; orderedNodeIds: string[] }>;
   deleteQuestion(payload: DeleteQuestionPayload): Promise<void>;
+  deleteTutorSession(payload: DeleteTutorSessionInput): Promise<void>;
 }
 
 export type ExocortexApi = ExocortexClient;
@@ -90,9 +99,40 @@ class HttpExocortexClient implements ExocortexClient {
 
   readonly capabilities: ClientCapabilities = {
     deleteQuestion: true,
+    deleteTutorSession: true,
   };
 
   constructor(private readonly apiBase: string) {}
+
+  getSystemConfig(): Promise<AppSystemConfig> {
+    return this.requestJson("/system/config");
+  }
+
+  updateSystemConfig(config: AppSystemConfigUpdate): Promise<AppSystemConfig> {
+    const payload: AppSystemConfigUpdate = {};
+    if (config.themeMode !== undefined) {
+      payload.themeMode = config.themeMode;
+    }
+    if (config.sidebarTextLineClamp !== undefined) {
+      payload.sidebarTextLineClamp = config.sidebarTextLineClamp;
+    }
+    if (config.sidebarFontSizePx !== undefined) {
+      payload.sidebarFontSizePx = config.sidebarFontSizePx;
+    }
+    if (config.tutorReasoningEffort !== undefined) {
+      payload.tutorReasoningEffort = config.tutorReasoningEffort;
+    }
+    if (config.tutorWithGlobalContext !== undefined) {
+      payload.tutorWithGlobalContext = config.tutorWithGlobalContext;
+    }
+    return this.requestJson("/system/config", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  }
 
   listAssets(): Promise<AssetSummary[]> {
     return this.requestJson("/assets");
@@ -132,6 +172,8 @@ class HttpExocortexClient implements ExocortexClient {
         sidebarCollapsed: uiState.sidebarCollapsed ?? null,
         sidebarCollapsedNodeIds: uiState.sidebarCollapsedNodeIds ?? null,
         markdownScrollFractions: uiState.markdownScrollFractions ?? null,
+        sidebarWidthRatio: uiState.sidebarWidthRatio ?? null,
+        rightRailWidthRatio: uiState.rightRailWidthRatio ?? null,
       }),
     });
   }
@@ -151,12 +193,10 @@ class HttpExocortexClient implements ExocortexClient {
   importAsset(payload: ImportAssetPayload): Promise<TaskSummary> {
     const form = new FormData();
     form.set("source_file", payload.sourceFile);
+    form.set("markdown_file", payload.markdownFile);
+    form.set("content_list_file", payload.contentListFile);
     form.set("asset_name", payload.assetName);
     form.set("asset_subfolder", payload.assetSubfolder);
-    form.set("compress_enabled", payload.compressEnabled ? "true" : "false");
-    if (payload.skipImg2MdMarkdownFile) {
-      form.set("skip_img2md_markdown_file", payload.skipImg2MdMarkdownFile);
-    }
     return this.requestJson("/assets/import", {
       method: "POST",
       body: form,
@@ -176,7 +216,17 @@ class HttpExocortexClient implements ExocortexClient {
     return this.requestJson(`/assets/${encodeURIComponent(assetName)}/pdf/metadata`);
   }
 
-  createBlock(assetName: string, input: { pageIndex: number; rect: Rect }): Promise<AssetState> {
+  getPdfPageTextBoxes(assetName: string, pageIndex: number): Promise<PdfPageTextBoxes> {
+    return this.requestJson(
+      `/assets/${encodeURIComponent(assetName)}/pdf/pages/${pageIndex}/text-boxes`,
+    );
+  }
+
+  buildPdfFileUrl(assetName: string): string {
+    return buildPdfFileUrl(assetName);
+  }
+
+  createBlock(assetName: string, input: { pageIndex: number; fractionRect: Rect }): Promise<AssetState> {
     return this.requestJson(`/assets/${encodeURIComponent(assetName)}/blocks`, {
       method: "POST",
       headers: {
@@ -184,7 +234,7 @@ class HttpExocortexClient implements ExocortexClient {
       },
       body: JSON.stringify({
         pageIndex: input.pageIndex,
-        rect: input.rect,
+        fractionRect: input.fractionRect,
       }),
     });
   }
@@ -244,19 +294,83 @@ class HttpExocortexClient implements ExocortexClient {
   }
 
   subscribeToTaskEvents(listener: (event: TaskEvent) => void): () => void {
-    const ws = new WebSocket(buildWsUrl(this.apiBase));
+    let active = true;
+    let ws: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let reconnectAttempts = 0;
+    let reconnectWithReplay = false;
 
-    ws.onmessage = (message) => {
-      try {
-        const raw = JSON.parse(String(message.data));
-        listener(normalizeTaskEvent(raw));
-      } catch (error) {
-        console.warn("Failed to parse task event", error);
+    const clearReconnectTimer = () => {
+      if (reconnectTimer === null) {
+        return;
       }
+      window.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
     };
 
+    const scheduleReconnect = () => {
+      if (!active || reconnectTimer !== null) {
+        return;
+      }
+
+      reconnectWithReplay = true;
+      const delayMs = Math.min(5000, 250 * 2 ** reconnectAttempts);
+      reconnectAttempts += 1;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, delayMs);
+    };
+
+    const connect = () => {
+      if (!active) {
+        return;
+      }
+
+      const currentWs = new WebSocket(buildWsUrl(this.apiBase, { replay: reconnectWithReplay }));
+      ws = currentWs;
+
+      currentWs.onopen = () => {
+        reconnectAttempts = 0;
+        reconnectWithReplay = false;
+      };
+
+      currentWs.onmessage = (message) => {
+        try {
+          const raw = JSON.parse(String(message.data));
+          listener(normalizeTaskEvent(raw));
+        } catch (error) {
+          console.warn("Failed to parse task event", error);
+        }
+      };
+
+      currentWs.onerror = () => {
+        try {
+          currentWs.close();
+        } catch {
+          scheduleReconnect();
+        }
+      };
+
+      currentWs.onclose = () => {
+        if (ws === currentWs) {
+          ws = null;
+        }
+        scheduleReconnect();
+      };
+    };
+
+    connect();
+
     return () => {
-      ws.close();
+      active = false;
+      clearReconnectTimer();
+      reconnectWithReplay = false;
+      reconnectAttempts = 0;
+      if (ws && ws.readyState !== WebSocket.CLOSED) {
+        ws.close();
+      }
+      ws = null;
     };
   }
 
@@ -368,6 +482,15 @@ class HttpExocortexClient implements ExocortexClient {
     );
   }
 
+  deleteTutorSession(payload: DeleteTutorSessionInput): Promise<void> {
+    return this.requestVoid(
+      `/assets/${encodeURIComponent(payload.assetName)}/groups/${payload.groupIdx}/tutors/${payload.tutorIdx}`,
+      {
+        method: "DELETE",
+      },
+    );
+  }
+
   private submitJsonTask<TPayload extends object>(path: string, payload: TPayload): Promise<TaskSummary> {
     return this.requestJson(path, {
       method: "POST",
@@ -421,9 +544,8 @@ export function buildApiUrl(path: string, base = DEFAULT_API_BASE): string {
   return `${normalizedBase}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
-export function buildPdfPageImageUrl(assetName: string, pageIndex: number, dpi: number): string {
-  const safeDpi = Math.max(1, Math.round(dpi));
-  return buildApiUrl(`/assets/${encodeURIComponent(assetName)}/pdf/pages/${pageIndex}/image?dpi=${safeDpi}`);
+export function buildPdfFileUrl(assetName: string): string {
+  return buildApiUrl(`/assets/${encodeURIComponent(assetName)}/pdf/file`);
 }
 
 export function resolveExocortexApiMode(rawMode: unknown = import.meta.env.VITE_EXOCORTEX_API_MODE): ExocortexApiMode {
@@ -468,10 +590,14 @@ export function resetExocortexClientForTests(): void {
   clientPromise = null;
 }
 
-function buildWsUrl(apiBase: string): string {
+function buildWsUrl(apiBase: string, options: { replay?: boolean } = {}): string {
   const base = new URL(apiBase, window.location.origin);
   const protocol = base.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${base.host}${base.pathname.replace(/\/$/, "")}/ws/tasks`;
+  const url = new URL(`${protocol}//${base.host}${base.pathname.replace(/\/$/, "")}/ws/tasks`);
+  if (options.replay) {
+    url.searchParams.set("replay", "true");
+  }
+  return url.toString();
 }
 
 async function toRequestError(response: Response): Promise<Error> {
@@ -488,6 +614,7 @@ function normalizeTaskEvent(raw: unknown): TaskEvent {
   return {
     taskId: String(record.taskId ?? ""),
     kind: String(record.kind ?? "task"),
+    assetName: typeof record.assetName === "string" ? record.assetName : null,
     status: normalizeTaskStatus(record.status),
     eventType: normalizeTaskEventType(record.eventType),
     message: String(record.message ?? ""),

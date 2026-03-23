@@ -1,5 +1,7 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
+import type { PdfNavigationRequest } from "../../app/store/appStore.types";
+import { useAppStore } from "../../app/store/appStore";
 import { PdfPane } from "./PdfPane";
 import { usePdfDocument } from "./usePdfDocument";
 import type {
@@ -33,6 +35,7 @@ export function PdfPaneContainer({
   const {
     assetState,
     metadata,
+    pdfFileUrl,
     loading,
     mutating,
     error,
@@ -44,10 +47,27 @@ export function PdfPaneContainer({
     updateSelection,
     patchUiState,
   } = usePdfDocument(assetName);
+  const pdfNavigationRequest = useAppStore((state) => state.pdfNavigationRequest);
+  const consumePdfNavigationRequest = useAppStore((state) => state.consumePdfNavigationRequest);
+  const [pendingNavigationRequest, setPendingNavigationRequest] =
+    useState<PdfNavigationRequest | null>(null);
 
   useEffect(() => {
     onAssetStateChange?.(assetState);
   }, [assetState, onAssetStateChange]);
+
+  useEffect(() => {
+    setPendingNavigationRequest(null);
+  }, [assetName]);
+
+  useEffect(() => {
+    if (!pdfNavigationRequest || pdfNavigationRequest.assetName !== assetName) {
+      return;
+    }
+
+    setPendingNavigationRequest(pdfNavigationRequest);
+    consumePdfNavigationRequest();
+  }, [assetName, consumePdfNavigationRequest, pdfNavigationRequest]);
 
   return (
     <PdfPane
@@ -57,6 +77,7 @@ export function PdfPaneContainer({
       busy={mutating}
       className={className}
       error={error?.message ?? null}
+      pdfFileUrl={pdfFileUrl}
       initialCompressSelection={initialCompressSelection}
       loading={loading}
       metadata={metadata}
@@ -69,10 +90,16 @@ export function PdfPaneContainer({
       onRefresh={() => {
         void refresh();
       }}
+      onNavigationHandled={(request) => {
+        setPendingNavigationRequest((current) =>
+          current?.nonce === request.nonce ? null : current,
+        );
+      }}
       onSelectionChange={updateSelection}
       onUiStateChange={(patch) => {
         void patchUiState(patch);
       }}
+      navigationRequest={pendingNavigationRequest}
       toolbarSlot={toolbarSlot}
     />
   );

@@ -13,23 +13,27 @@ import type {
   TutorSession,
 } from "../../generated/contracts";
 import {
-  buildPdfPageImageUrl,
+  buildPdfFileUrl as buildClientPdfFileUrl,
   createExocortexApi as createCoreExocortexApi,
   type CreateExocortexApiOptions,
   type ExocortexApi as CoreExocortexApi,
 } from "../../features/workflows/api/client";
 import type {
+  AppSystemConfig,
+  AppSystemConfigUpdate,
   BugFinderTaskInput,
   ClientCapabilities,
   CompressTaskInput,
   CreateBlockInput,
   CreateTutorSessionInput,
   DeleteQuestionInput,
+  DeleteTutorSessionInput,
   FixLatexTaskInput,
   GroupTaskInput,
   ImportAssetInput,
   IntegrateTaskInput,
   MergeGroupInput,
+  PdfPageTextBoxes,
   RenameMarkdownNodeAliasInput,
   ReorderMarkdownSiblingsInput,
   ReTutorTaskInput,
@@ -43,6 +47,10 @@ marked.setOptions({
 export interface ExocortexApi {
   readonly mode: ApiSource;
   readonly capabilities: ClientCapabilities;
+  readonly system: {
+    getConfig(): Promise<AppSystemConfig>;
+    updateConfig(config: AppSystemConfigUpdate): Promise<AppSystemConfig>;
+  };
   readonly assets: {
     list(): Promise<AssetSummary[]>;
     getState(assetName: string): Promise<AssetState>;
@@ -59,8 +67,9 @@ export interface ExocortexApi {
     reorderSiblings(input: ReorderMarkdownSiblingsInput): Promise<{ parentId: string | null; orderedNodeIds: string[] }>;
   };
   readonly pdf: {
-    buildPageImageUrl(assetName: string, pageIndex: number, dpi: number): string;
+    buildFileUrl(assetName: string): string;
     getMetadata(assetName: string): Promise<PdfMetadata>;
+    getPageTextBoxes(assetName: string, pageIndex: number): Promise<PdfPageTextBoxes>;
     createBlock(assetName: string, input: CreateBlockInput): Promise<AssetState>;
     deleteBlock(assetName: string, blockId: number): Promise<AssetState>;
     deleteGroup(assetName: string, groupIdx: number): Promise<AssetState>;
@@ -85,19 +94,28 @@ export interface ExocortexApi {
     submitCompressPreview(input: CompressTaskInput): Promise<TaskSummary>;
     submitCompressExecute(input: CompressTaskInput): Promise<TaskSummary>;
     deleteQuestion(input: DeleteQuestionInput): Promise<void>;
+    deleteTutorSession(input: DeleteTutorSessionInput): Promise<void>;
   };
 }
 
 export const queryKeys = {
   assets: ["assets"] as const,
+  systemConfig: ["system-config"] as const,
   assetState: (assetName: string | null) => ["asset-state", assetName] as const,
   markdownTree: (assetName: string | null) => ["markdown-tree", assetName] as const,
+  pdfMetadata: (assetName: string | null) => ["pdf-metadata", assetName] as const,
+  pdfPageTextBoxes: (assetName: string | null, pageIndex: number) =>
+    ["pdf-page-text-boxes", assetName, pageIndex] as const,
   markdownContent: (assetName: string | null, path: string | null) =>
     ["markdown-content", assetName, path] as const,
 };
 
-export function buildPageImageUrl(assetName: string, pageIndex: number, dpi: number): string {
-  return buildPdfPageImageUrl(assetName, pageIndex, dpi);
+export function buildFileUrl(assetName: string): string {
+  return buildClientPdfFileUrl(assetName);
+}
+
+export function buildPdfFileUrl(assetName: string): string {
+  return buildClientPdfFileUrl(assetName);
 }
 
 export function createExocortexApi(options: CreateExocortexApiOptions = {}): ExocortexApi {
@@ -108,6 +126,10 @@ export function wrapCoreApi(core: CoreExocortexApi): ExocortexApi {
   return {
     mode: core.mode,
     capabilities: core.capabilities,
+    system: {
+      getConfig: () => core.getSystemConfig(),
+      updateConfig: (config) => core.updateSystemConfig(config),
+    },
     assets: {
       list: () => core.listAssets(),
       getState: (assetName) => core.getAssetState(assetName),
@@ -124,8 +146,9 @@ export function wrapCoreApi(core: CoreExocortexApi): ExocortexApi {
       reorderSiblings: (input) => core.reorderMarkdownSiblings(input),
     },
     pdf: {
-      buildPageImageUrl: (assetName, pageIndex, dpi) => buildPdfPageImageUrl(assetName, pageIndex, dpi),
+      buildFileUrl: (assetName) => buildPdfFileUrl(assetName),
       getMetadata: (assetName) => core.getPdfMetadata(assetName),
+      getPageTextBoxes: (assetName, pageIndex) => core.getPdfPageTextBoxes(assetName, pageIndex),
       createBlock: (assetName, input) => core.createBlock(assetName, input),
       deleteBlock: (assetName, blockId) => core.deleteBlock(assetName, blockId),
       deleteGroup: (assetName, groupIdx) => core.deleteGroup(assetName, groupIdx),
@@ -150,6 +173,7 @@ export function wrapCoreApi(core: CoreExocortexApi): ExocortexApi {
       submitCompressPreview: (input) => core.submitCompressPreview(input),
       submitCompressExecute: (input) => core.submitCompressExecute(input),
       deleteQuestion: (input) => core.deleteQuestion(input),
+      deleteTutorSession: (input) => core.deleteTutorSession(input),
     },
   };
 }

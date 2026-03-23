@@ -14,15 +14,20 @@ export type {
   TutorSession,
 } from "../../../generated/contracts";
 export type {
+  AppSystemConfig,
+  AppSystemConfigUpdate,
   BugFinderTaskInput as BugFinderTaskPayload,
   ClientCapabilities,
   CompressTaskInput as CompressTaskPayload,
   CreateTutorSessionInput as CreateTutorSessionPayload,
   DeleteQuestionInput as DeleteQuestionPayload,
+  DeleteTutorSessionInput,
   FixLatexTaskInput as FixLatexTaskPayload,
   GroupTaskInput as GroupTaskPayload,
   ImportAssetInput as ImportAssetPayload,
   IntegrateTaskInput as IntegrateTaskPayload,
+  PdfPageTextBoxes,
+  PdfTextBox,
   TutorTaskInput as TutorTaskPayload,
 } from "../../../app/api/types";
 export {

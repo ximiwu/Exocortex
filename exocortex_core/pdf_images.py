@@ -171,15 +171,21 @@ def crop_blocks_to_images(
             if block.page_index < 0 or block.page_index >= page_count:
                 raise ValueError(f"Invalid page index for block {block.block_id}: {block.page_index}")
 
-            block_width_ref = float(block.rect.width)
-            block_height_ref = float(block.rect.height)
+            page_width_ref = page_widths_ref[block.page_index]
+            page_height_ref = page_heights_ref[block.page_index]
+            block_x_fraction = min(max(float(block.rect.x), 0.0), 1.0)
+            block_y_fraction = min(max(float(block.rect.y), 0.0), 1.0)
+            block_width_fraction = min(max(float(block.rect.width), 0.0), max(0.0, 1.0 - block_x_fraction))
+            block_height_fraction = min(max(float(block.rect.height), 0.0), max(0.0, 1.0 - block_y_fraction))
+            block_width_ref = block_width_fraction * page_width_ref
+            block_height_ref = block_height_fraction * page_height_ref
             if block_width_ref <= 0 or block_height_ref <= 0:
                 raise ValueError(
                     f"Invalid block dimensions for block {block.block_id} on page {block.page_index}"
                 )
 
-            block_x_ref = float(block.rect.x)
-            block_y_ref = float(block.rect.y)
+            block_x_ref = block_x_fraction * page_width_ref
+            block_y_ref = block_y_fraction * page_height_ref
             base_page_width_ref = page_widths_ref[block.page_index]
             base_page_offset_ref = page_offsets_ref[block.page_index]
             block_center_offset = (block_x_ref + block_width_ref / 2.0) - base_page_width_ref / 2.0

@@ -7,6 +7,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+COORDINATE_SPACE_REFERENCE_DPI = "reference_dpi_130"
+COORDINATE_SPACE_PAGE_FRACTION = "page_fraction_v1"
+
 
 @dataclass(frozen=True)
 class AssetInitResult:
@@ -77,6 +80,7 @@ class BlockData:
     blocks: list[BlockRecord]
     merge_order: list[int]
     next_block_id: int
+    coordinate_space: str = COORDINATE_SPACE_PAGE_FRACTION
 
     @classmethod
     def empty(cls) -> BlockData:
@@ -104,13 +108,20 @@ class BlockData:
 
         if next_block_id <= 0:
             next_block_id = 1
-        return cls(blocks=blocks, merge_order=merge_order, next_block_id=next_block_id)
+        coordinate_space = data.get("coordinate_space", COORDINATE_SPACE_REFERENCE_DPI)
+        return cls(
+            blocks=blocks,
+            merge_order=merge_order,
+            next_block_id=next_block_id,
+            coordinate_space=coordinate_space,
+        )
 
     def to_dict(self) -> dict:
         return {
             "blocks": [block.to_dict() for block in self.blocks],
             "merge_order": self.merge_order,
             "next_block_id": self.next_block_id,
+            "coordinate_space": self.coordinate_space,
         }
 
 
@@ -147,4 +158,6 @@ __all__ = [
     "BlockRecord",
     "BlockRect",
     "GroupRecord",
+    "COORDINATE_SPACE_PAGE_FRACTION",
+    "COORDINATE_SPACE_REFERENCE_DPI",
 ]

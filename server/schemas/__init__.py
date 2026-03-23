@@ -10,6 +10,8 @@ from .assets import (
     MarkdownTreeNodeModel,
     MergeGroupRequest,
     PdfMetadataModel,
+    PdfPageTextBoxesModel,
+    PdfTextBoxModel,
     ReorderMarkdownSiblingsRequest,
     TutorSessionModel,
     UiStateModel,
@@ -38,6 +40,7 @@ from .tasks import (
     TaskSummaryModel,
     TutorWorkflowRequest,
 )
+from .system import AppConfigModel, UpdateAppConfigRequest
 
 __all__ = [
     "AskTutorWorkflowRequest",
@@ -61,6 +64,8 @@ __all__ = [
     "MergeGroupRequest",
     "MessageResponse",
     "PdfMetadataModel",
+    "PdfPageTextBoxesModel",
+    "PdfTextBoxModel",
     "RectModel",
     "ReorderMarkdownSiblingsRequest",
     "ReTutorWorkflowRequest",
@@ -70,7 +75,9 @@ __all__ = [
     "TaskSummaryModel",
     "TutorSessionModel",
     "TutorWorkflowRequest",
+    "AppConfigModel",
     "UiStateModel",
+    "UpdateAppConfigRequest",
     "UpdateMarkdownNodeAliasRequest",
     "UpdateSelectionRequest",
     "UpdateUiStateRequest",

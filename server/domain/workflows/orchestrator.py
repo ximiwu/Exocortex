@@ -29,6 +29,7 @@ def asset_init(
         asset_name=command.asset_name,
         progress_callback=progress_callback,
         rendered_pdf_path=command.rendered_pdf_path,
+        content_list_path=command.content_list_path,
         event_callback=event_callback,
     )
 
@@ -53,6 +54,8 @@ def ask_tutor(command: TutorQuestionCommand, *, event_callback: WorkflowEventCal
         command.asset_name,
         command.group_idx,
         command.tutor_idx,
+        reasoning_effort=command.reasoning_effort,
+        with_global_context=command.with_global_context,
         event_callback=event_callback,
     )
 

@@ -7,20 +7,22 @@ import type {
   Rect,
   ReorderMarkdownSiblingsRequest,
   ReTutorWorkflowRequest,
+  ThemeMode,
   TutorWorkflowRequest,
   UpdateMarkdownNodeAliasRequest,
 } from "../../generated/contracts";
 
 export interface ClientCapabilities {
   deleteQuestion: boolean;
+  deleteTutorSession: boolean;
 }
 
 export interface ImportAssetInput {
   sourceFile: File;
+  markdownFile: File;
+  contentListFile: File;
   assetName: string;
   assetSubfolder: string;
-  skipImg2MdMarkdownFile: File | null;
-  compressEnabled: boolean;
 }
 
 export interface BugFinderTaskInput extends TutorWorkflowRequest {
@@ -29,6 +31,26 @@ export interface BugFinderTaskInput extends TutorWorkflowRequest {
 
 export interface DeleteQuestionInput extends TutorWorkflowRequest {
   markdownPath: string;
+}
+
+export type DeleteTutorSessionInput = TutorWorkflowRequest;
+
+export interface AppSystemConfig {
+  themeMode: ThemeMode;
+  sidebarTextLineClamp: number;
+  sidebarFontSizePx: number;
+  tutorReasoningEffort: TutorReasoningEffort;
+  tutorWithGlobalContext: boolean;
+}
+
+export type TutorReasoningEffort = "low" | "medium" | "high" | "xhigh";
+
+export interface AppSystemConfigUpdate {
+  themeMode?: ThemeMode;
+  sidebarTextLineClamp?: number;
+  sidebarFontSizePx?: number;
+  tutorReasoningEffort?: TutorReasoningEffort;
+  tutorWithGlobalContext?: boolean;
 }
 
 export interface CreateTutorSessionInput extends CreateTutorRequest {
@@ -47,7 +69,17 @@ export interface ReorderMarkdownSiblingsInput extends ReorderMarkdownSiblingsReq
 
 export interface CreateBlockInput {
   pageIndex: number;
-  rect: Rect;
+  fractionRect: Rect;
+}
+
+export interface PdfTextBox {
+  pageIndex: number;
+  fractionRect: Rect;
+}
+
+export interface PdfPageTextBoxes {
+  pageIndex: number;
+  items: PdfTextBox[];
 }
 
 export interface MergeGroupInput {

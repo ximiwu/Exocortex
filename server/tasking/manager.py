@@ -111,6 +111,7 @@ class TaskManager:
             event = TaskEvent(
                 task_id=task_id,
                 kind=record.kind,
+                asset_name=record.asset_name,
                 status=status,
                 event_type=event_type,
                 message=message,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from exocortex_core.fs import atomic_write_text
 try:
     import markdown as py_markdown
 except ImportError:  # pragma: no cover - dependency guard
@@ -22,7 +23,7 @@ from exocortex_core.markdown_web import (
     normalize_paragraph_list_separation,
 )
 from exocortex_core.text import read_text_auto
-from server.domain.assets import get_asset_config, save_asset_config
+from server.domain.assets import asset_config_write_lock, get_asset_config, save_asset_config
 from server.errors import ApiError
 from server.schemas import MarkdownContentModel, MarkdownTreeNodeModel
 
@@ -56,10 +57,7 @@ def _group_title(group_dir: Path, group_idx: int) -> str:
 
 
 def _atomic_write_text(path: Path, value: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(value, encoding="utf-8", newline="\n")
-    tmp_path.replace(path)
+    atomic_write_text(path, value, newline="\n")
 
 
 def _write_alias(path: Path, alias: str, fallback: str) -> str:
@@ -93,9 +91,10 @@ def _load_sidebar_order(asset_name: str) -> dict[str, list[str]]:
 
 
 def _save_sidebar_order(asset_name: str, sidebar_order: dict[str, list[str]]) -> None:
-    config = get_asset_config(asset_name)
-    config["sidebar_order"] = sidebar_order
-    save_asset_config(asset_name, config)
+    with asset_config_write_lock(asset_name):
+        config = get_asset_config(asset_name)
+        config["sidebar_order"] = sidebar_order
+        save_asset_config(asset_name, config)
 
 
 def _apply_saved_order(
@@ -178,7 +177,7 @@ def _render_markdown_body(content: str) -> tuple[str, str]:
 
 def _render_markdown_document(content: str) -> tuple[str, str, str, str]:
     normalized, body = _render_markdown_body(content)
-    assets = katex_assets()
+    assets = katex_assets(asset_root="/vendor/katex")
     styles = (
         "body { font-family: 'Times New Roman','Segoe UI',sans-serif; font-size: 16px; "
         "line-height: 1.6; color: #333; padding: 16px; background: #fff; } "

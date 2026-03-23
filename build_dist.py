@@ -5,7 +5,13 @@ import importlib.util
 import shutil
 import subprocess
 import sys
+import time
+from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
+
+from exocortex_core.fs import safe_rmtree, safe_unlink
 
 
 APP_NAME = "Exocortex"
@@ -19,50 +25,39 @@ STAGE_FRONTEND = "frontend"
 STAGE_PACKAGE = "package"
 STAGE_INSTALLER = "installer"
 STAGE_VALIDATE = "validate"
-VALID_STAGES = (
-    STAGE_DEPENDENCIES,
-    STAGE_FRONTEND,
-    STAGE_PACKAGE,
-    STAGE_INSTALLER,
-    STAGE_VALIDATE,
-)
+StageContext = dict[str, object]
+StageAction = Callable[[StageContext], None]
+
+
+@dataclass(frozen=True)
+class Stage:
+    key: str
+    description: str
+    action: StageAction
+
+
+CONTEXT_EXPECT_INSTALLER = "expect_installer"
+CONTEXT_PACKAGED_APP_DIR = "packaged_app_dir"
 
 REPO_ROOT = Path(__file__).resolve().parent
 WEB_DIR = REPO_ROOT / "web"
+WEB_PUBLIC_DIR = WEB_DIR / "public"
 WEB_DIST_DIR = WEB_DIR / "dist"
+WEB_VENDOR_KATEX_DIR = WEB_PUBLIC_DIR / "vendor" / "katex"
+WEB_DIST_VENDOR_KATEX_DIR = WEB_DIST_DIR / "vendor" / "katex"
 PROMPTS_DIR = REPO_ROOT / "prompts"
 DIST_ROOT = REPO_ROOT / "dist"
 INSTALLER_OUTPUT_DIR = REPO_ROOT / "Output_Installers"
 ISS_PATH = REPO_ROOT / "setup_script.iss"
 
+KATEX_RUNTIME_FILES = (
+    Path("katex.min.css"),
+    Path("katex.min.js"),
+    Path("contrib") / "auto-render.min.js",
+    Path("contrib") / "copy-tex.min.js",
+)
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build Exocortex desktop package in explicit stages.")
-    parser.add_argument(
-        "--stages",
-        nargs="+",
-        choices=VALID_STAGES,
-        help=(
-            "Stages to run in order. Defaults to: "
-            "dependencies frontend package installer validate."
-        ),
-    )
-    parser.add_argument(
-        "--skip-frontend",
-        action="store_true",
-        help="Skip dependency install and frontend build stages; use an existing web/dist.",
-    )
-    parser.add_argument(
-        "--skip-installer",
-        action="store_true",
-        help="Skip installer generation stage.",
-    )
-    parser.add_argument(
-        "--clean",
-        action="store_true",
-        help="Remove previous Nuitka and installer outputs before building.",
-    )
-    return parser.parse_args()
+DELETE_RETRY_DELAYS = (0.1, 0.25, 0.5, 1.0, 2.0)
 
 
 def run(cmd: list[str], *, cwd: Path | None = None) -> None:
@@ -74,6 +69,19 @@ def run(cmd: list[str], *, cwd: Path | None = None) -> None:
 def require_path(path: Path, description: str) -> None:
     if not path.exists():
         raise FileNotFoundError(f"{description} not found: {path}")
+
+
+def require_katex_runtime_assets(asset_dir: Path, description: str) -> None:
+    require_path(asset_dir, description)
+
+    missing_files = [str(asset_dir / relative_path) for relative_path in KATEX_RUNTIME_FILES if not (asset_dir / relative_path).is_file()]
+    if missing_files:
+        raise FileNotFoundError(f"{description} is incomplete. Missing files: {', '.join(missing_files)}")
+
+    fonts_dir = asset_dir / "fonts"
+    require_path(fonts_dir, f"{description} fonts directory")
+    if not any(fonts_dir.iterdir()):
+        raise FileNotFoundError(f"{description} fonts directory is empty: {fonts_dir}")
 
 
 def find_npm() -> str:
@@ -104,6 +112,39 @@ def require_python_module(module_name: str) -> None:
         )
 
 
+def _is_retryable_delete_error(exc: OSError) -> bool:
+    return isinstance(exc, PermissionError) or getattr(exc, "winerror", None) in {5, 32}
+
+
+def remove_path(path: Path, *, description: str | None = None) -> None:
+    if not path.exists() and not path.is_symlink():
+        return
+
+    label = description or str(path)
+    last_error: OSError | None = None
+    retry_count = len(DELETE_RETRY_DELAYS)
+
+    for attempt in range(retry_count + 1):
+        try:
+            if path.is_dir() and not path.is_symlink():
+                safe_rmtree(path)
+            else:
+                safe_unlink(path)
+            return
+        except OSError as exc:
+            last_error = exc
+            if attempt >= retry_count or not _is_retryable_delete_error(exc):
+                break
+            delay = DELETE_RETRY_DELAYS[attempt]
+            print(f"Retrying removal of {label} after {delay:.2f}s due to: {exc}")
+            time.sleep(delay)
+
+    assert last_error is not None
+    raise OSError(
+        f"Could not remove {label}. Another process may still be locking it: {path}"
+    ) from last_error
+
+
 def find_nuitka_dist_dir() -> Path:
     direct_candidates = [
         DIST_ROOT / f"{Path(ENTRY_SCRIPT).stem}.dist",
@@ -131,13 +172,13 @@ def expected_installer_path() -> Path:
 def clean_outputs() -> None:
     if DIST_ROOT.exists():
         print(f"Removing {DIST_ROOT}")
-        shutil.rmtree(DIST_ROOT)
+        remove_path(DIST_ROOT, description="dist output directory")
     if INSTALLER_OUTPUT_DIR.exists():
         print(f"Removing {INSTALLER_OUTPUT_DIR}")
-        shutil.rmtree(INSTALLER_OUTPUT_DIR)
+        remove_path(INSTALLER_OUTPUT_DIR, description="installer output directory")
     if ISS_PATH.exists():
         print(f"Removing {ISS_PATH}")
-        ISS_PATH.unlink()
+        remove_path(ISS_PATH, description="generated installer script")
 
 
 def run_dependency_stage(*, expect_installer: bool) -> None:
@@ -152,10 +193,12 @@ def run_dependency_stage(*, expect_installer: bool) -> None:
 
 def run_frontend_stage() -> None:
     require_path(WEB_DIR / "package.json", "Frontend package.json")
+    require_katex_runtime_assets(WEB_VENDOR_KATEX_DIR, "Frontend vendor KaTeX assets")
     npm = find_npm()
     print("Building frontend...")
     run([npm, "run", "build"], cwd=WEB_DIR)
     require_path(WEB_DIST_DIR / "index.html", "Frontend build output")
+    require_katex_runtime_assets(WEB_DIST_VENDOR_KATEX_DIR, "Built frontend KaTeX assets")
 
 
 def build_with_nuitka() -> Path:
@@ -164,15 +207,21 @@ def build_with_nuitka() -> Path:
     require_path(REPO_ROOT / ICON_FILE, "Icon file")
     require_path(PROMPTS_DIR, "Prompts directory")
     require_path(WEB_DIST_DIR, "Frontend dist directory")
+    require_katex_runtime_assets(WEB_DIST_VENDOR_KATEX_DIR, "Built frontend KaTeX assets")
 
     DIST_ROOT.mkdir(parents=True, exist_ok=True)
 
-    build_dir = DIST_ROOT / f"{APP_NAME}.build"
-    if build_dir.exists():
-        shutil.rmtree(build_dir)
+    build_dir_candidates = (
+        DIST_ROOT / f"{Path(ENTRY_SCRIPT).stem}.build",
+        DIST_ROOT / f"{APP_NAME}.build",
+    )
+    for build_dir in build_dir_candidates:
+        if build_dir.exists():
+            remove_path(build_dir, description=f"stale Nuitka build directory ({build_dir.name})")
+
     for candidate in (DIST_ROOT / f"{Path(ENTRY_SCRIPT).stem}.dist", DIST_ROOT / f"{APP_NAME}.dist"):
         if candidate.exists():
-            shutil.rmtree(candidate)
+            remove_path(candidate, description=f"stale Nuitka dist directory ({candidate.name})")
 
     cmd = [
         sys.executable,
@@ -274,6 +323,7 @@ def run_installer_stage(app_dir: Path | None) -> Path:
 
 def run_validation_stage(*, expect_installer: bool) -> None:
     require_path(WEB_DIST_DIR / "index.html", "Frontend build output")
+    require_katex_runtime_assets(WEB_DIST_VENDOR_KATEX_DIR, "Built frontend KaTeX assets")
     app_dir = find_nuitka_dist_dir()
     require_path(app_dir / f"{APP_NAME}.exe", "Nuitka output executable")
     if expect_installer:
@@ -281,15 +331,113 @@ def run_validation_stage(*, expect_installer: bool) -> None:
     print("Artifact validation passed.")
 
 
-def resolve_stages(args: argparse.Namespace) -> list[str]:
-    stages = list(args.stages) if args.stages else list(VALID_STAGES)
+def stage_dependencies_action(context: StageContext) -> None:
+    expect_installer = bool(context.get(CONTEXT_EXPECT_INSTALLER))
+    run_dependency_stage(expect_installer=expect_installer)
+
+
+def stage_frontend_action(context: StageContext) -> None:
+    run_frontend_stage()
+
+
+def stage_package_action(context: StageContext) -> None:
+    context[CONTEXT_PACKAGED_APP_DIR] = run_packaging_stage()
+
+
+def stage_installer_action(context: StageContext) -> None:
+    packaged_app_dir = context.get(CONTEXT_PACKAGED_APP_DIR)
+    context[CONTEXT_PACKAGED_APP_DIR] = run_installer_stage(packaged_app_dir)
+
+
+def stage_validate_action(context: StageContext) -> None:
+    expect_installer = bool(context.get(CONTEXT_EXPECT_INSTALLER))
+    run_validation_stage(expect_installer=expect_installer)
+
+
+STAGES = (
+    Stage(
+        STAGE_DEPENDENCIES,
+        "Install npm dependencies and ensure required Python tooling is available.",
+        stage_dependencies_action,
+    ),
+    Stage(
+        STAGE_FRONTEND,
+        "Build the frontend bundle and validate `web/dist` output exists.",
+        stage_frontend_action,
+    ),
+    Stage(
+        STAGE_PACKAGE,
+        "Compile the backend into a standalone Nuitka distribution.",
+        stage_package_action,
+    ),
+    Stage(
+        STAGE_INSTALLER,
+        "Generate the Inno Setup installer from the packaged distribution.",
+        stage_installer_action,
+    ),
+    Stage(
+        STAGE_VALIDATE,
+        "Check that the frontend bundle, Nuitka exe, and optional installer exist.",
+        stage_validate_action,
+    ),
+)
+
+STAGE_REGISTRY = OrderedDict((stage.key, stage) for stage in STAGES)
+STAGE_SEQUENCE = tuple(STAGE_REGISTRY.keys())
+VALID_STAGES = STAGE_SEQUENCE
+
+
+def parse_args() -> argparse.Namespace:
+    stage_help = "\n".join(f"  {stage.key}: {stage.description}" for stage in STAGES)
+    parser = argparse.ArgumentParser(
+        description="Build Exocortex desktop package in explicit stages.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"Stages:\n{stage_help}",
+    )
+    parser.add_argument(
+        "--stages",
+        nargs="+",
+        choices=VALID_STAGES,
+        help=(
+            "Stages to run in order. Defaults to: "
+            f"{' '.join(VALID_STAGES)}."
+        ),
+    )
+    parser.add_argument(
+        "--skip-frontend",
+        action="store_true",
+        help="Skip dependency install and frontend build stages; use an existing web/dist.",
+    )
+    parser.add_argument(
+        "--skip-installer",
+        action="store_true",
+        help="Skip installer generation stage.",
+    )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Remove previous Nuitka and installer outputs before building.",
+    )
+    return parser.parse_args()
+
+
+def resolve_stages(args: argparse.Namespace) -> list[Stage]:
+    requested = list(args.stages) if args.stages else list(STAGE_SEQUENCE)
     if args.skip_frontend:
-        stages = [stage for stage in stages if stage not in {STAGE_DEPENDENCIES, STAGE_FRONTEND}]
+        requested = [key for key in requested if key not in {STAGE_DEPENDENCIES, STAGE_FRONTEND}]
     if args.skip_installer:
-        stages = [stage for stage in stages if stage != STAGE_INSTALLER]
-    if not stages:
+        requested = [key for key in requested if key != STAGE_INSTALLER]
+
+    resolved: list[Stage] = []
+    for key in requested:
+        stage = STAGE_REGISTRY.get(key)
+        if stage is None:
+            raise ValueError(f"Unknown stage requested: {key}")
+        resolved.append(stage)
+
+    if not resolved:
         raise ValueError("No stages selected. Remove skip flags or pass explicit --stages values.")
-    return stages
+    return resolved
 
 
 def main() -> int:
@@ -300,21 +448,13 @@ def main() -> int:
             clean_outputs()
 
         stages = resolve_stages(args)
-        expect_installer = STAGE_INSTALLER in stages
-        app_dir: Path | None = None
+        context: StageContext = {
+            CONTEXT_EXPECT_INSTALLER: any(stage.key == STAGE_INSTALLER for stage in stages)
+        }
 
         for stage in stages:
-            if stage == STAGE_DEPENDENCIES:
-                run_dependency_stage(expect_installer=expect_installer)
-            elif stage == STAGE_FRONTEND:
-                run_frontend_stage()
-            elif stage == STAGE_PACKAGE:
-                app_dir = run_packaging_stage()
-                print(f"Nuitka app output: {app_dir.resolve()}")
-            elif stage == STAGE_INSTALLER:
-                app_dir = run_installer_stage(app_dir)
-            elif stage == STAGE_VALIDATE:
-                run_validation_stage(expect_installer=expect_installer)
+            print(f"--- Running stage: {stage.key} ({stage.description})")
+            stage.action(context)
 
         return 0
     except subprocess.CalledProcessError as exc:

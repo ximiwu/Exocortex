@@ -1,11 +1,12 @@
-import { useQueryClient } from "@tanstack/react-query";
-import { startTransition, useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 
 import { useExocortexApi } from "../../app/api/ExocortexApiContext";
 import { queryKeys } from "../../app/api/exocortexApi";
+import { useAppStore } from "../../app/store/appStore";
+import { dedupePaths, getOpenMarkdownPathsForAsset } from "../../app/store/selectors";
 import type {
   PdfAssetState,
-  PdfMetadata,
   PdfRect,
   PdfUiState,
 } from "./types";
@@ -13,55 +14,38 @@ import type {
 export function usePdfDocument(assetName: string | null) {
   const api = useExocortexApi();
   const queryClient = useQueryClient();
-  const [assetState, setAssetState] = useState<PdfAssetState | null>(null);
-  const [metadata, setMetadata] = useState<PdfMetadata | null>(null);
-  const [loading, setLoading] = useState(false);
   const [mutating, setMutating] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
+  const [mutationError, setMutationError] = useState<Error | null>(null);
+  const activeAssetNameRef = useRef<string | null>(assetName);
+  const uiStateMutationSequenceRef = useRef(0);
+  const pendingUiStateMutationsRef = useRef(0);
 
   useEffect(() => {
-    let cancelled = false;
+    activeAssetNameRef.current = assetName;
+    uiStateMutationSequenceRef.current = 0;
+    pendingUiStateMutationsRef.current = 0;
+    setMutating(false);
+    setMutationError(null);
+  }, [assetName]);
 
-    if (!assetName) {
-      setAssetState(null);
-      setMetadata(null);
-      setLoading(false);
-      setMutating(false);
-      setError(null);
-      return undefined;
-    }
+  const assetStateQuery = useQuery({
+    queryKey: queryKeys.assetState(assetName),
+    queryFn: () => api.assets.getState(assetName!),
+    enabled: Boolean(assetName),
+  });
 
-    setLoading(true);
-    setError(null);
+  const metadataQuery = useQuery({
+    queryKey: queryKeys.pdfMetadata(assetName),
+    queryFn: () => api.pdf.getMetadata(assetName!),
+    enabled: Boolean(assetName),
+  });
 
-    void Promise.all([api.assets.getState(assetName), api.pdf.getMetadata(assetName)])
-      .then(([nextAssetState, nextMetadata]) => {
-        if (cancelled) {
-          return;
-        }
-
-        startTransition(() => {
-          setAssetState(nextAssetState);
-          setMetadata(nextMetadata);
-        });
-      })
-      .catch((reason: unknown) => {
-        if (cancelled) {
-          return;
-        }
-
-        setError(toError(reason));
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [api.assets, api.pdf, assetName]);
+  const assetState = assetStateQuery.data ?? null;
+  const metadata = metadataQuery.data ?? null;
+  const pdfFileUrl = assetName ? api.pdf.buildFileUrl(assetName) : null;
+  const loading = Boolean(assetName) && (assetStateQuery.isPending || metadataQuery.isPending);
+  const queryError = toError(assetStateQuery.error ?? metadataQuery.error);
+  const error = mutationError ?? queryError;
 
   function invalidateAssetQueries(
     currentAssetName: string,
@@ -77,57 +61,73 @@ export function usePdfDocument(assetName: string | null) {
     }
   }
 
+  function writeAssetStateCache(
+    currentAssetName: string,
+    nextState: PdfAssetState,
+    options: {
+      overlayLocalShellUi?: boolean;
+    } = {},
+  ): void {
+    const { overlayLocalShellUi = false } = options;
+    const normalizedState = overlayLocalShellUi
+      ? mergeLocalShellUiState(currentAssetName, nextState)
+      : nextState;
+    queryClient.setQueryData<PdfAssetState>(
+      queryKeys.assetState(currentAssetName),
+      normalizedState,
+    );
+  }
+
   async function refresh(): Promise<PdfAssetState | null> {
     const currentAssetName = assetName;
     if (!currentAssetName) {
       return null;
     }
 
-    setLoading(true);
-    setError(null);
+    setMutationError(null);
 
     try {
-      const [nextAssetState, nextMetadata] = await Promise.all([
-        api.assets.getState(currentAssetName),
-        api.pdf.getMetadata(currentAssetName),
+      const [assetResult, metadataResult] = await Promise.all([
+        assetStateQuery.refetch(),
+        metadataQuery.refetch(),
       ]);
-
-      startTransition(() => {
-        setAssetState(nextAssetState);
-        setMetadata(nextMetadata);
-      });
-
-      return nextAssetState;
+      if (assetResult.error) {
+        throw assetResult.error;
+      }
+      if (metadataResult.error) {
+        throw metadataResult.error;
+      }
+      return assetResult.data ?? null;
     } catch (reason) {
-      setError(toError(reason));
-      throw reason;
-    } finally {
-      setLoading(false);
+      const nextError = toError(reason);
+      setMutationError(nextError);
+      throw nextError;
     }
   }
 
-  async function createBlock(pageIndex: number, rect: PdfRect): Promise<PdfAssetState | null> {
+  async function createBlock(pageIndex: number, fractionRect: PdfRect): Promise<PdfAssetState | null> {
     const currentAssetName = assetName;
     if (!currentAssetName) {
       return null;
     }
 
     setMutating(true);
-    setError(null);
+    setMutationError(null);
 
     try {
       const nextAssetState = await api.pdf.createBlock(currentAssetName, {
         pageIndex,
-        rect,
+        fractionRect,
       });
-      startTransition(() => {
-        setAssetState(nextAssetState);
+      writeAssetStateCache(currentAssetName, nextAssetState, {
+        overlayLocalShellUi: true,
       });
       invalidateAssetQueries(currentAssetName);
       return nextAssetState;
     } catch (reason) {
-      setError(toError(reason));
-      throw reason;
+      const nextError = toError(reason);
+      setMutationError(nextError);
+      throw nextError;
     } finally {
       setMutating(false);
     }
@@ -140,18 +140,19 @@ export function usePdfDocument(assetName: string | null) {
     }
 
     setMutating(true);
-    setError(null);
+    setMutationError(null);
 
     try {
       const nextAssetState = await api.pdf.deleteBlock(currentAssetName, blockId);
-      startTransition(() => {
-        setAssetState(nextAssetState);
+      writeAssetStateCache(currentAssetName, nextAssetState, {
+        overlayLocalShellUi: true,
       });
       invalidateAssetQueries(currentAssetName);
       return nextAssetState;
     } catch (reason) {
-      setError(toError(reason));
-      throw reason;
+      const nextError = toError(reason);
+      setMutationError(nextError);
+      throw nextError;
     } finally {
       setMutating(false);
     }
@@ -164,20 +165,21 @@ export function usePdfDocument(assetName: string | null) {
     }
 
     setMutating(true);
-    setError(null);
+    setMutationError(null);
 
     try {
       const nextAssetState = await api.pdf.deleteGroup(currentAssetName, groupIdx);
-      startTransition(() => {
-        setAssetState(nextAssetState);
+      writeAssetStateCache(currentAssetName, nextAssetState, {
+        overlayLocalShellUi: true,
       });
       invalidateAssetQueries(currentAssetName, {
         includeMarkdownTree: true,
       });
       return nextAssetState;
     } catch (reason) {
-      setError(toError(reason));
-      throw reason;
+      const nextError = toError(reason);
+      setMutationError(nextError);
+      throw nextError;
     } finally {
       setMutating(false);
     }
@@ -189,28 +191,33 @@ export function usePdfDocument(assetName: string | null) {
       return null;
     }
 
-    if (assetState) {
-      startTransition(() => {
-        setAssetState({
-          ...assetState,
-          mergeOrder: [...mergeOrder],
-        });
+    const previousAssetState = queryClient.getQueryData<PdfAssetState>(
+      queryKeys.assetState(currentAssetName),
+    );
+    if (previousAssetState) {
+      writeAssetStateCache(currentAssetName, {
+        ...previousAssetState,
+        mergeOrder: [...mergeOrder],
       });
     }
 
     setMutating(true);
-    setError(null);
+    setMutationError(null);
 
     try {
       const nextAssetState = await api.pdf.updateSelection(currentAssetName, mergeOrder);
-      startTransition(() => {
-        setAssetState(nextAssetState);
+      writeAssetStateCache(currentAssetName, nextAssetState, {
+        overlayLocalShellUi: true,
       });
       return nextAssetState;
     } catch (reason) {
-      setError(toError(reason));
+      if (previousAssetState) {
+        writeAssetStateCache(currentAssetName, previousAssetState);
+      }
+      const nextError = toError(reason);
+      setMutationError(nextError);
       void refresh();
-      throw reason;
+      throw nextError;
     } finally {
       setMutating(false);
     }
@@ -236,20 +243,21 @@ export function usePdfDocument(assetName: string | null) {
     }
 
     setMutating(true);
-    setError(null);
+    setMutationError(null);
 
     try {
       const nextAssetState = await api.pdf.mergeGroup(currentAssetName, selectedBlockIds, options);
-      startTransition(() => {
-        setAssetState(nextAssetState);
+      writeAssetStateCache(currentAssetName, nextAssetState, {
+        overlayLocalShellUi: true,
       });
       invalidateAssetQueries(currentAssetName, {
         includeMarkdownTree: true,
       });
       return nextAssetState;
     } catch (reason) {
-      setError(toError(reason));
-      throw reason;
+      const nextError = toError(reason);
+      setMutationError(nextError);
+      throw nextError;
     } finally {
       setMutating(false);
     }
@@ -259,45 +267,80 @@ export function usePdfDocument(assetName: string | null) {
     patch: Partial<PdfUiState>,
   ): Promise<PdfAssetState | null> {
     const currentAssetName = assetName;
-    if (!currentAssetName || !assetState) {
+    const currentAssetState = queryClient.getQueryData<PdfAssetState>(
+      queryKeys.assetState(currentAssetName),
+    );
+    if (!currentAssetName || !currentAssetState) {
       return null;
     }
 
+    const baseUiState = mergeLocalShellUiState(currentAssetName, currentAssetState).uiState;
     const nextUiState: PdfUiState = {
-      ...assetState.uiState,
+      ...baseUiState,
       ...patch,
     };
-
-    startTransition(() => {
-      setAssetState({
-        ...assetState,
-        uiState: nextUiState,
-      });
+    const optimisticState: PdfAssetState = {
+      ...currentAssetState,
+      uiState: nextUiState,
+    };
+    const requestSequence = ++uiStateMutationSequenceRef.current;
+    pendingUiStateMutationsRef.current += 1;
+    writeAssetStateCache(currentAssetName, optimisticState, {
+      overlayLocalShellUi: true,
     });
+
+    if (pendingUiStateMutationsRef.current === 1) {
+      setMutating(true);
+    }
+    setMutationError(null);
 
     try {
       const persistedAssetState = await api.pdf.updateUiState(currentAssetName, nextUiState);
-      if (persistedAssetState) {
-        startTransition(() => {
-          setAssetState(persistedAssetState);
-        });
-        return persistedAssetState;
+      const normalizedPersistedAssetState = persistedAssetState
+        ? mergeLocalShellUiState(currentAssetName, persistedAssetState)
+        : optimisticState;
+      if (
+        activeAssetNameRef.current !== currentAssetName ||
+        requestSequence !== uiStateMutationSequenceRef.current
+      ) {
+        return normalizedPersistedAssetState;
       }
 
-      return {
-        ...assetState,
-        uiState: nextUiState,
-      };
+      if (persistedAssetState) {
+        writeAssetStateCache(currentAssetName, normalizedPersistedAssetState);
+        return normalizedPersistedAssetState;
+      }
+
+      return optimisticState;
     } catch (reason) {
-      setError(toError(reason));
+      if (
+        activeAssetNameRef.current !== currentAssetName ||
+        requestSequence !== uiStateMutationSequenceRef.current
+      ) {
+        return optimisticState;
+      }
+
+      writeAssetStateCache(currentAssetName, currentAssetState, {
+        overlayLocalShellUi: true,
+      });
+      const nextError = toError(reason);
+      setMutationError(nextError);
       void refresh();
-      throw reason;
+      throw nextError;
+    } finally {
+      if (activeAssetNameRef.current === currentAssetName) {
+        pendingUiStateMutationsRef.current = Math.max(0, pendingUiStateMutationsRef.current - 1);
+        if (!pendingUiStateMutationsRef.current) {
+          setMutating(false);
+        }
+      }
     }
   }
 
   return {
     assetState,
     metadata,
+    pdfFileUrl,
     loading,
     mutating,
     error,
@@ -311,6 +354,44 @@ export function usePdfDocument(assetName: string | null) {
   };
 }
 
-function toError(reason: unknown): Error {
+function toError(reason: unknown): Error | null {
+  if (!reason) {
+    return null;
+  }
   return reason instanceof Error ? reason : new Error("Unknown PDF pane error.");
+}
+
+function mergeLocalShellUiState(
+  assetName: string,
+  assetState: PdfAssetState,
+): PdfAssetState {
+  const state = useAppStore.getState();
+  if (state.selectedAssetName !== assetName) {
+    return assetState;
+  }
+
+  const openMarkdownPaths = getOpenMarkdownPathsForAsset(state, assetName);
+  const currentMarkdownPath =
+    state.currentMarkdownPath && openMarkdownPaths.includes(state.currentMarkdownPath)
+      ? state.currentMarkdownPath
+      : null;
+
+  return {
+    ...assetState,
+    uiState: {
+      ...assetState.uiState,
+      currentMarkdownPath,
+      openMarkdownPaths: dedupePaths([
+        ...openMarkdownPaths,
+        ...(currentMarkdownPath ? [currentMarkdownPath] : []),
+      ]),
+      sidebarCollapsed: state.sidebarCollapsed,
+      sidebarCollapsedNodeIds: [...(state.sidebarCollapsedNodeIdsByAsset[assetName] ?? [])],
+      markdownScrollFractions: {
+        ...(state.markdownScrollFractionsByAsset[assetName] ?? {}),
+      },
+      sidebarWidthRatio: state.sidebarWidthRatio,
+      rightRailWidthRatio: state.rightRailWidthRatio,
+    },
+  };
 }

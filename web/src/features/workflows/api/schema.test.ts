@@ -57,4 +57,3 @@ describe("workflow schema helpers", () => {
     expect(findPreferredGroupMarkdownNode(tree as never, 99)).toBeNull();
   });
 });
-
