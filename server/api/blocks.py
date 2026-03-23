@@ -6,10 +6,13 @@ from server.schemas import (
     AssetStateModel,
     CreateBlockRequest,
     MergeGroupRequest,
+    PreviewMergeMarkdownRequest,
+    PreviewMergeMarkdownResponse,
     UpdateSelectionRequest,
     UpdateUiStateRequest,
 )
 from server.services import assets as asset_service
+from server.services import pdf as pdf_service
 
 
 router = APIRouter(tags=["blocks"])
@@ -38,6 +41,17 @@ def merge_group(asset_name: str, request: MergeGroupRequest) -> AssetStateModel:
         markdown_content=request.markdownContent,
         group_idx=request.groupIdx,
     )
+
+
+@router.post(
+    "/assets/{asset_name:path}/groups/markdown-preview",
+    response_model=PreviewMergeMarkdownResponse,
+)
+def preview_merge_markdown(
+    asset_name: str,
+    request: PreviewMergeMarkdownRequest,
+) -> PreviewMergeMarkdownResponse:
+    return pdf_service.preview_merge_markdown(asset_name, request.blockIds)
 
 
 @router.delete("/assets/{asset_name:path}/groups/{group_idx}", response_model=AssetStateModel)

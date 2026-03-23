@@ -159,6 +159,7 @@ function createApi(overrides: {
       deleteBlock: vi.fn(async () => assetState),
       deleteGroup: vi.fn(async () => assetState),
       updateSelection: vi.fn(async () => assetState),
+      previewMergeMarkdown: vi.fn(async () => ({ markdown: "" })),
       mergeGroup: vi.fn(async () => assetState),
       updateUiState: vi.fn(async () => assetState),
     },

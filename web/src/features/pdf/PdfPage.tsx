@@ -53,7 +53,7 @@ interface PdfPageProps {
   onSurfacePointerCancel: () => void;
   onBlockClick: (block: PdfBlockRecord) => void;
   onBlockDelete: (block: PdfBlockRecord) => void;
-  onMergeSelectionByMarkdown: () => void;
+  onMergeSelection: () => void;
   onBlockHoverEnter: (block: PdfBlockRecord) => void;
   onBlockHoverLeave: (block: PdfBlockRecord) => void;
   pdfDocument: PDFDocumentProxy | null;
@@ -82,7 +82,7 @@ export function PdfPage({
   onSurfacePointerCancel,
   onBlockClick,
   onBlockDelete,
-  onMergeSelectionByMarkdown,
+  onMergeSelection,
   onBlockHoverEnter,
   onBlockHoverLeave,
   pdfDocument,
@@ -294,24 +294,24 @@ export function PdfPage({
               style={mergeActionStyle}
             >
               <button
-                className="pdf-page__mergeAction pdf-page__mergeAction--markdown"
+                className="pdf-page__mergeAction pdf-page__mergeAction--merge"
                 disabled={mergeSelectionBusy}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  onMergeSelectionByMarkdown();
+                  onMergeSelection();
                 }}
                 onPointerDown={(event) => {
                   event.stopPropagation();
                 }}
                 title={
                   mergeSelectionAction.totalSelectedCount > 1
-                    ? `Merge ${mergeSelectionAction.totalSelectedCount} selected blocks by markdown`
-                    : "Create a group from the selected block by markdown"
+                    ? `Auto-fill markdown from ${mergeSelectionAction.totalSelectedCount} selected blocks`
+                    : "Auto-fill markdown from the selected block"
                 }
                 type="button"
               >
-                Merge by md
+                Merge
               </button>
             </div>
           ) : null}

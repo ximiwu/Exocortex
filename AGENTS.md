@@ -26,6 +26,7 @@ This file documents the current architecture contract of the repository. Keep it
 - Browser-based `new asset` imports require a PDF source file, a markdown file, and a JSON content list file; the JSON must be stored at `content_list.json` in the asset directory.
 - Browser-based `new asset` imports write `content_list.json` and `content_list_unified.json` immediately after `raw.pdf` is saved. In `content_list.json`, each `bbox` is `[x0, y0, x1, y1]` in a top-left-origin page coordinate space scaled to integer `0..1000` on each axis, not raw PDF points or image pixels. `content_list_unified.json` preserves each item as-is except that `page_idx` is converted to 1-based indexing, `bbox` is removed, and normalized `x`, `y`, `width`, and `height` fields are written as `x0/1000`, `y0/1000`, `(x1-x0)/1000`, and `(y1-y0)/1000`.
 - Opening an existing asset should auto-generate `content_list_unified.json` from sibling `content_list.json` when the unified file is missing, using the same backend conversion path as `new asset`.
+- `POST /api/assets/{asset_name:path}/groups/markdown-preview` generates manual-merge prefill Markdown from the current selected blocks by filtering fully contained entries from `content_list_unified.json` in original file order and rendering them as Markdown fragments.
 - System-wide UI and tutor ask preferences are stored in `Documents/ximiwu_app/Exocortex/config.json` and exposed through `GET /api/system/config` and `PUT /api/system/config`.
 - PDF block wire contracts use normalized page fractions (`fractionRect`) in the `page_fraction_v1` coordinate space. Legacy block files without `coordinate_space` are treated as `reference_dpi_130` and auto-migrated.
 - Backend wire schemas live in `server/schemas/`. Do not create route-local ad hoc response models when a shared schema belongs there.
@@ -129,7 +130,7 @@ This file documents the current architecture contract of the repository. Keep it
   - `npm run generate:contracts`
   - `npm run lint`
   - `npm run typecheck`
-  - `npm run test:unit -- --run`
+  - `npm run test:unit -- --run`(--run is important)
   - `npm run build`
 - CI in `.github/workflows/ci.yml` is the canonical gate. Local workflows should stay aligned with those commands.
 

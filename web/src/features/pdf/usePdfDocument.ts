@@ -263,6 +263,15 @@ export function usePdfDocument(assetName: string | null) {
     }
   }
 
+  async function previewMergeMarkdown(blockIds: number[]): Promise<{ markdown: string }> {
+    const currentAssetName = assetName;
+    if (!currentAssetName) {
+      return { markdown: "" };
+    }
+
+    return api.pdf.previewMergeMarkdown(currentAssetName, blockIds);
+  }
+
   async function patchUiState(
     patch: Partial<PdfUiState>,
   ): Promise<PdfAssetState | null> {
@@ -348,6 +357,7 @@ export function usePdfDocument(assetName: string | null) {
     createBlock,
     deleteBlock,
     deleteGroup,
+    previewMergeMarkdown,
     mergeGroup,
     updateSelection,
     patchUiState,

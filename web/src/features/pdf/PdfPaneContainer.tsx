@@ -43,6 +43,7 @@ export function PdfPaneContainer({
     createBlock,
     deleteBlock,
     deleteGroup,
+    previewMergeMarkdown,
     mergeGroup,
     updateSelection,
     patchUiState,
@@ -85,6 +86,7 @@ export function PdfPaneContainer({
       onCreateBlock={createBlock}
       onDeleteBlock={(block) => deleteBlock(block.blockId)}
       onDeleteGroup={deleteGroup}
+      onPreviewMergeMarkdown={previewMergeMarkdown}
       onMergeSelection={mergeGroup}
       onGroupedBlockActivate={onGroupedBlockActivate}
       onRefresh={() => {

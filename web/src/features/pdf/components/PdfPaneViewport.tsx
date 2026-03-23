@@ -38,6 +38,7 @@ interface PdfPaneViewportProps {
   canvasWidth: number;
   canvasHeight: number;
   busy: boolean;
+  mergeSelectionBusy: boolean;
   appMode: AppMode;
   zoom: number;
   isScrolling: boolean;
@@ -61,7 +62,7 @@ interface PdfPaneViewportProps {
   onBlockDelete: (block: PdfBlockRecord) => void;
   onBlockHoverEnter: (block: PdfBlockRecord) => void;
   onBlockHoverLeave: (block: PdfBlockRecord) => void;
-  onMergeSelectionByMarkdown: () => void;
+  onMergeSelection: () => void;
 }
 
 export function PdfPaneViewport({
@@ -73,6 +74,7 @@ export function PdfPaneViewport({
   canvasWidth,
   canvasHeight,
   busy,
+  mergeSelectionBusy,
   appMode,
   zoom,
   isScrolling,
@@ -96,7 +98,7 @@ export function PdfPaneViewport({
   onBlockDelete,
   onBlockHoverEnter,
   onBlockHoverLeave,
-  onMergeSelectionByMarkdown,
+  onMergeSelection,
 }: PdfPaneViewportProps) {
   useEffect(() => {
     if (!pdfDocument) {
@@ -245,12 +247,12 @@ export function PdfPaneViewport({
               mergeSelectionAction={
                 mergeSelectionAction?.pageIndex === pageIndex ? mergeSelectionAction : null
               }
-              mergeSelectionBusy={busy}
+              mergeSelectionBusy={mergeSelectionBusy}
               onBlockClick={onBlockClick}
               onBlockDelete={onBlockDelete}
               onBlockHoverEnter={onBlockHoverEnter}
               onBlockHoverLeave={onBlockHoverLeave}
-              onMergeSelectionByMarkdown={onMergeSelectionByMarkdown}
+              onMergeSelection={onMergeSelection}
               onSurfacePointerCancel={() => {
                 dragSelection.cancelDrag();
               }}

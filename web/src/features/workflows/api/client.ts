@@ -24,6 +24,7 @@ import type {
   ImportAssetPayload,
   IntegrateTaskPayload,
   PdfPageTextBoxes,
+  PreviewMergeMarkdownResponse,
   TutorTaskPayload,
 } from "./schema";
 import { createMockExocortexApi } from "./mockClient";
@@ -50,6 +51,7 @@ export interface ExocortexClient {
   deleteBlock(assetName: string, blockId: number): Promise<AssetState>;
   deleteGroup(assetName: string, groupIdx: number): Promise<AssetState>;
   updateBlockSelection(assetName: string, mergeOrder: number[]): Promise<AssetState>;
+  previewMergeMarkdown(assetName: string, blockIds: number[]): Promise<PreviewMergeMarkdownResponse>;
   mergeGroup(
     assetName: string,
     blockIds: number[],
@@ -259,6 +261,18 @@ class HttpExocortexClient implements ExocortexClient {
       },
       body: JSON.stringify({
         mergeOrder,
+      }),
+    });
+  }
+
+  previewMergeMarkdown(assetName: string, blockIds: number[]): Promise<PreviewMergeMarkdownResponse> {
+    return this.requestJson(`/assets/${encodeURIComponent(assetName)}/groups/markdown-preview`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        blockIds,
       }),
     });
   }

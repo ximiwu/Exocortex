@@ -89,6 +89,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/assets/{asset_name}/groups/markdown-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview Merge Markdown */
+        post: operations["preview_merge_markdown_api_assets__asset_name__groups_markdown_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/assets/{asset_name}/groups/{group_idx}": {
         parameters: {
             query?: never;
@@ -914,6 +931,19 @@ export interface components {
             pageIndex: number;
             fractionRect: components["schemas"]["RectModel"];
         };
+        /** PreviewMergeMarkdownRequest */
+        PreviewMergeMarkdownRequest: {
+            /** Blockids */
+            blockIds?: number[];
+        };
+        /** PreviewMergeMarkdownResponse */
+        PreviewMergeMarkdownResponse: {
+            /**
+             * Markdown
+             * @default
+             */
+            markdown: string;
+        };
         /** ReTutorWorkflowRequest */
         ReTutorWorkflowRequest: {
             /** Assetname */
@@ -1319,6 +1349,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AssetStateModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_merge_markdown_api_assets__asset_name__groups_markdown_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asset_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewMergeMarkdownRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewMergeMarkdownResponse"];
                 };
             };
             /** @description Validation Error */

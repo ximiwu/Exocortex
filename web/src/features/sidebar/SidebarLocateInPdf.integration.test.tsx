@@ -164,6 +164,7 @@ function createApi(): ExocortexApi {
       deleteBlock: vi.fn(async () => ASSET_STATE),
       deleteGroup: vi.fn(async () => ASSET_STATE),
       updateSelection: vi.fn(async () => ASSET_STATE),
+      previewMergeMarkdown: vi.fn(async () => ({ markdown: "" })),
       mergeGroup: vi.fn(async () => ASSET_STATE),
       updateUiState: vi.fn(async (_assetName, uiState) => ({
         ...ASSET_STATE,

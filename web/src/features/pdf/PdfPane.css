@@ -287,11 +287,11 @@
   box-shadow: 0 8px 18px rgba(33, 37, 41, 0.16);
 }
 
-.pdf-page__mergeAction--markdown {
+.pdf-page__mergeAction--merge {
   background: var(--pdf-merge-markdown);
 }
 
-.pdf-page__mergeAction--markdown:hover {
+.pdf-page__mergeAction--merge:hover {
   background: var(--pdf-merge-markdown-hover);
 }
 
@@ -384,4 +384,12 @@
   width: 100%;
   min-height: 220px;
   resize: vertical;
+}
+
+.pdf-pane__markdownError {
+  margin: 0 0 0.9rem;
+  border-radius: 12px;
+  background: var(--pdf-error-surface);
+  color: var(--pdf-error-text);
+  padding: 0.7rem 0.9rem;
 }

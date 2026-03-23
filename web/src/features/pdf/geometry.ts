@@ -340,7 +340,7 @@ export function collectContainedTextBoxesForPage(
   }
 
   return findContainedTextBoxes(
-    blocks.filter((block) => block.pageIndex === pageIndex),
+    blocks.filter((block) => block.pageIndex === pageIndex && block.groupIdx == null),
     textBoxes.filter((textBox) => textBox.pageIndex === pageIndex),
   );
 }

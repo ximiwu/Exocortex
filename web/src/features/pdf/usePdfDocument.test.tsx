@@ -107,6 +107,9 @@ function resetStore(overrides: Partial<AppStoreState> = {}) {
 
 function createApiMock(
   updatePdfUiState: (assetName: string, uiState: PdfAssetState["uiState"]) => Promise<PdfAssetState>,
+  previewMergeMarkdown: (assetName: string, blockIds: number[]) => Promise<{ markdown: string }> = vi.fn(
+    async () => ({ markdown: "" }),
+  ),
 ): ExocortexApi {
   return {
     mode: "live",
@@ -157,6 +160,7 @@ function createApiMock(
       deleteBlock: vi.fn(),
       deleteGroup: vi.fn(),
       updateSelection: vi.fn(),
+      previewMergeMarkdown: vi.fn(previewMergeMarkdown),
       mergeGroup: vi.fn(),
       updateUiState: vi.fn(updatePdfUiState),
     },
@@ -410,5 +414,43 @@ describe("usePdfDocument", () => {
       expect(cachedState?.uiState.sidebarWidthRatio).toBe(0.42);
       expect(cachedState?.uiState.rightRailWidthRatio).toBe(0.33);
     });
+  });
+
+  it("exposes markdown preview through the PDF api wrapper", async () => {
+    const previewMergeMarkdown = vi.fn(async () => ({ markdown: "## Prefill" }));
+    const api = createApiMock(vi.fn(async (_assetName, uiState) => buildAssetState(uiState)), previewMergeMarkdown);
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+    let latestValue: PdfDocumentResult | null = null;
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ExocortexApiProvider api={api}>
+          <PdfDocumentHarness
+            assetName="asset-a"
+            onChange={(value) => {
+              latestValue = value;
+            }}
+          />
+        </ExocortexApiProvider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(latestValue?.assetState).not.toBeNull();
+    });
+
+    await act(async () => {
+      await expect(latestValue?.previewMergeMarkdown([4, 7])).resolves.toEqual({
+        markdown: "## Prefill",
+      });
+    });
+
+    expect(previewMergeMarkdown).toHaveBeenCalledWith("asset-a", [4, 7]);
   });
 });

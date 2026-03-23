@@ -110,4 +110,19 @@ describe("text box containment", () => {
     expect(result).toHaveLength(1);
     expect(result[0]?.pageIndex).toBe(0);
   });
+
+  it("skips text box overlays for blocks that already belong to a group", () => {
+    const groupedBlock: PdfBlockRecord = {
+      ...block,
+      groupIdx: 7,
+    };
+    const textBoxes: PdfTextBox[] = [
+      {
+        pageIndex: 0,
+        fractionRect: { x: 0.15, y: 0.25, width: 0.1, height: 0.05 },
+      },
+    ];
+
+    expect(collectContainedTextBoxesForPage(0, [groupedBlock], textBoxes)).toEqual([]);
+  });
 });

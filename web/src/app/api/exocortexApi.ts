@@ -34,6 +34,7 @@ import type {
   IntegrateTaskInput,
   MergeGroupInput,
   PdfPageTextBoxes,
+  PreviewMergeMarkdownResponse,
   RenameMarkdownNodeAliasInput,
   ReorderMarkdownSiblingsInput,
   ReTutorTaskInput,
@@ -74,6 +75,7 @@ export interface ExocortexApi {
     deleteBlock(assetName: string, blockId: number): Promise<AssetState>;
     deleteGroup(assetName: string, groupIdx: number): Promise<AssetState>;
     updateSelection(assetName: string, mergeOrder: number[]): Promise<AssetState>;
+    previewMergeMarkdown(assetName: string, blockIds: number[]): Promise<PreviewMergeMarkdownResponse>;
     mergeGroup(assetName: string, blockIds: number[], options?: MergeGroupInput): Promise<AssetState>;
     updateUiState(assetName: string, uiState: AssetState["uiState"]): Promise<AssetState>;
   };
@@ -153,6 +155,7 @@ export function wrapCoreApi(core: CoreExocortexApi): ExocortexApi {
       deleteBlock: (assetName, blockId) => core.deleteBlock(assetName, blockId),
       deleteGroup: (assetName, groupIdx) => core.deleteGroup(assetName, groupIdx),
       updateSelection: (assetName, mergeOrder) => core.updateBlockSelection(assetName, mergeOrder),
+      previewMergeMarkdown: (assetName, blockIds) => core.previewMergeMarkdown(assetName, blockIds),
       mergeGroup: (assetName, blockIds, options) => core.mergeGroup(assetName, blockIds, options),
       updateUiState: (assetName, uiState) => core.updatePdfUiState(assetName, uiState),
     },

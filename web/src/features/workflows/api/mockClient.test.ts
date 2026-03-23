@@ -68,4 +68,24 @@ describe("mock workflow client task artifacts", () => {
 
     unsubscribe();
   });
+
+  it("generates markdown previews from contained unified content-list entries", async () => {
+    const api = createMockExocortexApi();
+
+    await api.createBlock("physics/paper_1", {
+      pageIndex: 0,
+      fractionRect: {
+        x: 0.1,
+        y: 0.1,
+        width: 0.35,
+        height: 0.35,
+      },
+    });
+
+    const preview = await api.previewMergeMarkdown("physics/paper_1", [3]);
+
+    expect(preview.markdown).toContain("## Mock heading");
+    expect(preview.markdown).toContain("Mock paragraph for auto merge preview.");
+    expect(preview.markdown).toContain("Figure 1");
+  });
 });

@@ -87,6 +87,10 @@ export interface MergeGroupInput {
   groupIdx?: number | null;
 }
 
+export interface PreviewMergeMarkdownResponse {
+  markdown: string;
+}
+
 export type GroupTaskInput = GroupWorkflowRequest;
 export type TutorTaskInput = AskTutorWorkflowRequest;
 export type ReTutorTaskInput = ReTutorWorkflowRequest;

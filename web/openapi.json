@@ -233,6 +233,58 @@
         }
       }
     },
+    "/api/assets/{asset_name}/groups/markdown-preview": {
+      "post": {
+        "tags": [
+          "blocks"
+        ],
+        "summary": "Preview Merge Markdown",
+        "operationId": "preview_merge_markdown_api_assets__asset_name__groups_markdown_preview_post",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewMergeMarkdownRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewMergeMarkdownResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/assets/{asset_name}/groups/{group_idx}": {
       "delete": {
         "tags": [
@@ -2385,6 +2437,30 @@
           "fractionRect"
         ],
         "title": "PdfTextBoxModel"
+      },
+      "PreviewMergeMarkdownRequest": {
+        "properties": {
+          "blockIds": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Blockids"
+          }
+        },
+        "type": "object",
+        "title": "PreviewMergeMarkdownRequest"
+      },
+      "PreviewMergeMarkdownResponse": {
+        "properties": {
+          "markdown": {
+            "type": "string",
+            "title": "Markdown",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "PreviewMergeMarkdownResponse"
       },
       "ReTutorWorkflowRequest": {
         "properties": {

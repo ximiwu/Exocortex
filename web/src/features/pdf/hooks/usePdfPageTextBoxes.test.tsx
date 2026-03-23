@@ -44,6 +44,7 @@ function createApi(
       deleteBlock: vi.fn(),
       deleteGroup: vi.fn(),
       updateSelection: vi.fn(),
+      previewMergeMarkdown: vi.fn(async () => ({ markdown: "" })),
       mergeGroup: vi.fn(),
       updateUiState: vi.fn(),
     },

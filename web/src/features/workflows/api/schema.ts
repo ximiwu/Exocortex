@@ -28,6 +28,7 @@ export type {
   IntegrateTaskInput as IntegrateTaskPayload,
   PdfPageTextBoxes,
   PdfTextBox,
+  PreviewMergeMarkdownResponse,
   TutorTaskInput as TutorTaskPayload,
 } from "../../../app/api/types";
 export {

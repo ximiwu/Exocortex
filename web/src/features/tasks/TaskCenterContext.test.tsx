@@ -126,6 +126,7 @@ function createApi(): ExocortexApi {
       updateSelection: vi.fn(async () => {
         throw new Error("not implemented");
       }),
+      previewMergeMarkdown: vi.fn(async () => ({ markdown: "" })),
       mergeGroup: vi.fn(async () => {
         throw new Error("not implemented");
       }),

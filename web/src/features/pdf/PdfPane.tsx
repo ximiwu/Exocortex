@@ -43,6 +43,7 @@ export interface PdfPaneProps {
   onCreateBlock?: (pageIndex: number, rect: PdfRect) => Promise<unknown> | void;
   onDeleteBlock?: (block: PdfBlockRecord) => Promise<unknown> | void;
   onDeleteGroup?: (groupIdx: number) => Promise<unknown> | void;
+  onPreviewMergeMarkdown?: (blockIds: number[]) => Promise<{ markdown: string }> | { markdown: string };
   onMergeSelection?: (
     blockIds: number[],
     options?: {
@@ -75,6 +76,7 @@ export function PdfPane({
   onCreateBlock,
   onDeleteBlock,
   onDeleteGroup,
+  onPreviewMergeMarkdown,
   onMergeSelection,
   onSelectionChange,
   onGroupedBlockActivate,
@@ -86,7 +88,10 @@ export function PdfPane({
 }: PdfPaneProps) {
   const [markdownMergeDialogOpen, setMarkdownMergeDialogOpen] = useState(false);
   const [markdownMergeInput, setMarkdownMergeInput] = useState("");
+  const [markdownPrefillPending, setMarkdownPrefillPending] = useState(false);
+  const [markdownPrefillError, setMarkdownPrefillError] = useState<string | null>(null);
   const previousAssetNameRef = useRef<string | null>(null);
+  const markdownPreviewRequestIdRef = useRef(0);
 
   const interactions = usePdfPaneInteractions({
     assetName,
@@ -131,27 +136,61 @@ export function PdfPane({
   useEffect(() => {
     setMarkdownMergeDialogOpen(false);
     setMarkdownMergeInput("");
+    setMarkdownPrefillPending(false);
+    setMarkdownPrefillError(null);
+    markdownPreviewRequestIdRef.current += 1;
   }, [assetName, initialCompressSelection]);
 
-  function handleMergeSelectionByMarkdown(): void {
-    if (!assetState?.mergeOrder.length || !onMergeSelection) {
+  function cancelMarkdownPreview(): void {
+    markdownPreviewRequestIdRef.current += 1;
+    setMarkdownPrefillPending(false);
+  }
+
+  function handleMergeOpen(): void {
+    if (!assetState?.mergeOrder.length || !onMergeSelection || !onPreviewMergeMarkdown) {
       return;
     }
 
+    const requestId = markdownPreviewRequestIdRef.current + 1;
+    markdownPreviewRequestIdRef.current = requestId;
     setMarkdownMergeDialogOpen(true);
+    setMarkdownPrefillPending(true);
+    setMarkdownPrefillError(null);
+
+    void Promise.resolve(onPreviewMergeMarkdown(assetState.mergeOrder))
+      .then((response) => {
+        if (markdownPreviewRequestIdRef.current !== requestId) {
+          return;
+        }
+
+        setMarkdownMergeInput(response.markdown);
+        setMarkdownPrefillPending(false);
+      })
+      .catch((reason: unknown) => {
+        if (markdownPreviewRequestIdRef.current !== requestId) {
+          return;
+        }
+
+        setMarkdownPrefillPending(false);
+        setMarkdownPrefillError(toErrorMessage(reason));
+      });
   }
 
   function handleMarkdownMergeConfirm(): void {
-    if (!assetState?.mergeOrder.length || !onMergeSelection) {
+    if (!assetState?.mergeOrder.length || !onMergeSelection || markdownPrefillPending) {
       return;
     }
 
     void onMergeSelection(assetState.mergeOrder, {
       markdownContent: markdownMergeInput,
     });
+    cancelMarkdownPreview();
+    setMarkdownPrefillError(null);
     setMarkdownMergeDialogOpen(false);
     setMarkdownMergeInput("");
   }
+
+  const dialogBusy = busy || markdownPrefillPending;
 
   return (
     <section className={joinClasses("pdf-pane", className)}>
@@ -203,11 +242,12 @@ export function PdfPane({
           onBlockHoverLeave={interactions.handleBlockHoverLeave}
           onCancelPan={interactions.cancelPan}
           onEndPan={interactions.endPan}
-          onMergeSelectionByMarkdown={handleMergeSelectionByMarkdown}
+          onMergeSelection={handleMergeOpen}
           onScroll={interactions.handleScroll}
           onUpdatePan={interactions.updatePan}
           pageSizes={interactions.pageSizes}
           preheatPageIndexes={interactions.preheatPageIndexes}
+          mergeSelectionBusy={dialogBusy}
           selectionOrderByBlock={interactions.selectionOrderByBlock}
           suppressNextContextMenuRef={interactions.suppressNextContextMenuRef}
           textBoxesByPage={pageTextBoxes.textBoxesByPage}
@@ -218,9 +258,12 @@ export function PdfPane({
         />
       )}
       <PdfMarkdownMergeDialog
-        busy={busy}
+        busy={dialogBusy}
+        error={markdownPrefillError}
         markdown={markdownMergeInput}
         onClose={() => {
+          cancelMarkdownPreview();
+          setMarkdownPrefillError(null);
           setMarkdownMergeDialogOpen(false);
         }}
         onConfirm={handleMarkdownMergeConfirm}
@@ -233,4 +276,11 @@ export function PdfPane({
 
 function joinClasses(...values: Array<string | undefined>): string {
   return values.filter(Boolean).join(" ");
+}
+
+function toErrorMessage(reason: unknown): string {
+  if (reason instanceof Error && reason.message) {
+    return reason.message;
+  }
+  return "Failed to generate markdown from the current selection.";
 }

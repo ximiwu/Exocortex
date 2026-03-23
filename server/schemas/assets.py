@@ -104,6 +104,14 @@ class MergeGroupRequest(BaseModel):
     groupIdx: int | None = None
 
 
+class PreviewMergeMarkdownRequest(BaseModel):
+    blockIds: list[int] = Field(default_factory=list)
+
+
+class PreviewMergeMarkdownResponse(BaseModel):
+    markdown: str = ""
+
+
 class UpdateUiStateRequest(BaseModel):
     currentPage: int | None = None
     zoom: float | None = None
@@ -155,6 +163,8 @@ __all__ = [
     "PdfMetadataModel",
     "PdfPageTextBoxesModel",
     "PdfTextBoxModel",
+    "PreviewMergeMarkdownRequest",
+    "PreviewMergeMarkdownResponse",
     "ReorderMarkdownSiblingsRequest",
     "TutorSessionModel",
     "UiStateModel",

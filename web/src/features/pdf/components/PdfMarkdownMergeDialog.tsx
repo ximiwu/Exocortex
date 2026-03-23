@@ -6,6 +6,7 @@ interface PdfMarkdownMergeDialogProps {
   open: boolean;
   busy: boolean;
   markdown: string;
+  error?: string | null;
   onMarkdownChange: (value: string) => void;
   onClose: () => void;
   onConfirm: () => void;
@@ -15,6 +16,7 @@ export function PdfMarkdownMergeDialog({
   open,
   busy,
   markdown,
+  error = null,
   onMarkdownChange,
   onClose,
   onConfirm,
@@ -42,11 +44,12 @@ export function PdfMarkdownMergeDialog({
         }}
         onSubmit={handleSubmit}
       >
-        <h2>Merge by md</h2>
+        <h2>Merge</h2>
         <p className="modal-copy">
-          Write the markdown for the new group. Confirming will merge the selected blocks and save the result to{" "}
-          <code>content.md</code>.
+          Review or edit the generated markdown for the new group. Confirming will merge the selected blocks and
+          save the result to <code>content.md</code>.
         </p>
+        {error ? <p className="pdf-pane__markdownError">{error}</p> : null}
         <label className="form-field">
           <span>Markdown</span>
           <textarea

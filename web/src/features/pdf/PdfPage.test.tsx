@@ -69,7 +69,7 @@ describe("PdfPage", () => {
         onBlockDelete={() => undefined}
         onBlockHoverEnter={() => undefined}
         onBlockHoverLeave={() => undefined}
-        onMergeSelectionByMarkdown={() => undefined}
+        onMergeSelection={() => undefined}
         onSurfacePointerCancel={() => undefined}
         onSurfacePointerDown={() => undefined}
         onSurfacePointerMove={() => undefined}
@@ -140,7 +140,7 @@ describe("PdfPage", () => {
         onBlockDelete={() => undefined}
         onBlockHoverEnter={() => undefined}
         onBlockHoverLeave={() => undefined}
-        onMergeSelectionByMarkdown={() => undefined}
+        onMergeSelection={() => undefined}
         onSurfacePointerCancel={() => undefined}
         onSurfacePointerDown={() => undefined}
         onSurfacePointerMove={() => undefined}
@@ -182,7 +182,7 @@ describe("PdfPage", () => {
         onBlockDelete={() => undefined}
         onBlockHoverEnter={() => undefined}
         onBlockHoverLeave={() => undefined}
-        onMergeSelectionByMarkdown={() => undefined}
+        onMergeSelection={() => undefined}
         onSurfacePointerCancel={() => undefined}
         onSurfacePointerDown={() => undefined}
         onSurfacePointerMove={() => undefined}
@@ -243,7 +243,7 @@ describe("PdfPage", () => {
         onBlockDelete={() => undefined}
         onBlockHoverEnter={() => undefined}
         onBlockHoverLeave={() => undefined}
-        onMergeSelectionByMarkdown={() => undefined}
+        onMergeSelection={() => undefined}
         onSurfacePointerCancel={() => undefined}
         onSurfacePointerDown={() => undefined}
         onSurfacePointerMove={() => undefined}
@@ -292,7 +292,7 @@ describe("PdfPage", () => {
         onBlockDelete={() => undefined}
         onBlockHoverEnter={() => undefined}
         onBlockHoverLeave={() => undefined}
-        onMergeSelectionByMarkdown={() => undefined}
+        onMergeSelection={() => undefined}
         onSurfacePointerCancel={() => undefined}
         onSurfacePointerDown={() => undefined}
         onSurfacePointerMove={() => undefined}
@@ -344,7 +344,7 @@ describe("PdfPage", () => {
         onBlockDelete={() => undefined}
         onBlockHoverEnter={() => undefined}
         onBlockHoverLeave={() => undefined}
-        onMergeSelectionByMarkdown={() => undefined}
+        onMergeSelection={() => undefined}
         onSurfacePointerCancel={() => undefined}
         onSurfacePointerDown={() => undefined}
         onSurfacePointerMove={() => undefined}
@@ -367,5 +367,55 @@ describe("PdfPage", () => {
     expect(queryAllByTestId("pdf-text-box-overlay")).toHaveLength(1);
     fireEvent.click(getByRole("button", { name: "Block 1" }));
     expect(onBlockClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders a merge button for an active selection", () => {
+    const onMergeSelection = vi.fn();
+
+    const { getByRole } = render(
+      <PdfPage
+        assetName="asset-a"
+        appMode="normal"
+        blocks={[]}
+        textBoxes={[]}
+        busy={false}
+        compressSelection={null}
+        dragPreviewActive={false}
+        dragPreviewRect={null}
+        hoveredBlockId={null}
+        hoveredGroupIdx={null}
+        mergeSelectionAction={{
+          pageIndex: 0,
+          rect: { x: 0.1, y: 0.1, width: 0.3, height: 0.2 },
+          totalSelectedCount: 2,
+        }}
+        mergeSelectionBusy={false}
+        onBlockClick={() => undefined}
+        onBlockDelete={() => undefined}
+        onBlockHoverEnter={() => undefined}
+        onBlockHoverLeave={() => undefined}
+        onMergeSelection={onMergeSelection}
+        onSurfacePointerCancel={() => undefined}
+        onSurfacePointerDown={() => undefined}
+        onSurfacePointerMove={() => undefined}
+        onSurfacePointerUp={() => undefined}
+        pageLayout={{
+          pageIndex: 0,
+          top: 0,
+          left: 0,
+          width: 400,
+          height: 600,
+          bottom: 600,
+        }}
+        pdfDocument={null}
+        renderQuality="final"
+        selectionOrderByBlock={new Map()}
+        zoom={1}
+      />,
+    );
+
+    fireEvent.click(getByRole("button", { name: "Merge" }));
+
+    expect(onMergeSelection).toHaveBeenCalledTimes(1);
   });
 });

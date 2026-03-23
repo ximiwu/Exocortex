@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 interface ContextMenuAnchor {
   x: number;
@@ -19,6 +19,9 @@ export function ContextMenu({
   onClose,
   children,
 }: ContextMenuProps) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState<ContextMenuAnchor | null>(null);
+
   useEffect(() => {
     if (!open) {
       return undefined;
@@ -40,16 +43,35 @@ export function ContextMenu({
     };
   }, [onClose, open]);
 
+  useLayoutEffect(() => {
+    if (!open || !anchor || typeof window === "undefined" || !menuRef.current) {
+      setPosition(null);
+      return;
+    }
+
+    const viewportPadding = 12;
+    const menuBounds = menuRef.current.getBoundingClientRect();
+    const maxLeft = Math.max(viewportPadding, window.innerWidth - menuBounds.width - viewportPadding);
+    const maxTop = Math.max(viewportPadding, window.innerHeight - menuBounds.height - viewportPadding);
+
+    setPosition({
+      x: Math.min(Math.max(viewportPadding, anchor.x), maxLeft),
+      y: Math.min(Math.max(viewportPadding, anchor.y), maxTop),
+    });
+  }, [anchor, children, open]);
+
   if (!open || !anchor || typeof document === "undefined") {
     return null;
   }
 
   return createPortal(
     <div
+      ref={menuRef}
       className="markdown-contextMenu"
       style={{
-        left: `${Math.max(12, anchor.x)}px`,
-        top: `${Math.max(12, anchor.y)}px`,
+        left: `${position?.x ?? Math.max(12, anchor.x)}px`,
+        top: `${position?.y ?? Math.max(12, anchor.y)}px`,
+        visibility: position ? "visible" : "hidden",
       }}
       role="menu"
       onClick={(event) => {
