@@ -18,6 +18,7 @@ interface MarkdownDocumentProps {
   html: string;
   loading: boolean;
   error: string | null;
+  renderVersion: number;
 }
 
 const RenderedMarkdownContent = memo(function RenderedMarkdownContent({
@@ -44,7 +45,14 @@ function hashHtml(value: string) {
   return hash.toString(16);
 }
 
-export function MarkdownDocument({ assetName, path, html, loading, error }: MarkdownDocumentProps) {
+export function MarkdownDocument({
+  assetName,
+  path,
+  html,
+  loading,
+  error,
+  renderVersion,
+}: MarkdownDocumentProps) {
   const api = useExocortexApi();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -57,7 +65,7 @@ export function MarkdownDocument({ assetName, path, html, loading, error }: Mark
     text: string;
   } | null>(null);
   const [creatingTutorSession, setCreatingTutorSession] = useState(false);
-  const contentKey = path ? `${path}:${hashHtml(html)}` : "empty";
+  const contentKey = path ? `${path}:${renderVersion}:${hashHtml(html)}` : "empty";
   const canAskTutorFromSelection = isInlineTutorSelectionEnabled(path);
 
   useEffect(() => {

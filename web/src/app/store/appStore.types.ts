@@ -51,6 +51,7 @@ export interface WorkspaceTabsSlice {
   sidebarRevealTarget: SidebarRevealTarget | null;
   openTabs: MarkdownTab[];
   markdownScrollFractionsByAsset: Record<string, Record<string, number>>;
+  markdownRenderVersionsByAsset: Record<string, Record<string, number>>;
   setCurrentMarkdownPath: (path: string | null) => void;
   toggleSidebarNode: (assetName: string, nodeId: string) => void;
   openMarkdownTab: (tab: MarkdownTab, options?: { source?: MarkdownOpenSource }) => void;

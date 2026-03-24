@@ -305,6 +305,57 @@ describe("useWorkflowTaskEffectsBridge", () => {
     });
   });
 
+  it("reopens completed fix-latex markdown even when that tab is already open", async () => {
+    const path = "group_data/1/img_explainer_data/enhanced.md";
+    const task = createTaskDetail({
+      id: "task-fix-latex",
+      kind: "fix_latex",
+      status: "completed",
+      assetName: "asset-a",
+      artifactPath: path,
+    });
+    taskCenterState = {
+      tasks: [task],
+      tasksById: { [task.id]: task },
+    };
+    resetStore({
+      selectedAssetName: "asset-a",
+      currentMarkdownPath: path,
+      openTabs: [
+        {
+          assetName: "asset-a",
+          path,
+          title: "enhanced.md",
+          kind: "markdown",
+        },
+      ],
+      markdownRenderVersionsByAsset: {
+        "asset-a": {
+          [path]: 1,
+        },
+      },
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ExocortexApiProvider api={createApi()}>
+          <ToastProvider>
+            <BridgeHarness pendingImportIntent={null} />
+          </ToastProvider>
+        </ExocortexApiProvider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(useAppStore.getState().currentMarkdownPath).toBe(path);
+      expect(useAppStore.getState().markdownRenderVersionsByAsset["asset-a"]?.[path]).toBe(2);
+    });
+  });
+
   it("auto-opens an initial markdown after normal asset import completes", async () => {
     const task = createTaskDetail({
       id: "task-import",

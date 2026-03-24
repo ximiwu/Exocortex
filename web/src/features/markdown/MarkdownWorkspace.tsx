@@ -17,12 +17,17 @@ export function MarkdownWorkspace({ selectedAssetName }: MarkdownWorkspaceProps)
   const api = useExocortexApi();
   const allOpenTabs = useAppStore((state) => state.openTabs);
   const currentMarkdownPath = useAppStore((state) => state.currentMarkdownPath);
+  const markdownRenderVersionsByAsset = useAppStore((state) => state.markdownRenderVersionsByAsset);
   const setCurrentMarkdownPath = useAppStore((state) => state.setCurrentMarkdownPath);
   const openTabs = selectedAssetName
     ? allOpenTabs.filter((tab) => tab.assetName === selectedAssetName)
     : EMPTY_TABS;
 
   const currentTab = openTabs.find((tab) => tab.path === currentMarkdownPath) ?? openTabs[0] ?? null;
+  const renderVersion =
+    selectedAssetName && currentTab?.path
+      ? markdownRenderVersionsByAsset[selectedAssetName]?.[currentTab.path] ?? 0
+      : 0;
 
   useEffect(() => {
     if (!currentTab) {
@@ -38,7 +43,7 @@ export function MarkdownWorkspace({ selectedAssetName }: MarkdownWorkspaceProps)
   }, [currentMarkdownPath, currentTab, setCurrentMarkdownPath]);
 
   const contentQuery = useQuery({
-    queryKey: queryKeys.markdownContent(selectedAssetName, currentTab?.path ?? null),
+    queryKey: [...queryKeys.markdownContent(selectedAssetName, currentTab?.path ?? null), renderVersion],
     queryFn: () => api.markdown.getContent(selectedAssetName!, currentTab!.path),
     enabled: Boolean(selectedAssetName && currentTab?.path),
   });
@@ -52,6 +57,7 @@ export function MarkdownWorkspace({ selectedAssetName }: MarkdownWorkspaceProps)
           html={contentQuery.data?.html ?? ""}
           loading={contentQuery.isLoading}
           error={contentQuery.error instanceof Error ? contentQuery.error.message : null}
+          renderVersion={renderVersion}
         />
       </div>
     </section>

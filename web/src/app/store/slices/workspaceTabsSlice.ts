@@ -9,6 +9,7 @@ export const createWorkspaceTabsSlice: AppStoreSliceCreator<WorkspaceTabsSlice> 
   sidebarRevealTarget: null,
   openTabs: [],
   markdownScrollFractionsByAsset: {},
+  markdownRenderVersionsByAsset: {},
   setCurrentMarkdownPath: (path) => set({ currentMarkdownPath: path }),
   toggleSidebarNode: (assetName, nodeId) => {
     set((state) => {
@@ -47,10 +48,20 @@ export const createWorkspaceTabsSlice: AppStoreSliceCreator<WorkspaceTabsSlice> 
         openTabs.push(tab);
       }
 
+      const nextRenderVersion =
+        (state.markdownRenderVersionsByAsset[tab.assetName]?.[tab.path] ?? 0) + 1;
+
       return {
         selectedAssetName: tab.assetName,
         currentMarkdownPath: tab.path,
         openTabs,
+        markdownRenderVersionsByAsset: {
+          ...state.markdownRenderVersionsByAsset,
+          [tab.assetName]: {
+            ...(state.markdownRenderVersionsByAsset[tab.assetName] ?? {}),
+            [tab.path]: nextRenderVersion,
+          },
+        },
         sidebarRevealTarget:
           options?.source === "sidebar"
             ? null
@@ -69,6 +80,9 @@ export const createWorkspaceTabsSlice: AppStoreSliceCreator<WorkspaceTabsSlice> 
       }
 
       const openTabs = [...state.openTabs];
+      const markdownRenderVersionsByAsset = {
+        ...state.markdownRenderVersionsByAsset,
+      };
       for (const tab of tabs) {
         const existingIndex = openTabs.findIndex(
           (candidate) => candidate.assetName === tab.assetName && candidate.path === tab.path,
@@ -82,6 +96,11 @@ export const createWorkspaceTabsSlice: AppStoreSliceCreator<WorkspaceTabsSlice> 
         } else {
           openTabs.push(tab);
         }
+
+        markdownRenderVersionsByAsset[tab.assetName] = {
+          ...(markdownRenderVersionsByAsset[tab.assetName] ?? {}),
+          [tab.path]: ((markdownRenderVersionsByAsset[tab.assetName] ?? {})[tab.path] ?? 0) + 1,
+        };
       }
 
       const finalActiveTab = tabs.find((tab) => tab.path === activePath) ?? tabs.at(-1) ?? null;
@@ -91,8 +110,9 @@ export const createWorkspaceTabsSlice: AppStoreSliceCreator<WorkspaceTabsSlice> 
             selectedAssetName: finalActiveTab.assetName,
             currentMarkdownPath: finalActiveTab.path,
             openTabs,
+            markdownRenderVersionsByAsset,
           }
-        : { openTabs };
+        : { openTabs, markdownRenderVersionsByAsset };
     });
   },
   closeMarkdownTab: (assetName, path) => {

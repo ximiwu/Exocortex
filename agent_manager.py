@@ -28,8 +28,12 @@ logger = logging.getLogger(__name__)
 
 
 def _creation_flags_for_new_console(new_console: bool) -> int:
-    if new_console and is_dev_runtime() and hasattr(subprocess, "CREATE_NEW_CONSOLE"):
-        return subprocess.CREATE_NEW_CONSOLE
+    if is_dev_runtime():
+        if hasattr(subprocess, "CREATE_NEW_CONSOLE"):
+            return subprocess.CREATE_NEW_CONSOLE
+        return 0
+    if hasattr(subprocess, "CREATE_NO_WINDOW"):
+        return subprocess.CREATE_NO_WINDOW
     return 0
 
 
