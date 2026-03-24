@@ -4,7 +4,6 @@ output/
 agent_workspace/
 agent_workspace_*/
 *.pdf
-*.png
 
 
 Output_Installers/
