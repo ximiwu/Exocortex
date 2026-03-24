@@ -15,6 +15,7 @@ import type {
   ImportAssetPayload,
   MarkdownTreeNode,
   PdfPageTextBoxes,
+  PdfSearchResponse,
   PreviewMergeMarkdownResponse,
   TaskDetail,
   TaskEvent,
@@ -22,7 +23,7 @@ import type {
   TutorSession,
   TutorTaskPayload,
   IntegrateTaskPayload,
-  FixLatexTaskPayload
+  FixLatexTaskPayload,
 } from "./schema";
 import type { MarkdownContentPayload, PdfMetadata, Rect } from "../../../generated/contracts";
 
@@ -266,6 +267,53 @@ class MockExocortexClient implements ExocortexApi {
             height: entry.height,
           },
         })),
+    };
+  }
+
+  async searchPdfContent(assetName: string, query: string): Promise<PdfSearchResponse> {
+    const asset = this.requireAsset(assetName);
+    const normalizedQuery = query.trim();
+    if (!normalizedQuery) {
+      return {
+        query: "",
+        matches: [],
+      };
+    }
+
+    const disabledContentItemIndexes = new Set(asset.state.disabledContentItemIndexes);
+    const normalizedQueryLower = normalizedQuery.toLowerCase();
+    const matches = asset.contentListEntries
+      .flatMap((entry, index) => {
+        const itemIndex = index + 1;
+        if (disabledContentItemIndexes.has(itemIndex)) {
+          return [];
+        }
+
+        const markdown = renderContentListEntry(entry, itemIndex);
+        if (!markdown.trim()) {
+          return [];
+        }
+        if (!markdown.toLowerCase().includes(normalizedQueryLower)) {
+          return [];
+        }
+
+        return [
+          {
+            itemIndex,
+            pageIndex: entry.page_idx - 1,
+            fractionRect: {
+              x: entry.x,
+              y: entry.y,
+              width: entry.width,
+              height: entry.height,
+            },
+          },
+        ];
+      });
+
+    return {
+      query: normalizedQuery,
+      matches,
     };
   }
 

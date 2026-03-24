@@ -27,6 +27,8 @@ export type {
   ImportAssetInput as ImportAssetPayload,
   IntegrateTaskInput as IntegrateTaskPayload,
   PdfPageTextBoxes,
+  PdfSearchMatch,
+  PdfSearchResponse,
   PdfTextBox,
   PreviewMergeMarkdownResponse,
   TutorTaskInput as TutorTaskPayload,

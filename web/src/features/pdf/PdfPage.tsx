@@ -25,6 +25,7 @@ import type {
   NormalizedPageRect,
   PdfBlockRecord,
   PdfPageLayout,
+  PdfSearchMatch,
   PdfTextBox,
 } from "./types";
 
@@ -37,6 +38,7 @@ interface PdfPageProps {
   disabledContentItemIndexes: number[];
   hoveredBlockId: number | null;
   hoveredGroupIdx: number | null;
+  activeSearchMatch: PdfSearchMatch | null;
   selectionOrderByBlock: Map<number, number>;
   compressSelection: NormalizedPageRect | null;
   mergeSelectionAction: {
@@ -73,6 +75,7 @@ export function PdfPage({
   disabledContentItemIndexes,
   hoveredBlockId,
   hoveredGroupIdx,
+  activeSearchMatch,
   selectionOrderByBlock,
   compressSelection,
   mergeSelectionAction,
@@ -99,7 +102,6 @@ export function PdfPage({
   const activeBufferIndexRef = useRef(0);
   const displayedBitmapKeyRef = useRef<string | null>(null);
   const [rendered, setRendered] = useState(false);
-  const [renderingPreview, setRenderingPreview] = useState(false);
 
   function swapVisibleBuffer(nextVisibleIndex: number): void {
     activeBufferIndexRef.current = nextVisibleIndex;
@@ -115,7 +117,6 @@ export function PdfPage({
     const [primaryCanvas, secondaryCanvas] = canvasRefs.current;
     if (!primaryCanvas || !secondaryCanvas || !pdfDocument) {
       setRendered(false);
-      setRenderingPreview(false);
       displayedBitmapKeyRef.current = null;
       return;
     }
@@ -152,7 +153,6 @@ export function PdfPage({
           );
           displayedBitmapKeyRef.current = cached.key;
           setRendered(true);
-          setRenderingPreview(cached.quality !== "final");
         }
       }
       if (hasExactCached && (cached.quality === "final" || renderQuality !== "final")) {
@@ -162,12 +162,12 @@ export function PdfPage({
       }
     } else {
       setRendered(false);
-      setRenderingPreview(renderQuality === "preview");
       displayedBitmapKeyRef.current = null;
     }
 
     void ensureRenderedBitmap(pdfDocument, request, {
       priority: renderQuality === "final" ? 100 : 50,
+      priorityClass: "visible-current",
       signal: controller.signal,
     })
       .then((entry) => {
@@ -190,7 +190,6 @@ export function PdfPage({
         displayedBitmapKeyRef.current = entry.key;
         swapVisibleBuffer(nextVisibleIndex);
         setRendered(true);
-        setRenderingPreview(entry.quality !== "final");
       })
       .catch((err) => {
         if (!controller.signal.aborted) {
@@ -222,6 +221,9 @@ export function PdfPage({
     mergeSelectionAction != null
       ? buildMergeActionStyle(normalizedPageRectToCssRect(mergeSelectionAction.rect, pageLayout))
       : null;
+  const activeSearchRect = activeSearchMatch
+    ? normalizedPageRectToCssRect(activeSearchMatch.fractionRect, pageLayout)
+    : null;
   const containedTextBoxes = collectContainedTextBoxesForPage(
     pageLayout.pageIndex,
     blocks,
@@ -256,16 +258,7 @@ export function PdfPage({
           data-buffer-index="1"
           role="presentation"
         />
-        {!rendered ? (
-          <div className="pdf-page__loading">
-            <span>Rendering page {pageLayout.pageIndex + 1}</span>
-          </div>
-        ) : renderingPreview ? (
-          <div className="pdf-page__loading pdf-page__loading--preview">
-            <span>Previewing page {pageLayout.pageIndex + 1}</span>
-          </div>
-        ) : null}
-        <div className="pdf-page__label">Page {pageLayout.pageIndex + 1}</div>
+        {!rendered ? <div className="pdf-page__loading" aria-hidden="true" /> : null}
         <div
           className={joinClasses(
             "pdf-page__surface",
@@ -386,24 +379,22 @@ export function PdfPage({
                 title={title}
                 type="button"
               >
-                {selectionIndex != null ? (
-                  <span className="pdf-block__badge">{selectionIndex}</span>
-                ) : block.groupIdx != null ? (
-                  <span className="pdf-block__badge">{`G${block.groupIdx}`}</span>
-                ) : null}
+                {selectionIndex != null ? <span className="pdf-block__badge">{selectionIndex}</span> : null}
                 <span className="pdf-block__caption">{title}</span>
-                <span
-                  className="pdf-block__delete"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onBlockDelete(block);
-                  }}
-                  role="button"
-                  tabIndex={-1}
-                >
-                  {block.groupIdx != null ? "Delete group" : "Delete"}
-                </span>
+                {block.groupIdx == null ? (
+                  <span
+                    className="pdf-block__delete"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onBlockDelete(block);
+                    }}
+                    role="button"
+                    tabIndex={-1}
+                  >
+                    Delete
+                  </span>
+                ) : null}
               </button>
             );
           })}
@@ -444,8 +435,20 @@ export function PdfPage({
               />
             );
           })}
+          {activeSearchRect ? (
+            <div
+              aria-hidden="true"
+              className="pdf-page__searchMatch"
+              data-testid="pdf-search-match"
+              style={{
+                left: activeSearchRect.x,
+                top: activeSearchRect.y,
+                width: activeSearchRect.width,
+                height: activeSearchRect.height,
+              }}
+            />
+          ) : null}
           {dragPreviewActive ? <DragSelectionOverlay rect={dragPreviewRect} /> : null}
-          {busy ? <div className="pdf-page__busy">Syncing...</div> : null}
         </div>
       </div>
     </article>

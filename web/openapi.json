@@ -1218,6 +1218,58 @@
         }
       }
     },
+    "/api/assets/{asset_name}/pdf/search": {
+      "post": {
+        "tags": [
+          "pdf"
+        ],
+        "summary": "Search Pdf Content",
+        "operationId": "search_pdf_content_api_assets__asset_name__pdf_search_post",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PdfSearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfSearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/tasks": {
       "get": {
         "tags": [
@@ -2479,6 +2531,57 @@
           "pageIndex"
         ],
         "title": "PdfPageTextBoxesModel"
+      },
+      "PdfSearchMatchModel": {
+        "properties": {
+          "itemIndex": {
+            "type": "integer",
+            "title": "Itemindex"
+          },
+          "pageIndex": {
+            "type": "integer",
+            "title": "Pageindex"
+          },
+          "fractionRect": {
+            "$ref": "#/components/schemas/RectModel"
+          }
+        },
+        "type": "object",
+        "required": [
+          "itemIndex",
+          "pageIndex",
+          "fractionRect"
+        ],
+        "title": "PdfSearchMatchModel"
+      },
+      "PdfSearchRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "PdfSearchRequest"
+      },
+      "PdfSearchResponse": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "default": ""
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/PdfSearchMatchModel"
+            },
+            "type": "array",
+            "title": "Matches"
+          }
+        },
+        "type": "object",
+        "title": "PdfSearchResponse"
       },
       "PdfTextBoxModel": {
         "properties": {

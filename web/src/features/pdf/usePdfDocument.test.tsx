@@ -157,6 +157,10 @@ function createApiMock(
         pageIndex,
         items: [],
       })),
+      searchContent: vi.fn(async (_assetName, query) => ({
+        query,
+        matches: [],
+      })),
       createBlock: vi.fn(),
       deleteBlock: vi.fn(),
       deleteGroup: vi.fn(),

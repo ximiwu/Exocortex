@@ -83,6 +83,17 @@ export interface PdfPageTextBoxes {
   items: PdfTextBox[];
 }
 
+export interface PdfSearchMatch {
+  itemIndex: number;
+  pageIndex: number;
+  fractionRect: Rect;
+}
+
+export interface PdfSearchResponse {
+  query: string;
+  matches: PdfSearchMatch[];
+}
+
 export interface MergeGroupInput {
   markdownContent?: string | null;
   groupIdx?: number | null;

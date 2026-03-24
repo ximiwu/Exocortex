@@ -119,6 +119,21 @@ class PreviewMergeMarkdownResponse(BaseModel):
     warning: str | None = None
 
 
+class PdfSearchRequest(BaseModel):
+    query: str = ""
+
+
+class PdfSearchMatchModel(BaseModel):
+    itemIndex: int
+    pageIndex: int
+    fractionRect: RectModel
+
+
+class PdfSearchResponse(BaseModel):
+    query: str = ""
+    matches: list[PdfSearchMatchModel] = Field(default_factory=list)
+
+
 class UpdateUiStateRequest(BaseModel):
     currentPage: int | None = None
     zoom: float | None = None
@@ -169,6 +184,9 @@ __all__ = [
     "MergeGroupRequest",
     "PdfMetadataModel",
     "PdfPageTextBoxesModel",
+    "PdfSearchMatchModel",
+    "PdfSearchRequest",
+    "PdfSearchResponse",
     "PdfTextBoxModel",
     "PreviewMergeMarkdownRequest",
     "PreviewMergeMarkdownResponse",

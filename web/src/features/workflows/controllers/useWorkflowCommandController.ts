@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useExocortexApi } from "../../../app/api/ExocortexApiContext";
@@ -65,7 +65,7 @@ export function useWorkflowCommandController(): WorkflowCommandController {
   const api = useExocortexApi();
   const queryClient = useQueryClient();
   const { pushToast } = useToasts();
-  const { trackSubmittedTask } = useTaskCenter();
+  const { isGroupTaskRunning, trackSubmittedTask } = useTaskCenter();
   const selectedAssetName = useAppStore((state) => state.selectedAssetName);
   const currentMarkdownPath = useAppStore((state) => state.currentMarkdownPath);
   const activeTaskPanel = useAppStore((state) => state.activeTaskPanel);
@@ -90,6 +90,7 @@ export function useWorkflowCommandController(): WorkflowCommandController {
   const [feynman, setFeynman] = useState<FeynmanState | null>(null);
   const [compressPreview, setCompressPreview] = useState<CompressPreviewState | null>(null);
   const [markdownContextMenu, setMarkdownContextMenu] = useState<MarkdownContextMenuState | null>(null);
+  const pendingGroupDiveKeysRef = useRef<Set<string>>(new Set());
 
   const assetStateQuery = useQuery({
     queryKey: queryKeys.assetState(selectedAssetName),
@@ -140,19 +141,44 @@ export function useWorkflowCommandController(): WorkflowCommandController {
       return;
     }
 
+    const groupDiveKey = `${assetName}:${groupIdx}`;
+    if (
+      pendingGroupDiveKeysRef.current.has(groupDiveKey) ||
+      isGroupTaskRunning("group_dive", assetName, groupIdx)
+    ) {
+      pushToast({
+        title: "Group dive already running",
+        description: `Group ${groupIdx} is already in progress.`,
+        tone: "warning",
+      });
+      return;
+    }
+
+    pendingGroupDiveKeysRef.current.add(groupDiveKey);
     void api.workflows
       .submitGroupDive({ assetName, groupIdx })
       .then((task) => {
         trackSubmittedTask(task);
       })
       .catch((error) => {
+        if (error instanceof Error && error.message === "An equivalent task is already in progress.") {
+          pushToast({
+            title: "Group dive already running",
+            description: `Group ${groupIdx} is already in progress.`,
+            tone: "warning",
+          });
+          return;
+        }
         pushToast({
           title: "Group dive failed",
           description: error instanceof Error ? error.message : "Unable to start group dive.",
           tone: "danger",
         });
+      })
+      .finally(() => {
+        pendingGroupDiveKeysRef.current.delete(groupDiveKey);
       });
-  }, [api, consumeGroupDiveRequest, groupDiveRequest, pushToast, trackSubmittedTask]);
+  }, [api, consumeGroupDiveRequest, groupDiveRequest, isGroupTaskRunning, pushToast, trackSubmittedTask]);
 
   useEffect(() => {
     if (!assetDeleteRequest) {

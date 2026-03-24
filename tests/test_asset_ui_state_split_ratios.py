@@ -54,6 +54,69 @@ def test_update_ui_state_persists_split_ratios_as_snake_case(
     assert saved["right_rail_width_ratio"] == 0.0
 
 
+def test_load_ui_state_normalizes_lists_and_scroll_maps(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        asset_service,
+        "get_asset_config",
+        lambda _asset_name: {
+            "open_markdown_paths": ["notes.md", "", "notes.md", "summary.md", 3],
+            "sidebar_collapsed_node_ids": ["group:1", "", "group:1", None, "group:2"],
+            "markdown_scroll_fractions": {
+                "notes.md": 1.25,
+                "summary.md": "0.4",
+                "": 0.3,
+                "broken.md": "bad",
+            },
+        },
+    )
+
+    ui_state = asset_service._load_ui_state("physics/ch1", page_count=4)
+
+    assert ui_state.openMarkdownPaths == ["notes.md", "summary.md"]
+    assert ui_state.sidebarCollapsedNodeIds == ["group:1", "group:2"]
+    assert ui_state.markdownScrollFractions == {
+        "notes.md": 1.0,
+        "summary.md": 0.4,
+    }
+
+
+def test_update_ui_state_normalizes_lists_and_scroll_maps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    saved: dict[str, object] = {}
+
+    monkeypatch.setattr(asset_service, "resolve_asset_dir", lambda _asset_name, *, must_exist=True: tmp_path)
+    monkeypatch.setattr(asset_service, "get_asset_config", lambda _asset_name: {})
+
+    def _save_asset_config(_asset_name: str, data: dict[str, object]) -> Path:
+        saved.clear()
+        saved.update(data)
+        return tmp_path / "config.json"
+
+    monkeypatch.setattr(asset_service, "save_asset_config", _save_asset_config)
+    monkeypatch.setattr(asset_service, "build_asset_state", lambda _asset_name: {"ui_state": dict(saved)})
+
+    asset_service.update_ui_state(
+        "physics/ch1",
+        open_markdown_paths=["notes.md", "", "notes.md", "summary.md"],
+        sidebar_collapsed_node_ids=["group:1", "", "group:1", "group:2"],
+        markdown_scroll_fractions={
+            "notes.md": 1.25,
+            "summary.md": "0.4",
+            "": 0.3,
+            "broken.md": "bad",
+        },
+    )
+
+    assert saved["open_markdown_paths"] == ["notes.md", "summary.md"]
+    assert saved["sidebar_collapsed_node_ids"] == ["group:1", "group:2"]
+    assert saved["markdown_scroll_fractions"] == {
+        "notes.md": 1.0,
+        "summary.md": 0.4,
+    }
+
+
 def test_update_ui_state_serializes_overlapping_asset_config_writes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

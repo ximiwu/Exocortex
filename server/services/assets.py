@@ -163,29 +163,68 @@ def _load_disabled_content_item_indexes(asset_name: str) -> list[int]:
     return _normalize_disabled_content_item_indexes(config.get("disabled_content_item_indexes"))
 
 
+def _clamp_unit_interval(value: float) -> float:
+    return min(1.0, max(0.0, float(value)))
+
+
+def _coerce_float(value: object, *, default: float, clamp_unit_interval: bool = False) -> float:
+    try:
+        numeric = float(value) if value is not None else default
+    except Exception:
+        numeric = default
+    if clamp_unit_interval:
+        return _clamp_unit_interval(numeric)
+    return numeric
+
+
+def _coerce_optional_unit_interval(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return _clamp_unit_interval(float(value))
+    except Exception:
+        return None
+
+
+def _dedupe_nonempty_strings(raw_values: object) -> list[str]:
+    if not isinstance(raw_values, list):
+        return []
+
+    normalized: list[str] = []
+    for raw_value in raw_values:
+        if isinstance(raw_value, str) and raw_value and raw_value not in normalized:
+            normalized.append(raw_value)
+    return normalized
+
+
+def _normalize_markdown_scroll_fractions(raw_values: object) -> dict[str, float]:
+    if not isinstance(raw_values, dict):
+        return {}
+
+    normalized: dict[str, float] = {}
+    for raw_path, raw_fraction in raw_values.items():
+        if not isinstance(raw_path, str) or not raw_path:
+            continue
+        try:
+            normalized[raw_path] = _clamp_unit_interval(float(raw_fraction))
+        except Exception:
+            continue
+    return normalized
+
+
 def _load_ui_state(asset_name: str, page_count: int) -> UiStateModel:
     config = get_asset_config(asset_name) or {}
-    zoom_raw = config.get("zoom")
-    try:
-        zoom_value = float(zoom_raw) if zoom_raw is not None else 1.0
-    except Exception:
-        zoom_value = 1.0
-
-    pdf_scroll_fraction_raw = config.get("pdf_scroll_fraction")
-    try:
-        pdf_scroll_fraction = float(pdf_scroll_fraction_raw) if pdf_scroll_fraction_raw is not None else 0.0
-    except Exception:
-        pdf_scroll_fraction = 0.0
-    pdf_scroll_fraction = min(1.0, max(0.0, pdf_scroll_fraction))
-
-    pdf_scroll_left_fraction_raw = config.get("pdf_scroll_left_fraction")
-    try:
-        pdf_scroll_left_fraction = (
-            float(pdf_scroll_left_fraction_raw) if pdf_scroll_left_fraction_raw is not None else 0.0
-        )
-    except Exception:
-        pdf_scroll_left_fraction = 0.0
-    pdf_scroll_left_fraction = min(1.0, max(0.0, pdf_scroll_left_fraction))
+    zoom_value = _coerce_float(config.get("zoom"), default=1.0)
+    pdf_scroll_fraction = _coerce_float(
+        config.get("pdf_scroll_fraction"),
+        default=0.0,
+        clamp_unit_interval=True,
+    )
+    pdf_scroll_left_fraction = _coerce_float(
+        config.get("pdf_scroll_left_fraction"),
+        default=0.0,
+        clamp_unit_interval=True,
+    )
 
     current_page_raw = config.get("current_page")
     current_page = 1
@@ -198,54 +237,13 @@ def _load_ui_state(asset_name: str, page_count: int) -> UiStateModel:
 
     markdown_path = config.get("markdown_path")
     current_markdown_path = markdown_path if isinstance(markdown_path, str) and markdown_path.strip() else None
-
-    open_markdown_paths_raw = config.get("open_markdown_paths")
-    open_markdown_paths: list[str] = []
-    if isinstance(open_markdown_paths_raw, list):
-        for item in open_markdown_paths_raw:
-            if isinstance(item, str) and item and item not in open_markdown_paths:
-                open_markdown_paths.append(item)
+    open_markdown_paths = _dedupe_nonempty_strings(config.get("open_markdown_paths"))
 
     sidebar_collapsed = bool(config.get("sidebar_collapsed", False))
-
-    sidebar_collapsed_node_ids_raw = config.get("sidebar_collapsed_node_ids")
-    sidebar_collapsed_node_ids: list[str] = []
-    if isinstance(sidebar_collapsed_node_ids_raw, list):
-        for item in sidebar_collapsed_node_ids_raw:
-            if isinstance(item, str) and item and item not in sidebar_collapsed_node_ids:
-                sidebar_collapsed_node_ids.append(item)
-
-    markdown_scroll_fractions_raw = config.get("markdown_scroll_fractions")
-    markdown_scroll_fractions: dict[str, float] = {}
-    if isinstance(markdown_scroll_fractions_raw, dict):
-        for raw_path, raw_fraction in markdown_scroll_fractions_raw.items():
-            if not isinstance(raw_path, str) or not raw_path:
-                continue
-            try:
-                fraction = float(raw_fraction)
-            except Exception:
-                continue
-            markdown_scroll_fractions[raw_path] = min(1.0, max(0.0, fraction))
-
-    sidebar_width_ratio_raw = config.get("sidebar_width_ratio")
-    try:
-        sidebar_width_ratio = (
-            min(1.0, max(0.0, float(sidebar_width_ratio_raw)))
-            if sidebar_width_ratio_raw is not None
-            else None
-        )
-    except Exception:
-        sidebar_width_ratio = None
-
-    right_rail_width_ratio_raw = config.get("right_rail_width_ratio")
-    try:
-        right_rail_width_ratio = (
-            min(1.0, max(0.0, float(right_rail_width_ratio_raw)))
-            if right_rail_width_ratio_raw is not None
-            else None
-        )
-    except Exception:
-        right_rail_width_ratio = None
+    sidebar_collapsed_node_ids = _dedupe_nonempty_strings(config.get("sidebar_collapsed_node_ids"))
+    markdown_scroll_fractions = _normalize_markdown_scroll_fractions(config.get("markdown_scroll_fractions"))
+    sidebar_width_ratio = _coerce_optional_unit_interval(config.get("sidebar_width_ratio"))
+    right_rail_width_ratio = _coerce_optional_unit_interval(config.get("right_rail_width_ratio"))
 
     return UiStateModel(
         currentPage=current_page,
@@ -308,7 +306,7 @@ def _ensure_fraction_block_data(block_data: BlockData, page_sizes: Sequence[Size
     return normalized_data, True
 
 
-def _load_page_sizes_at_reference_dpi(pdf_path: Path) -> list[SizeModel]:
+def load_page_sizes_at_reference_dpi(pdf_path: Path) -> list[SizeModel]:
     if not pdf_path.is_file():
         return []
 
@@ -319,6 +317,10 @@ def _load_page_sizes_at_reference_dpi(pdf_path: Path) -> list[SizeModel]:
             page = doc.load_page(page_index)
             page_sizes.append(SizeModel(width=page.rect.width * scale, height=page.rect.height * scale))
     return page_sizes
+
+
+def _load_page_sizes_at_reference_dpi(pdf_path: Path) -> list[SizeModel]:
+    return load_page_sizes_at_reference_dpi(pdf_path)
 
 
 def _load_fraction_block_data(asset_name: str, pdf_path: Path) -> BlockData:
@@ -619,36 +621,23 @@ def update_ui_state(
         if zoom is not None:
             config["zoom"] = float(zoom)
         if pdf_scroll_fraction is not None:
-            config["pdf_scroll_fraction"] = min(1.0, max(0.0, float(pdf_scroll_fraction)))
+            config["pdf_scroll_fraction"] = _clamp_unit_interval(pdf_scroll_fraction)
         if pdf_scroll_left_fraction is not None:
-            config["pdf_scroll_left_fraction"] = min(1.0, max(0.0, float(pdf_scroll_left_fraction)))
+            config["pdf_scroll_left_fraction"] = _clamp_unit_interval(pdf_scroll_left_fraction)
         if current_markdown_path is not None:
             config["markdown_path"] = current_markdown_path
         if open_markdown_paths is not None:
-            config["open_markdown_paths"] = [path for path in open_markdown_paths if isinstance(path, str) and path]
+            config["open_markdown_paths"] = _dedupe_nonempty_strings(open_markdown_paths)
         if sidebar_collapsed is not None:
             config["sidebar_collapsed"] = bool(sidebar_collapsed)
         if sidebar_collapsed_node_ids is not None:
-            deduped_node_ids: list[str] = []
-            for node_id in sidebar_collapsed_node_ids:
-                if isinstance(node_id, str) and node_id and node_id not in deduped_node_ids:
-                    deduped_node_ids.append(node_id)
-            config["sidebar_collapsed_node_ids"] = deduped_node_ids
+            config["sidebar_collapsed_node_ids"] = _dedupe_nonempty_strings(sidebar_collapsed_node_ids)
         if markdown_scroll_fractions is not None:
-            normalized_scroll_fractions: dict[str, float] = {}
-            for path, raw_fraction in markdown_scroll_fractions.items():
-                if not isinstance(path, str) or not path:
-                    continue
-                try:
-                    fraction = float(raw_fraction)
-                except Exception:
-                    continue
-                normalized_scroll_fractions[path] = min(1.0, max(0.0, fraction))
-            config["markdown_scroll_fractions"] = normalized_scroll_fractions
+            config["markdown_scroll_fractions"] = _normalize_markdown_scroll_fractions(markdown_scroll_fractions)
         if sidebar_width_ratio is not None:
-            config["sidebar_width_ratio"] = min(1.0, max(0.0, float(sidebar_width_ratio)))
+            config["sidebar_width_ratio"] = _clamp_unit_interval(sidebar_width_ratio)
         if right_rail_width_ratio is not None:
-            config["right_rail_width_ratio"] = min(1.0, max(0.0, float(right_rail_width_ratio)))
+            config["right_rail_width_ratio"] = _clamp_unit_interval(right_rail_width_ratio)
         save_asset_config(normalized, config)
         return build_asset_state(normalized)
 
@@ -755,6 +744,7 @@ __all__ = [
     "delete_group",
     "ensure_content_list_unified",
     "list_asset_summaries",
+    "load_page_sizes_at_reference_dpi",
     "merge_group",
     "normalize_asset_name",
     "relative_to_assets_root",

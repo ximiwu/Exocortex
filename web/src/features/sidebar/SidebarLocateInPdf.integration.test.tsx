@@ -161,6 +161,7 @@ function createApi(): ExocortexApi {
         pageIndex,
         items: [],
       })),
+      searchContent: vi.fn(async (_assetName, query) => ({ query, matches: [] })),
       createBlock: vi.fn(async () => ASSET_STATE),
       deleteBlock: vi.fn(async () => ASSET_STATE),
       deleteGroup: vi.fn(async () => ASSET_STATE),

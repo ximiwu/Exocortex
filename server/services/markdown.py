@@ -219,59 +219,15 @@ def _markdown_kind_for_path(path: Path) -> str:
     return "markdown"
 
 
-def _collect_folder_children(
+def _build_markdown_children(
     asset_dir: Path,
     directory: Path,
     *,
     node_id: str,
     saved_order: dict[str, list[str]] | None = None,
-    excluded_dir_names: set[str] | None = None,
-) -> list[MarkdownTreeNodeModel]:
-    saved_order = saved_order or {}
-    excluded_dir_names = excluded_dir_names or set()
-    children: list[MarkdownTreeNodeModel] = []
-    for entry in sorted(directory.iterdir(), key=_entry_sort_key):
-        if entry.name.endswith(_ALIAS_SUFFIX):
-            continue
-        if entry.is_dir():
-            if entry.name in excluded_dir_names:
-                continue
-            child = _build_recursive_markdown_folder(
-                asset_dir,
-                entry,
-                node_id=f"{node_id}/{entry.name}",
-                title=entry.name.replace("_", " "),
-                saved_order=saved_order,
-                kind="folder",
-                leaf_kind="markdown",
-                excluded_dir_names=excluded_dir_names,
-            )
-            if child is not None and child.children:
-                children.append(child)
-        elif entry.suffix.lower() == ".md":
-            children.append(
-                _markdown_leaf(
-                    asset_dir,
-                    entry,
-                    node_id=f"{node_id}:{entry.name}",
-                    title=_display_title(entry, entry.name),
-                    kind=_markdown_kind_for_path(entry),
-                )
-            )
-    return _apply_saved_order(children, node_id, saved_order)
-
-
-def _build_recursive_markdown_folder(
-    asset_dir: Path,
-    directory: Path,
-    *,
-    node_id: str,
-    title: str,
-    saved_order: dict[str, list[str]] | None = None,
-    kind: str = "folder",
     leaf_kind: str = "markdown",
     excluded_dir_names: set[str] | None = None,
-) -> MarkdownTreeNodeModel | None:
+) -> list[MarkdownTreeNodeModel]:
     saved_order = saved_order or {}
     excluded_dir_names = excluded_dir_names or set()
     children: list[MarkdownTreeNodeModel] = []
@@ -303,6 +259,48 @@ def _build_recursive_markdown_folder(
                     kind=_markdown_kind_for_path(entry) if leaf_kind == "markdown" else leaf_kind,
                 )
             )
+    return children
+
+
+def _collect_folder_children(
+    asset_dir: Path,
+    directory: Path,
+    *,
+    node_id: str,
+    saved_order: dict[str, list[str]] | None = None,
+    excluded_dir_names: set[str] | None = None,
+) -> list[MarkdownTreeNodeModel]:
+    saved_order = saved_order or {}
+    children = _build_markdown_children(
+        asset_dir,
+        directory,
+        node_id=node_id,
+        saved_order=saved_order,
+        excluded_dir_names=excluded_dir_names,
+    )
+    return _apply_saved_order(children, node_id, saved_order)
+
+
+def _build_recursive_markdown_folder(
+    asset_dir: Path,
+    directory: Path,
+    *,
+    node_id: str,
+    title: str,
+    saved_order: dict[str, list[str]] | None = None,
+    kind: str = "folder",
+    leaf_kind: str = "markdown",
+    excluded_dir_names: set[str] | None = None,
+) -> MarkdownTreeNodeModel | None:
+    saved_order = saved_order or {}
+    children = _build_markdown_children(
+        asset_dir,
+        directory,
+        node_id=node_id,
+        saved_order=saved_order,
+        leaf_kind=leaf_kind,
+        excluded_dir_names=excluded_dir_names,
+    )
     if not children:
         return None
     children = _apply_saved_order(children, node_id, saved_order)

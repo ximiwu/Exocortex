@@ -1,6 +1,15 @@
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
 
+import {
+  PDF_MAX_BITMAP_BYTES_BY_DEVICE_MEMORY,
+  PDF_MAX_IN_FLIGHT_BYTES_BY_DEVICE_MEMORY,
+  PDF_PAGE_CACHE_RADIUS,
+  PDF_SINGLE_PAGE_CAP_BYTES_BY_DEVICE_MEMORY,
+  PDF_PREVIEW_SCALE,
+} from "./constants";
+
 export type PdfRenderQuality = "preview" | "final";
+export type PdfRenderPriorityClass = "visible-current" | "visible-adjacent" | "preheat-near" | "offscreen";
 
 export interface PdfRenderRequest {
   assetName: string;
@@ -22,11 +31,14 @@ export interface CachedBitmapEntry {
   width: number;
   height: number;
   bitmap: HTMLCanvasElement;
+  estimatedBytes: number;
+  renderScale: number;
   lastUsedAt: number;
 }
 
 interface RenderQueueItem {
   priority: number;
+  priorityClass: PdfRenderPriorityClass;
   sequence: number;
   request: PdfRenderRequest;
   signal?: AbortSignal;
@@ -34,17 +46,24 @@ interface RenderQueueItem {
   reject: (reason?: unknown) => void;
 }
 
+interface CachedPageEntry {
+  assetName: string;
+  pageIndex: number;
+  promise: Promise<PDFPageProxy>;
+  lastUsedAt: number;
+}
+
 const MAX_CONCURRENT_RENDERS = 2;
-const PREVIEW_SCALE = 0.7;
 const ZOOM_BUCKET_SIZE = 0.125;
 const PIXEL_RATIO_BUCKET_SIZE = 0.5;
-const MEMORY_PRESSURE_RECOVERY_FRACTION = 0.5;
 
-const pageCache = new Map<string, Promise<PDFPageProxy>>();
+const pageCache = new Map<string, CachedPageEntry>();
 const bitmapCache = new Map<string, CachedBitmapEntry>();
 const inFlightBitmapRenders = new Map<string, Promise<CachedBitmapEntry>>();
 const queue: RenderQueueItem[] = [];
 let activeRenderCount = 0;
+let activeRenderBytes = 0;
+let cachedBitmapBytes = 0;
 let renderSequence = 0;
 
 export function peekCachedBitmap(
@@ -81,10 +100,12 @@ export async function ensureRenderedBitmap(
   request: PdfRenderRequest,
   options: {
     priority: number;
+    priorityClass?: PdfRenderPriorityClass;
     signal?: AbortSignal;
   },
 ): Promise<CachedBitmapEntry> {
-  const requestKey = buildBitmapKey(request);
+  const normalizedRequest = normalizeRequestForBudget(request);
+  const requestKey = buildBitmapKey(normalizedRequest);
   const cached = bitmapCache.get(requestKey);
   if (cached) {
     touchBitmap(cached);
@@ -99,8 +120,9 @@ export async function ensureRenderedBitmap(
   const promise = new Promise<CachedBitmapEntry>((resolve, reject) => {
     const item: RenderQueueItem = {
       priority: options.priority,
+      priorityClass: options.priorityClass ?? "offscreen",
       sequence: renderSequence++,
-      request,
+      request: normalizedRequest,
       signal: options.signal,
       resolve,
       reject,
@@ -137,23 +159,33 @@ export async function ensureRenderedBitmap(
 
 export function clearPdfRenderCache(assetName?: string): void {
   if (!assetName) {
-    pageCache.clear();
+    for (const entry of bitmapCache.values()) {
+      clearCachedBitmapEntry(entry);
+    }
     bitmapCache.clear();
+    cachedBitmapBytes = 0;
+
+    for (const entry of pageCache.values()) {
+      void entry.promise.then((page) => page.cleanup()).catch(() => undefined);
+    }
+    pageCache.clear();
+
     inFlightBitmapRenders.clear();
     queue.length = 0;
+    activeRenderBytes = 0;
     return;
   }
 
-  for (const [key, value] of pageCache.entries()) {
-    if (key.startsWith(`${assetName}::`)) {
+  for (const [key, entry] of pageCache.entries()) {
+    if (entry.assetName === assetName) {
       pageCache.delete(key);
-      void value.then((page) => page.cleanup()).catch(() => undefined);
+      void entry.promise.then((page) => page.cleanup()).catch(() => undefined);
     }
   }
 
   for (const [key, entry] of bitmapCache.entries()) {
     if (entry.assetName === assetName) {
-      clearCanvas(entry.bitmap);
+      clearCachedBitmapEntry(entry);
       bitmapCache.delete(key);
     }
   }
@@ -171,23 +203,72 @@ export function clearPdfRenderCache(assetName?: string): void {
   }
 }
 
+export function syncPdfRenderWindow(
+  assetName: string,
+  visiblePageIndexes: number[],
+  preheatPageIndexes: number[],
+): void {
+  const protectedPages = new Set([...visiblePageIndexes, ...preheatPageIndexes]);
+
+  for (const [key, entry] of bitmapCache.entries()) {
+    if (entry.assetName !== assetName) {
+      continue;
+    }
+    if (protectedPages.has(entry.pageIndex)) {
+      continue;
+    }
+    clearCachedBitmapEntry(entry);
+    bitmapCache.delete(key);
+  }
+
+  const anchor =
+    visiblePageIndexes[0] ??
+    preheatPageIndexes[0] ??
+    null;
+  if (anchor == null) {
+    clearCachedPagesForAsset(assetName);
+    return;
+  }
+
+  for (const [key, entry] of pageCache.entries()) {
+    if (entry.assetName !== assetName) {
+      continue;
+    }
+    if (Math.abs(entry.pageIndex - anchor) <= PDF_PAGE_CACHE_RADIUS) {
+      continue;
+    }
+    pageCache.delete(key);
+    void entry.promise.then((page) => page.cleanup()).catch(() => undefined);
+  }
+}
+
 async function drainQueue(pdfDocument: PDFDocumentProxy): Promise<void> {
   while (activeRenderCount < MAX_CONCURRENT_RENDERS && queue.length > 0) {
-    const next = queue.shift();
+    const next = queue[0];
     if (!next) {
       return;
     }
 
     if (next.signal?.aborted) {
+      queue.shift();
       next.reject(abortError());
       continue;
     }
 
+    const nextBytes = estimateRequestBytes(next.request);
+    const maxInFlightBytes = getMaxInFlightBytes();
+    if (activeRenderCount > 0 && activeRenderBytes + nextBytes > maxInFlightBytes) {
+      return;
+    }
+
+    queue.shift();
     activeRenderCount += 1;
+    activeRenderBytes += nextBytes;
     void renderAndCache(pdfDocument, next)
       .then(next.resolve, next.reject)
       .finally(() => {
         activeRenderCount = Math.max(0, activeRenderCount - 1);
+        activeRenderBytes = Math.max(0, activeRenderBytes - nextBytes);
         void drainQueue(pdfDocument);
       });
   }
@@ -202,10 +283,12 @@ async function renderAndCache(
     throw abortError();
   }
 
-  const renderScale = getRenderScale(page, item.request);
+  const renderScale = getCappedRenderScale(page, item.request);
   const viewport = page.getViewport({ scale: renderScale });
-  const bitmap = await renderBitmap(page, viewport, item.signal, item.request.assetName);
+  const estimatedBytes = estimateBitmapBytes(viewport.width, viewport.height);
+  evictBitmapsForBudget(item.request.assetName, estimatedBytes, item.priorityClass);
 
+  const bitmap = await renderBitmap(page, viewport, item.signal, item.request.assetName);
   const entry: CachedBitmapEntry = {
     key: buildBitmapKey(item.request),
     assetName: item.request.assetName,
@@ -216,9 +299,13 @@ async function renderAndCache(
     width: bitmap.width,
     height: bitmap.height,
     bitmap,
+    estimatedBytes,
+    renderScale,
     lastUsedAt: Date.now(),
   };
+  cachedBitmapBytes += entry.estimatedBytes;
   bitmapCache.set(entry.key, entry);
+  evictBitmapsForBudget(item.request.assetName, 0, item.priorityClass);
   return entry;
 }
 
@@ -228,13 +315,19 @@ async function getCachedPage(
   pageIndex: number,
 ): Promise<PDFPageProxy> {
   const key = `${assetName}::${pageIndex}`;
-  const cachedPromise = pageCache.get(key);
-  if (cachedPromise) {
-    return cachedPromise;
+  const cachedEntry = pageCache.get(key);
+  if (cachedEntry) {
+    cachedEntry.lastUsedAt = Date.now();
+    return cachedEntry.promise;
   }
 
   const promise = pdfDocument.getPage(pageIndex + 1);
-  pageCache.set(key, promise);
+  pageCache.set(key, {
+    assetName,
+    pageIndex,
+    promise,
+    lastUsedAt: Date.now(),
+  });
   return promise;
 }
 
@@ -265,10 +358,12 @@ function scoreBitmapEntry(
 ): number {
   const qualityPenalty =
     request.quality === "final" && entry.quality !== "final" ? 10 : 0;
+  const sizePenalty = entry.estimatedBytes / Math.max(1, 8 * 1024 * 1024);
   return (
     Math.abs(entry.zoomBucket - requestZoomBucket) * 4 +
     Math.abs(entry.pixelRatioBucket - requestPixelRatioBucket) * 2 +
-    qualityPenalty
+    qualityPenalty +
+    sizePenalty
   );
 }
 
@@ -293,12 +388,50 @@ function bucketValue(value: number, bucketSize: number): number {
   return Math.round(value / bucketSize) * bucketSize;
 }
 
-function getRenderScale(page: PDFPageProxy, request: PdfRenderRequest): number {
+function normalizeRequestForBudget(request: PdfRenderRequest): PdfRenderRequest {
+  const estimatedBytes = estimateRequestBytes(request);
+  const singlePageCapBytes = getSinglePageCapBytes();
+  if (estimatedBytes <= singlePageCapBytes || request.quality === "preview") {
+    return request;
+  }
+  return {
+    ...request,
+    quality: "preview",
+  };
+}
+
+function estimateRequestBytes(request: PdfRenderRequest): number {
+  const renderScale = getEstimatedRenderScale(request);
+  return estimateBitmapBytes(request.pageWidth * renderScale, request.pageHeight * renderScale);
+}
+
+function estimateBitmapBytes(width: number, height: number): number {
+  return Math.max(1, Math.ceil(width)) * Math.max(1, Math.ceil(height)) * 4;
+}
+
+function getEstimatedRenderScale(request: PdfRenderRequest): number {
+  const qualityScale = request.quality === "preview" ? PDF_PREVIEW_SCALE : 1;
+  return Math.max(0.1, request.pixelRatio * qualityScale);
+}
+
+function getBaseRenderScale(page: PDFPageProxy, request: PdfRenderRequest): number {
   const baseViewport = page.getViewport({ scale: 1 });
   const baseScale =
     baseViewport.width > 0 ? request.pageWidth / baseViewport.width : 1;
-  const qualityScale = request.quality === "preview" ? PREVIEW_SCALE : 1;
-  return Math.max(0.1, baseScale * request.pixelRatio * qualityScale);
+  return Math.max(0.1, baseScale * getEstimatedRenderScale(request));
+}
+
+function getCappedRenderScale(page: PDFPageProxy, request: PdfRenderRequest): number {
+  const baseScale = getBaseRenderScale(page, request);
+  const viewport = page.getViewport({ scale: baseScale });
+  const estimatedBytes = estimateBitmapBytes(viewport.width, viewport.height);
+  const singlePageCapBytes = getSinglePageCapBytes();
+  if (estimatedBytes <= singlePageCapBytes) {
+    return baseScale;
+  }
+
+  const shrinkRatio = Math.sqrt(singlePageCapBytes / estimatedBytes);
+  return Math.max(0.1, baseScale * shrinkRatio);
 }
 
 async function renderBitmap(
@@ -361,32 +494,151 @@ async function renderBitmapOnce(
   }
 }
 
+function evictBitmapsForBudget(
+  assetName: string,
+  requiredBytes: number,
+  priorityClass: PdfRenderPriorityClass,
+): void {
+  const maxBitmapBytes = getMaxBitmapBytes();
+  if (cachedBitmapBytes + requiredBytes <= maxBitmapBytes) {
+    return;
+  }
+
+  const protectedPageIndex = priorityClass === "visible-current" ? findNewestPageIndex(assetName) : null;
+  const candidates = Array.from(bitmapCache.values())
+    .filter((entry) => entry.assetName === assetName)
+    .sort((left, right) => scoreEvictionCandidate(left, right, protectedPageIndex));
+
+  for (const entry of candidates) {
+    if (cachedBitmapBytes + requiredBytes <= maxBitmapBytes) {
+      return;
+    }
+    if (protectedPageIndex != null && entry.pageIndex === protectedPageIndex) {
+      continue;
+    }
+    bitmapCache.delete(entry.key);
+    clearCachedBitmapEntry(entry);
+  }
+}
+
+function scoreEvictionCandidate(
+  left: CachedBitmapEntry,
+  right: CachedBitmapEntry,
+  protectedPageIndex: number | null,
+): number {
+  const leftProtectedPenalty =
+    protectedPageIndex != null && left.pageIndex === protectedPageIndex ? 1_000_000 : 0;
+  const rightProtectedPenalty =
+    protectedPageIndex != null && right.pageIndex === protectedPageIndex ? 1_000_000 : 0;
+  const leftQualityPenalty = left.quality === "final" ? 0 : -100;
+  const rightQualityPenalty = right.quality === "final" ? 0 : -100;
+  return (
+    leftProtectedPenalty +
+    leftQualityPenalty +
+    left.lastUsedAt +
+    left.estimatedBytes / (1024 * 1024)
+  ) - (
+    rightProtectedPenalty +
+    rightQualityPenalty +
+    right.lastUsedAt +
+    right.estimatedBytes / (1024 * 1024)
+  );
+}
+
 function recoverFromMemoryPressure(assetName: string): void {
-  const assetEntries = Array.from(bitmapCache.values())
+  clearQueuedPreheatWork(assetName);
+  const candidates = Array.from(bitmapCache.values())
     .filter((entry) => entry.assetName === assetName)
     .sort((left, right) => left.lastUsedAt - right.lastUsedAt);
-  const removeCount = Math.max(
-    1,
-    Math.floor(assetEntries.length * MEMORY_PRESSURE_RECOVERY_FRACTION),
-  );
 
-  for (const entry of assetEntries.slice(0, removeCount)) {
-    clearCanvas(entry.bitmap);
+  for (const entry of candidates) {
+    if (bitmapCache.size <= 1) {
+      break;
+    }
     bitmapCache.delete(entry.key);
+    clearCachedBitmapEntry(entry);
   }
 
-  const pageKeys = Array.from(pageCache.keys()).filter((key) =>
-    key.startsWith(`${assetName}::`),
-  );
-  const pageRemoveCount = Math.max(
-    1,
-    Math.floor(pageKeys.length * MEMORY_PRESSURE_RECOVERY_FRACTION),
-  );
-  for (const key of pageKeys.slice(0, pageRemoveCount)) {
-    const promise = pageCache.get(key);
-    pageCache.delete(key);
-    void promise?.then((cachedPage) => cachedPage.cleanup()).catch(() => undefined);
+  clearCachedPagesForAsset(assetName);
+}
+
+function clearQueuedPreheatWork(assetName: string): void {
+  for (let index = queue.length - 1; index >= 0; index -= 1) {
+    const item = queue[index];
+    if (!item || item.request.assetName !== assetName) {
+      continue;
+    }
+    if (item.priorityClass === "visible-current") {
+      continue;
+    }
+    queue.splice(index, 1);
+    item.reject(abortError());
   }
+}
+
+function clearCachedPagesForAsset(assetName: string): void {
+  for (const [key, entry] of pageCache.entries()) {
+    if (entry.assetName !== assetName) {
+      continue;
+    }
+    pageCache.delete(key);
+    void entry.promise.then((page) => page.cleanup()).catch(() => undefined);
+  }
+}
+
+function clearCachedBitmapEntry(entry: CachedBitmapEntry): void {
+  clearCanvas(entry.bitmap);
+  cachedBitmapBytes = Math.max(0, cachedBitmapBytes - entry.estimatedBytes);
+}
+
+function findNewestPageIndex(assetName: string): number | null {
+  const newest = Array.from(bitmapCache.values())
+    .filter((entry) => entry.assetName === assetName)
+    .sort((left, right) => right.lastUsedAt - left.lastUsedAt)[0];
+  return newest?.pageIndex ?? null;
+}
+
+function getDeviceMemoryClass(): number {
+  const runtimeNavigator = typeof navigator === "undefined"
+    ? null
+    : (navigator as Navigator & { deviceMemory?: number });
+  if (!runtimeNavigator || typeof runtimeNavigator.deviceMemory !== "number") {
+    return 0;
+  }
+  return runtimeNavigator.deviceMemory;
+}
+
+function getMaxBitmapBytes(): number {
+  const deviceMemory = getDeviceMemoryClass();
+  if (deviceMemory > 8) {
+    return PDF_MAX_BITMAP_BYTES_BY_DEVICE_MEMORY.high;
+  }
+  if (deviceMemory > 4) {
+    return PDF_MAX_BITMAP_BYTES_BY_DEVICE_MEMORY.medium;
+  }
+  return PDF_MAX_BITMAP_BYTES_BY_DEVICE_MEMORY.low;
+}
+
+function getMaxInFlightBytes(): number {
+  const deviceMemory = getDeviceMemoryClass();
+  if (deviceMemory > 8) {
+    return PDF_MAX_IN_FLIGHT_BYTES_BY_DEVICE_MEMORY.high;
+  }
+  if (deviceMemory > 4) {
+    return PDF_MAX_IN_FLIGHT_BYTES_BY_DEVICE_MEMORY.medium;
+  }
+  return PDF_MAX_IN_FLIGHT_BYTES_BY_DEVICE_MEMORY.low;
+}
+
+function getSinglePageCapBytes(): number {
+  const deviceMemory = getDeviceMemoryClass();
+  if (deviceMemory > 8) {
+    return PDF_SINGLE_PAGE_CAP_BYTES_BY_DEVICE_MEMORY.high;
+  }
+  if (deviceMemory > 4) {
+    return PDF_SINGLE_PAGE_CAP_BYTES_BY_DEVICE_MEMORY.medium;
+  }
+  return PDF_SINGLE_PAGE_CAP_BYTES_BY_DEVICE_MEMORY.low;
 }
 
 function clearCanvas(canvas: HTMLCanvasElement): void {

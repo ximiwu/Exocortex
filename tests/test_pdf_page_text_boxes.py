@@ -9,6 +9,7 @@ import pytest
 from server.errors import ApiError
 from server.services import assets as asset_service
 from server.services import pdf as pdf_service
+from server.schemas import SizeModel
 
 
 @pytest.fixture(autouse=True)
@@ -211,9 +212,71 @@ def test_get_page_text_boxes_invalid_json_raises_stable_error(
     assert excinfo.value.code == "invalid_content_list_unified"
 
 
+def test_get_page_text_boxes_invalid_page_idx_field_reports_stable_details(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_dir = tmp_path / "asset-bad-page-idx"
+    _write_content_list_unified(
+        asset_dir,
+        [{"page_idx": 0, "x": 0.1, "y": 0.2, "width": 0.3, "height": 0.4}],
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "resolve_asset_dir",
+        lambda _asset_name, *, must_exist=True: asset_dir,
+    )
+
+    with pytest.raises(ApiError) as excinfo:
+        pdf_service.get_page_text_boxes("asset-bad-page-idx", 0)
+
+    assert excinfo.value.status_code == 500
+    assert excinfo.value.code == "invalid_content_list_unified"
+    assert excinfo.value.details == {"itemIndex": 1, "field": "page_idx"}
+
+
+def test_get_page_text_boxes_invalid_rect_field_reports_stable_details(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_dir = tmp_path / "asset-bad-rect"
+    _write_content_list_unified(
+        asset_dir,
+        [{"page_idx": 1, "x": "bad", "y": 0.2, "width": 0.3, "height": 0.4}],
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "resolve_asset_dir",
+        lambda _asset_name, *, must_exist=True: asset_dir,
+    )
+
+    with pytest.raises(ApiError) as excinfo:
+        pdf_service.get_page_text_boxes("asset-bad-rect", 0)
+
+    assert excinfo.value.status_code == 500
+    assert excinfo.value.code == "invalid_content_list_unified"
+    assert excinfo.value.details == {"itemIndex": 1, "field": "x"}
+
+
 def test_get_page_text_boxes_invalid_page_index_raises_stable_error() -> None:
     with pytest.raises(ApiError) as excinfo:
         pdf_service.get_page_text_boxes("asset-any", -1)
 
     assert excinfo.value.status_code == 400
     assert excinfo.value.code == "invalid_page_index"
+
+
+def test_get_pdf_metadata_uses_shared_reference_dpi_page_sizes(monkeypatch: pytest.MonkeyPatch) -> None:
+    pdf_path = Path("raw.pdf")
+    expected_page_sizes = [
+        SizeModel(width=130.0, height=260.0),
+        SizeModel(width=140.0, height=280.0),
+    ]
+
+    monkeypatch.setattr(pdf_service, "_resolve_pdf_path", lambda _asset_name: pdf_path)
+    monkeypatch.setattr(pdf_service, "load_page_sizes_at_reference_dpi", lambda path: expected_page_sizes if path == pdf_path else [])
+
+    result = pdf_service.get_pdf_metadata("asset-a")
+
+    assert result.pageCount == 2
+    assert result.pageSizes == expected_page_sizes

@@ -4,25 +4,33 @@ import json
 import logging
 import math
 import threading
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-import fitz
 
 from server.config import DEFAULT_RENDER_DPI, MAX_RENDER_DPI, MIN_RENDER_DPI
 from server.domain.assets import get_asset_pdf_path
 from server.errors import ApiError
 from server.schemas import (
+    AssetStateModel,
+    BlockModel,
     PdfMetadataModel,
     PdfPageTextBoxesModel,
+    PdfSearchMatchModel,
+    PdfSearchResponse,
     PdfTextBoxModel,
     PreviewMergeMarkdownResponse,
     RectModel,
-    SizeModel,
 )
 
-from .assets import build_asset_state, ensure_content_list_unified, normalize_asset_name, resolve_asset_dir
+from .assets import (
+    build_asset_state,
+    ensure_content_list_unified,
+    load_page_sizes_at_reference_dpi,
+    normalize_asset_name,
+    resolve_asset_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +40,14 @@ _CONTENT_LIST_CONTAINMENT_EPSILON = 1e-6
 _TEXT_LIKE_ENTRY_TYPES = {
     "text",
     "title",
+}
+_CODE_LIKE_ENTRY_TYPES = {
+    "code",
+    "algorithm",
+}
+_EQUATION_LIKE_ENTRY_TYPES = {
+    "equation",
+    "interline_equation",
 }
 
 
@@ -47,6 +63,20 @@ class _UnifiedContentListEntry:
 class _RenderedMarkdownFragment:
     markdown: str
     warning: str | None = None
+
+
+@dataclass(frozen=True)
+class _RenderedContentEntry:
+    entry: _UnifiedContentListEntry
+    markdown: str
+    warning: str | None = None
+
+
+@dataclass(frozen=True)
+class _PdfContentContext:
+    asset_state: AssetStateModel
+    disabled_item_indexes: set[int]
+    entries: tuple[_UnifiedContentListEntry, ...]
 
 
 def _resolve_pdf_path(asset_name: str) -> Path:
@@ -82,6 +112,15 @@ def _invalid_markdown_preview_source(asset_name: str, message: str, details: Any
         500,
         "invalid_markdown_preview_source",
         f"Cannot generate markdown preview for asset '{asset_name}': {message}",
+        details=details,
+    )
+
+
+def _invalid_pdf_search_source(asset_name: str, message: str, details: Any = None) -> ApiError:
+    return ApiError(
+        500,
+        "invalid_pdf_search_source",
+        f"Cannot search PDF content for asset '{asset_name}': {message}",
         details=details,
     )
 
@@ -127,6 +166,56 @@ def _require_page_index_1_based(value: object, *, item_index: int, asset_name: s
     return page_idx
 
 
+def _require_entry_object(raw_item: object, *, item_index: int, asset_name: str) -> dict[str, Any]:
+    if not isinstance(raw_item, dict):
+        raise _invalid_content_list_unified(
+            asset_name,
+            f"Entry {item_index} must be an object.",
+            details={"itemIndex": item_index},
+        )
+    return dict(raw_item)
+
+
+def _parse_unified_entry_rect(raw_item: dict[str, Any], *, item_index: int, asset_name: str) -> RectModel:
+    return RectModel(
+        x=_require_number(raw_item.get("x"), field_name="x", item_index=item_index, asset_name=asset_name),
+        y=_require_number(raw_item.get("y"), field_name="y", item_index=item_index, asset_name=asset_name),
+        width=_require_number(
+            raw_item.get("width"),
+            field_name="width",
+            item_index=item_index,
+            asset_name=asset_name,
+        ),
+        height=_require_number(
+            raw_item.get("height"),
+            field_name="height",
+            item_index=item_index,
+            asset_name=asset_name,
+        ),
+    )
+
+
+def _parse_unified_content_list_entry(
+    raw_item: object,
+    *,
+    item_index: int,
+    asset_name: str,
+) -> _UnifiedContentListEntry:
+    item = _require_entry_object(raw_item, item_index=item_index, asset_name=asset_name)
+    page_index = _require_page_index_1_based(
+        item.get("page_idx"),
+        item_index=item_index,
+        asset_name=asset_name,
+    ) - 1
+    rect = _parse_unified_entry_rect(item, item_index=item_index, asset_name=asset_name)
+    return _UnifiedContentListEntry(
+        item_index=item_index,
+        page_index=page_index,
+        rect=rect,
+        item=item,
+    )
+
+
 def _parse_unified_content_list_entries(asset_name: str, path: Path) -> tuple[_UnifiedContentListEntry, ...]:
     try:
         raw_text = path.read_text(encoding="utf-8-sig")
@@ -147,42 +236,11 @@ def _parse_unified_content_list_entries(asset_name: str, path: Path) -> tuple[_U
 
     entries: list[_UnifiedContentListEntry] = []
     for item_index, raw_item in enumerate(payload, start=1):
-        if not isinstance(raw_item, dict):
-            raise _invalid_content_list_unified(
-                asset_name,
-                f"Entry {item_index} must be an object.",
-                details={"itemIndex": item_index},
-            )
-
-        page_index = _require_page_index_1_based(
-            raw_item.get("page_idx"),
-            item_index=item_index,
-            asset_name=asset_name,
-        ) - 1
-
-        rect = RectModel(
-            x=_require_number(raw_item.get("x"), field_name="x", item_index=item_index, asset_name=asset_name),
-            y=_require_number(raw_item.get("y"), field_name="y", item_index=item_index, asset_name=asset_name),
-            width=_require_number(
-                raw_item.get("width"),
-                field_name="width",
-                item_index=item_index,
-                asset_name=asset_name,
-            ),
-            height=_require_number(
-                raw_item.get("height"),
-                field_name="height",
-                item_index=item_index,
-                asset_name=asset_name,
-            ),
-        )
-
         entries.append(
-            _UnifiedContentListEntry(
+            _parse_unified_content_list_entry(
+                raw_item,
                 item_index=item_index,
-                page_index=page_index,
-                rect=rect,
-                item=dict(raw_item),
+                asset_name=asset_name,
             )
         )
 
@@ -229,13 +287,31 @@ def _resolve_available_content_list_unified_path(asset_name: str) -> Path | None
     return None
 
 
-def _load_preview_source_entries(asset_name: str) -> tuple[_UnifiedContentListEntry, ...]:
+def _raise_wrapped_content_list_error(
+    asset_name: str,
+    exc: ApiError,
+    *,
+    error_factory: Callable[[str, str, Any], ApiError] | None = None,
+) -> None:
+    if error_factory is None:
+        raise exc
+    raise error_factory(asset_name, exc.message, details=exc.details) from exc
+
+
+def _load_available_content_list_entries(
+    asset_name: str,
+    *,
+    missing_ok: bool = False,
+    error_factory: Callable[[str, str, Any], ApiError] | None = None,
+) -> tuple[_UnifiedContentListEntry, ...]:
     try:
         unified_path = _resolve_available_content_list_unified_path(asset_name)
     except ApiError as exc:
-        raise _invalid_markdown_preview_source(asset_name, exc.message, details=exc.details) from exc
+        _raise_wrapped_content_list_error(asset_name, exc, error_factory=error_factory)
 
     if unified_path is None:
+        if missing_ok:
+            return ()
         raise _invalid_markdown_preview_source(
             asset_name,
             "content_list_unified.json is missing.",
@@ -245,7 +321,7 @@ def _load_preview_source_entries(asset_name: str) -> tuple[_UnifiedContentListEn
     try:
         return _load_unified_content_list_entries(asset_name, unified_path)
     except ApiError as exc:
-        raise _invalid_markdown_preview_source(asset_name, exc.message, details=exc.details) from exc
+        _raise_wrapped_content_list_error(asset_name, exc, error_factory=error_factory)
 
 
 def _rect_fully_contains(container: RectModel, candidate: RectModel, epsilon: float = _CONTENT_LIST_CONTAINMENT_EPSILON) -> bool:
@@ -262,14 +338,13 @@ def _rect_fully_contains(container: RectModel, candidate: RectModel, epsilon: fl
     )
 
 
-def _resolve_selected_blocks(asset_name: str, block_ids: list[int]) -> list[Any]:
-    asset_state = build_asset_state(asset_name)
+def _resolve_selected_blocks(asset_state: AssetStateModel, block_ids: list[int]) -> list[BlockModel]:
     block_map = {block.blockId: block for block in asset_state.blocks}
 
     if not block_ids:
         raise ApiError(400, "no_blocks_selected", "Select one or more blocks before generating markdown.")
 
-    resolved_blocks: list[Any] = []
+    resolved_blocks: list[BlockModel] = []
     resolved_ids: set[int] = set()
     for raw_block_id in block_ids:
         block_id = int(raw_block_id)
@@ -284,6 +359,87 @@ def _resolve_selected_blocks(asset_name: str, block_ids: list[int]) -> list[Any]
         resolved_blocks.append(block)
 
     return resolved_blocks
+
+
+def _group_blocks_by_page(blocks: list[BlockModel]) -> dict[int, tuple[BlockModel, ...]]:
+    grouped: dict[int, list[BlockModel]] = {}
+    for block in blocks:
+        grouped.setdefault(block.pageIndex, []).append(block)
+    return {page_index: tuple(page_blocks) for page_index, page_blocks in grouped.items()}
+
+
+def _entry_is_contained(
+    entry: _UnifiedContentListEntry,
+    page_blocks: tuple[BlockModel, ...],
+) -> bool:
+    return any(_rect_fully_contains(block.fractionRect, entry.rect) for block in page_blocks)
+
+
+def _iter_rendered_content_entries(
+    entries: Iterable[_UnifiedContentListEntry],
+    *,
+    disabled_item_indexes: set[int],
+    include_entry: Callable[[_UnifiedContentListEntry], bool] | None = None,
+) -> Iterator[_RenderedContentEntry]:
+    for entry in entries:
+        if entry.item_index in disabled_item_indexes:
+            continue
+        if include_entry is not None and not include_entry(entry):
+            continue
+
+        rendered = _render_markdown_fragment(entry.item, item_index=entry.item_index)
+        markdown = rendered.markdown.strip()
+        if not markdown:
+            continue
+
+        yield _RenderedContentEntry(
+            entry=entry,
+            markdown=markdown,
+            warning=rendered.warning,
+        )
+
+
+def _unique_nonempty_strings(values: Iterable[str | None]) -> list[str]:
+    unique_values: list[str] = []
+    for value in values:
+        if not value or value in unique_values:
+            continue
+        unique_values.append(value)
+    return unique_values
+
+
+def _to_pdf_text_box(entry: _UnifiedContentListEntry) -> PdfTextBoxModel:
+    return PdfTextBoxModel(
+        itemIndex=entry.item_index,
+        pageIndex=entry.page_index,
+        fractionRect=entry.rect,
+    )
+
+
+def _to_pdf_search_match(entry: _UnifiedContentListEntry) -> PdfSearchMatchModel:
+    return PdfSearchMatchModel(
+        itemIndex=entry.item_index,
+        pageIndex=entry.page_index,
+        fractionRect=entry.rect,
+    )
+
+
+def _load_pdf_content_context(
+    asset_name: str,
+    *,
+    error_factory: Callable[[str, str, Any], ApiError],
+    asset_state: AssetStateModel | None = None,
+) -> _PdfContentContext:
+    resolved_asset_state = asset_state or build_asset_state(asset_name)
+    entries = _load_available_content_list_entries(
+        asset_name,
+        error_factory=error_factory,
+    )
+    return _PdfContentContext(
+        asset_state=resolved_asset_state,
+        disabled_item_indexes=set(resolved_asset_state.disabledContentItemIndexes),
+        entries=entries,
+    )
 
 
 def _normalize_entry_type(value: object) -> str:
@@ -320,6 +476,22 @@ def _join_nonempty(parts: list[str], separator: str) -> str:
     return separator.join(part for part in parts if part.strip())
 
 
+def _join_string_field(item: dict[str, Any], field_name: str, *, separator: str = "  \n") -> str:
+    return _join_nonempty(_string_list(item.get(field_name)), separator)
+
+
+def _coerce_first_text(item: dict[str, Any], *field_names: str) -> str:
+    for field_name in field_names:
+        text = _coerce_text(item.get(field_name))
+        if text:
+            return text
+    return ""
+
+
+def _render_image_path_fallback(image_path: str) -> str:
+    return f"![]({image_path})" if image_path else ""
+
+
 def _render_text_item(item: dict[str, Any]) -> str:
     text = _coerce_text(item.get("text"))
     if not text:
@@ -335,8 +507,7 @@ def _render_text_item(item: dict[str, Any]) -> str:
 
 
 def _render_list_item(item: dict[str, Any]) -> str:
-    list_items = _string_list(item.get("list_items"))
-    return _join_nonempty(list_items, "  \n")
+    return _join_string_field(item, "list_items")
 
 
 def _render_image_item(item: dict[str, Any], *, item_index: int | None = None) -> _RenderedMarkdownFragment:
@@ -346,14 +517,14 @@ def _render_image_item(item: dict[str, Any], *, item_index: int | None = None) -
     if explanation:
         body = explanation
     else:
-        body = f"![]({image_path})" if image_path else ""
+        body = _render_image_path_fallback(image_path)
         index_label = f" {item_index}" if item_index is not None else ""
         warning = (
             f"Image item{index_label} is missing image_explaination. "
             "The markdown preview fell back to img_path."
         )
-    captions = _join_nonempty(_string_list(item.get("image_caption")), "  \n")
-    footnotes = _join_nonempty(_string_list(item.get("image_footnote")), "  \n")
+    captions = _join_string_field(item, "image_caption")
+    footnotes = _join_string_field(item, "image_footnote")
 
     if footnotes:
         return _RenderedMarkdownFragment(
@@ -364,28 +535,27 @@ def _render_image_item(item: dict[str, Any], *, item_index: int | None = None) -
 
 
 def _render_table_item(item: dict[str, Any]) -> str:
-    captions = _join_nonempty(_string_list(item.get("table_caption")), "  \n")
-    footnotes = _join_nonempty(_string_list(item.get("table_footnote")), "  \n")
-    body = _coerce_text(item.get("table_body"))
+    captions = _join_string_field(item, "table_caption")
+    footnotes = _join_string_field(item, "table_footnote")
+    body = _coerce_first_text(item, "table_body")
     if not body:
-        image_path = _coerce_text(item.get("img_path"))
-        if image_path:
-            body = f"![]({image_path})"
+        body = _render_image_path_fallback(_coerce_text(item.get("img_path")))
     return _join_nonempty([captions, body, footnotes], "\n")
 
 
 def _render_code_item(item: dict[str, Any]) -> str:
-    captions = _join_nonempty(_string_list(item.get("code_caption")), "  \n")
+    captions = _join_string_field(item, "code_caption")
     sub_type = _normalize_entry_type(item.get("sub_type"))
-    if sub_type == "algorithm" or _normalize_entry_type(item.get("type")) == "algorithm":
-        body = _coerce_text(item.get("code_body")) or _coerce_text(item.get("algorithm_content"))
+    entry_type = _normalize_entry_type(item.get("type"))
+    if sub_type == "algorithm" or entry_type == "algorithm":
+        body = _coerce_first_text(item, "code_body", "algorithm_content")
         return _join_nonempty([captions, body], "  \n")
 
-    body = _coerce_text(item.get("code_body")) or _coerce_text(item.get("code_content"))
+    body = _coerce_first_text(item, "code_body", "code_content")
     if not body:
         return captions
 
-    guess_lang = _coerce_text(item.get("guess_lang")) or _coerce_text(item.get("code_language"))
+    guess_lang = _coerce_first_text(item, "guess_lang", "code_language")
     fenced = f"```{guess_lang}\n{body}\n```" if guess_lang else f"```\n{body}\n```"
     return _join_nonempty([captions, fenced], "  \n")
 
@@ -406,9 +576,9 @@ def _render_markdown_fragment(item: dict[str, Any], *, item_index: int | None = 
         return _render_image_item(item, item_index=item_index)
     if entry_type == "table":
         return _RenderedMarkdownFragment(markdown=_render_table_item(item))
-    if entry_type in {"code", "algorithm"} or _normalize_entry_type(item.get("sub_type")) in {"code", "algorithm"}:
+    if entry_type in _CODE_LIKE_ENTRY_TYPES or _normalize_entry_type(item.get("sub_type")) in _CODE_LIKE_ENTRY_TYPES:
         return _RenderedMarkdownFragment(markdown=_render_code_item(item))
-    if entry_type in {"equation", "interline_equation"} or text_format == "latex":
+    if entry_type in _EQUATION_LIKE_ENTRY_TYPES or text_format == "latex":
         return _RenderedMarkdownFragment(markdown=_render_equation_item(item))
 
     logger.warning("Skipping unsupported content_list_unified entry type %r.", item.get("type"))
@@ -417,36 +587,26 @@ def _render_markdown_fragment(item: dict[str, Any], *, item_index: int | None = 
 
 def get_pdf_metadata(asset_name: str) -> PdfMetadataModel:
     pdf_path = _resolve_pdf_path(asset_name)
-    page_sizes: list[SizeModel] = []
-    with fitz.open(str(pdf_path)) as doc:
-        for page_index in range(doc.page_count):
-            page = doc.load_page(page_index)
-            scale = DEFAULT_RENDER_DPI / 72.0
-            page_sizes.append(SizeModel(width=page.rect.width * scale, height=page.rect.height * scale))
-        return PdfMetadataModel(
-            pageCount=doc.page_count,
-            pageSizes=page_sizes,
-            defaultDpi=DEFAULT_RENDER_DPI,
-            minDpi=MIN_RENDER_DPI,
-            maxDpi=MAX_RENDER_DPI,
-        )
+    page_sizes = load_page_sizes_at_reference_dpi(pdf_path)
+    return PdfMetadataModel(
+        pageCount=len(page_sizes),
+        pageSizes=page_sizes,
+        defaultDpi=DEFAULT_RENDER_DPI,
+        minDpi=MIN_RENDER_DPI,
+        maxDpi=MAX_RENDER_DPI,
+    )
 
 
 def get_page_text_boxes(asset_name: str, page_index: int) -> PdfPageTextBoxesModel:
     if page_index < 0:
         raise ApiError(400, "invalid_page_index", "Page index must be non-negative.")
 
-    unified_path = _resolve_available_content_list_unified_path(asset_name)
-    entries = _load_unified_content_list_entries(asset_name, unified_path) if unified_path is not None else ()
+    entries = _load_available_content_list_entries(asset_name, missing_ok=True)
 
     return PdfPageTextBoxesModel(
         pageIndex=page_index,
         items=[
-            PdfTextBoxModel(
-                itemIndex=entry.item_index,
-                pageIndex=entry.page_index,
-                fractionRect=entry.rect,
-            )
+            _to_pdf_text_box(entry)
             for entry in entries
             if entry.page_index == page_index
         ],
@@ -454,30 +614,55 @@ def get_page_text_boxes(asset_name: str, page_index: int) -> PdfPageTextBoxesMod
 
 
 def preview_merge_markdown(asset_name: str, block_ids: list[int]) -> PreviewMergeMarkdownResponse:
-    selected_blocks = _resolve_selected_blocks(asset_name, block_ids)
     asset_state = build_asset_state(asset_name)
-    disabled_item_indexes = set(asset_state.disabledContentItemIndexes)
-    entries = _load_preview_source_entries(asset_name)
+    selected_blocks_by_page = _group_blocks_by_page(_resolve_selected_blocks(asset_state, block_ids))
+    context = _load_pdf_content_context(
+        asset_name,
+        error_factory=_invalid_markdown_preview_source,
+        asset_state=asset_state,
+    )
 
-    fragments: list[str] = []
-    warnings: list[str] = []
-    for entry in entries:
-        if entry.item_index in disabled_item_indexes:
-            continue
-        if not any(
-            block.pageIndex == entry.page_index and _rect_fully_contains(block.fractionRect, entry.rect)
-            for block in selected_blocks
-        ):
-            continue
-
-        rendered = _render_markdown_fragment(entry.item, item_index=entry.item_index)
-        if rendered.markdown.strip():
-            fragments.append(rendered.markdown.strip())
-        if rendered.warning:
-            warnings.append(rendered.warning)
-
-    warning = "\n".join(dict.fromkeys(warnings)) or None
+    rendered_entries = list(
+        _iter_rendered_content_entries(
+            context.entries,
+            disabled_item_indexes=context.disabled_item_indexes,
+            include_entry=lambda entry: _entry_is_contained(
+                entry,
+                selected_blocks_by_page.get(entry.page_index, ()),
+            ),
+        )
+    )
+    fragments = [entry.markdown for entry in rendered_entries]
+    warning = "\n".join(_unique_nonempty_strings(entry.warning for entry in rendered_entries)) or None
     return PreviewMergeMarkdownResponse(markdown="\n\n".join(fragments), warning=warning)
 
 
-__all__ = ["get_pdf_metadata", "get_page_text_boxes", "preview_merge_markdown", "resolve_pdf_path"]
+def search_pdf_content(asset_name: str, query: str) -> PdfSearchResponse:
+    normalized_query = query.strip()
+    if not normalized_query:
+        return PdfSearchResponse(query="", matches=[])
+
+    context = _load_pdf_content_context(
+        asset_name,
+        error_factory=_invalid_pdf_search_source,
+    )
+    query_casefold = normalized_query.casefold()
+    matches = [
+        _to_pdf_search_match(rendered_entry.entry)
+        for rendered_entry in _iter_rendered_content_entries(
+            context.entries,
+            disabled_item_indexes=context.disabled_item_indexes,
+        )
+        if query_casefold in rendered_entry.markdown.casefold()
+    ]
+
+    return PdfSearchResponse(query=normalized_query, matches=matches)
+
+
+__all__ = [
+    "get_pdf_metadata",
+    "get_page_text_boxes",
+    "preview_merge_markdown",
+    "resolve_pdf_path",
+    "search_pdf_content",
+]

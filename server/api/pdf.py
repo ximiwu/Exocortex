@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
-from server.schemas import PdfMetadataModel, PdfPageTextBoxesModel
+from server.schemas import PdfMetadataModel, PdfPageTextBoxesModel, PdfSearchRequest, PdfSearchResponse
 from server.services import pdf as pdf_service
 
 
@@ -26,6 +26,14 @@ def get_pdf_file(asset_name: str) -> FileResponse:
 )
 def get_page_text_boxes(asset_name: str, page_index: int) -> PdfPageTextBoxesModel:
     return pdf_service.get_page_text_boxes(asset_name, page_index)
+
+
+@router.post(
+    "/assets/{asset_name:path}/pdf/search",
+    response_model=PdfSearchResponse,
+)
+def search_pdf_content(asset_name: str, request: PdfSearchRequest) -> PdfSearchResponse:
+    return pdf_service.search_pdf_content(asset_name, request.query)
 
 
 __all__ = ["router"]

@@ -64,6 +64,7 @@ describe("PdfPage", () => {
         dragPreviewRect={null}
         hoveredBlockId={null}
         hoveredGroupIdx={null}
+        activeSearchMatch={null}
         mergeSelectionAction={null}
         mergeSelectionBusy={false}
         onBlockClick={() => undefined}
@@ -137,6 +138,7 @@ describe("PdfPage", () => {
         dragPreviewRect={null}
         hoveredBlockId={null}
         hoveredGroupIdx={null}
+        activeSearchMatch={null}
         mergeSelectionAction={null}
         mergeSelectionBusy={false}
         onBlockClick={() => undefined}
@@ -181,6 +183,7 @@ describe("PdfPage", () => {
         dragPreviewRect={null}
         hoveredBlockId={null}
         hoveredGroupIdx={null}
+        activeSearchMatch={null}
         mergeSelectionAction={null}
         mergeSelectionBusy={false}
         onBlockClick={() => undefined}
@@ -246,6 +249,7 @@ describe("PdfPage", () => {
         dragPreviewRect={null}
         hoveredBlockId={null}
         hoveredGroupIdx={null}
+        activeSearchMatch={null}
         mergeSelectionAction={null}
         mergeSelectionBusy={false}
         onBlockClick={() => undefined}
@@ -292,6 +296,7 @@ describe("PdfPage", () => {
         dragPreviewRect={null}
         hoveredBlockId={null}
         hoveredGroupIdx={null}
+        activeSearchMatch={null}
         mergeSelectionAction={null}
         mergeSelectionBusy={false}
         onBlockClick={() => undefined}
@@ -350,6 +355,7 @@ describe("PdfPage", () => {
         dragPreviewRect={null}
         hoveredBlockId={null}
         hoveredGroupIdx={null}
+        activeSearchMatch={null}
         mergeSelectionAction={null}
         mergeSelectionBusy={false}
         onBlockClick={() => undefined}
@@ -404,6 +410,7 @@ describe("PdfPage", () => {
         dragPreviewRect={{ x: 40, y: 60, width: 120, height: 90 }}
         hoveredBlockId={null}
         hoveredGroupIdx={null}
+        activeSearchMatch={null}
         mergeSelectionAction={null}
         mergeSelectionBusy={false}
         onBlockClick={onBlockClick}
@@ -459,6 +466,7 @@ describe("PdfPage", () => {
         dragPreviewRect={null}
         hoveredBlockId={null}
         hoveredGroupIdx={null}
+        activeSearchMatch={null}
         mergeSelectionAction={null}
         mergeSelectionBusy={false}
         onBlockClick={onBlockClick}
@@ -521,6 +529,7 @@ describe("PdfPage", () => {
         dragPreviewRect={null}
         hoveredBlockId={null}
         hoveredGroupIdx={null}
+        activeSearchMatch={null}
         mergeSelectionAction={null}
         mergeSelectionBusy={false}
         onBlockClick={onBlockClick}
@@ -557,6 +566,55 @@ describe("PdfPage", () => {
     expect(onBlockClick).not.toHaveBeenCalled();
   });
 
+  it("renders the active search match as a green overlay independent of block text boxes", () => {
+    const { getByTestId } = render(
+      <PdfPage
+        assetName="asset-a"
+        appMode="normal"
+        blocks={[]}
+        textBoxes={[]}
+        busy={false}
+        compressSelection={null}
+        disabledContentItemIndexes={[]}
+        dragPreviewActive={false}
+        dragPreviewRect={null}
+        hoveredBlockId={null}
+        hoveredGroupIdx={null}
+        activeSearchMatch={{
+          itemIndex: 4,
+          pageIndex: 0,
+          fractionRect: { x: 0.2, y: 0.3, width: 0.15, height: 0.08 },
+        }}
+        mergeSelectionAction={null}
+        mergeSelectionBusy={false}
+        onBlockClick={() => undefined}
+        onBlockDelete={() => undefined}
+        onBlockHoverEnter={() => undefined}
+        onBlockHoverLeave={() => undefined}
+        onMergeSelection={() => undefined}
+        onTextBoxToggle={() => undefined}
+        onSurfacePointerCancel={() => undefined}
+        onSurfacePointerDown={() => undefined}
+        onSurfacePointerMove={() => undefined}
+        onSurfacePointerUp={() => undefined}
+        pageLayout={{
+          pageIndex: 0,
+          top: 0,
+          left: 0,
+          width: 400,
+          height: 600,
+          bottom: 600,
+        }}
+        pdfDocument={null}
+        renderQuality="final"
+        selectionOrderByBlock={new Map()}
+        zoom={1}
+      />,
+    );
+
+    expect(getByTestId("pdf-search-match")).toBeTruthy();
+  });
+
   it("renders a merge button for an active selection", () => {
     const onMergeSelection = vi.fn();
 
@@ -573,6 +631,7 @@ describe("PdfPage", () => {
         dragPreviewRect={null}
         hoveredBlockId={null}
         hoveredGroupIdx={null}
+        activeSearchMatch={null}
         mergeSelectionAction={{
           pageIndex: 0,
           rect: { x: 0.1, y: 0.1, width: 0.3, height: 0.2 },

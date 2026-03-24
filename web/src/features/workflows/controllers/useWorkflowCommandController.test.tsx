@@ -31,10 +31,12 @@ const SUBMITTED_TASK = {
 const INITIAL_STORE_STATE = useAppStore.getState();
 
 let trackSubmittedTaskSpy: ReturnType<typeof vi.fn>;
+let isGroupTaskRunningSpy: ReturnType<typeof vi.fn>;
 
 vi.mock("../../tasks/TaskCenterContext", () => ({
   useTaskCenter: () => ({
     trackSubmittedTask: trackSubmittedTaskSpy,
+    isGroupTaskRunning: isGroupTaskRunningSpy,
   }),
 }));
 
@@ -121,6 +123,7 @@ function createApi(): ExocortexApi {
         pageIndex: 0,
         items: [],
       })),
+      searchContent: vi.fn(async (_assetName, query) => ({ query, matches: [] })),
       createBlock: vi.fn(async () => {
         throw new Error("not implemented");
       }),
@@ -211,6 +214,7 @@ function Harness() {
 describe("useWorkflowCommandController", () => {
   beforeEach(() => {
     trackSubmittedTaskSpy = vi.fn();
+    isGroupTaskRunningSpy = vi.fn(() => false);
     resetStore();
   });
 
@@ -326,5 +330,35 @@ describe("useWorkflowCommandController", () => {
     });
     expect(setActiveTaskPanel).not.toHaveBeenCalledWith(true);
     expect(screen.getByTestId("active-task-panel").textContent).toBe("false");
+  });
+
+  it("blocks duplicate group dive requests for the same group with a toast", async () => {
+    isGroupTaskRunningSpy.mockReturnValue(true);
+    const api = createApi();
+    resetStore({
+      groupDiveRequest: {
+        assetName: "asset-a",
+        groupIdx: 5,
+        nonce: Date.now(),
+      },
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ExocortexApiProvider api={api}>
+          <ToastProvider>
+            <Harness />
+          </ToastProvider>
+        </ExocortexApiProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Group 5 is already in progress.")).toBeInTheDocument();
+    expect(api.workflows.submitGroupDive).not.toHaveBeenCalled();
+    expect(trackSubmittedTaskSpy).not.toHaveBeenCalled();
   });
 });

@@ -40,6 +40,7 @@ function createApi(
       buildFileUrl: vi.fn(() => ""),
       getMetadata: vi.fn(),
       getPageTextBoxes: vi.fn(getPageTextBoxes),
+      searchContent: vi.fn(async (_assetName, query) => ({ query, matches: [] })),
       createBlock: vi.fn(),
       deleteBlock: vi.fn(),
       deleteGroup: vi.fn(),

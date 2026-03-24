@@ -429,6 +429,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/assets/{asset_name}/pdf/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Search Pdf Content */
+        post: operations["search_pdf_content_api_assets__asset_name__pdf_search_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks": {
         parameters: {
             query?: never;
@@ -943,6 +960,32 @@ export interface components {
             pageIndex: number;
             /** Items */
             items?: components["schemas"]["PdfTextBoxModel"][];
+        };
+        /** PdfSearchMatchModel */
+        PdfSearchMatchModel: {
+            /** Itemindex */
+            itemIndex: number;
+            /** Pageindex */
+            pageIndex: number;
+            fractionRect: components["schemas"]["RectModel"];
+        };
+        /** PdfSearchRequest */
+        PdfSearchRequest: {
+            /**
+             * Query
+             * @default
+             */
+            query: string;
+        };
+        /** PdfSearchResponse */
+        PdfSearchResponse: {
+            /**
+             * Query
+             * @default
+             */
+            query: string;
+            /** Matches */
+            matches?: components["schemas"]["PdfSearchMatchModel"][];
         };
         /** PdfTextBoxModel */
         PdfTextBoxModel: {
@@ -2024,6 +2067,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PdfPageTextBoxesModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_pdf_content_api_assets__asset_name__pdf_search_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asset_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PdfSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PdfSearchResponse"];
                 };
             };
             /** @description Validation Error */

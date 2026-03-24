@@ -102,3 +102,37 @@ def test_task_manager_reports_structured_payload_for_unexpected_error(task_manag
     assert payload["exceptionType"] == "ValueError"
     assert "statusCode" not in payload
     assert detail["result"]["payload"] == payload
+
+
+def test_task_manager_rejects_duplicate_active_dedupe_key(task_manager: TaskManager) -> None:
+    started = False
+
+    def _runner(_context: object) -> TaskResult:
+        nonlocal started
+        started = True
+        time.sleep(0.2)
+        return TaskResult(message="done")
+
+    task_manager.submit_task(
+        kind="group_dive",
+        title="Group dive: group 2",
+        asset_name="asset-1",
+        runner=_runner,
+        dedupe_key="group_dive:asset-1:2",
+    )
+
+    deadline = time.monotonic() + 1.0
+    while not started and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    with pytest.raises(ApiError) as exc_info:
+        task_manager.submit_task(
+            kind="group_dive",
+            title="Group dive: group 2",
+            asset_name="asset-1",
+            runner=_runner,
+            dedupe_key="group_dive:asset-1:2",
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "task_already_running"

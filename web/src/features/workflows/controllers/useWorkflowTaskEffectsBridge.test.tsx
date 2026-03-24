@@ -156,6 +156,7 @@ function createApi(overrides: {
         pageIndex,
         items: [],
       })),
+      searchContent: vi.fn(async (_assetName, query) => ({ query, matches: [] })),
       createBlock: vi.fn(async () => assetState),
       deleteBlock: vi.fn(async () => assetState),
       deleteGroup: vi.fn(async () => assetState),

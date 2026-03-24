@@ -77,7 +77,25 @@ class TaskManager:
         title: str,
         asset_name: str | None,
         runner: TaskRunner,
+        dedupe_key: str | None = None,
     ) -> JsonObject:
+        if dedupe_key is not None:
+            with self._lock:
+                for existing in self._records.values():
+                    if existing.dedupe_key != dedupe_key:
+                        continue
+                    if existing.status not in {"queued", "running"}:
+                        continue
+                    raise ApiError(
+                        409,
+                        "task_already_running",
+                        "An equivalent task is already in progress.",
+                        details={
+                            "taskId": existing.id,
+                            "kind": existing.kind,
+                            "assetName": existing.asset_name,
+                        },
+                    )
         task_id = f"task_{uuid.uuid4().hex[:12]}"
         record = TaskRecord(
             id=task_id,
@@ -85,6 +103,7 @@ class TaskManager:
             title=title,
             asset_name=asset_name,
             status="queued",
+            dedupe_key=dedupe_key,
         )
         with self._lock:
             self._records[task_id] = record

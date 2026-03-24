@@ -9,14 +9,16 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 
 import type { SelectionRect } from "../../selection";
 import { PdfPage } from "../PdfPage";
+import { PDF_PREHEAT_FINAL_PAGES } from "../constants";
 import type { PdfHoverState, PdfMergeSelectionAction } from "../hooks/usePdfPaneInteractions";
-import { ensureRenderedBitmap } from "../renderCache";
+import { ensureRenderedBitmap, syncPdfRenderWindow } from "../renderCache";
 import type {
   AppMode,
   NormalizedPageRect,
   PdfBlockRecord,
   PdfPageLayout,
   PdfPageSize,
+  PdfSearchMatch,
   PdfTextBox,
 } from "../types";
 
@@ -49,6 +51,7 @@ interface PdfPaneViewportProps {
   selectionOrderByBlock: Map<number, number>;
   mergeSelectionAction: PdfMergeSelectionAction | null;
   compressSelection: NormalizedPageRect | null;
+  activeSearchMatch: PdfSearchMatch | null;
   hoverState: PdfHoverState;
   dragSelection: PdfDragSelectionState;
   pdfDocument: PDFDocumentProxy | null;
@@ -88,6 +91,7 @@ export function PdfPaneViewport({
   selectionOrderByBlock,
   mergeSelectionAction,
   compressSelection,
+  activeSearchMatch,
   hoverState,
   dragSelection,
   pdfDocument,
@@ -107,49 +111,12 @@ export function PdfPaneViewport({
   onSurfaceDoubleClick,
 }: PdfPaneViewportProps) {
   useEffect(() => {
-    if (!pdfDocument) {
+    if (!assetName) {
       return;
     }
 
-    const pixelRatio = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
-    const immediateSet = new Set([...visiblePageIndexes, ...preheatPageIndexes]);
-    const abortControllers = layouts.map((layout, pageIndex) => {
-      if (!pageSizes[pageIndex] || immediateSet.has(pageIndex)) {
-        return null;
-      }
-
-      const controller = new AbortController();
-      void ensureRenderedBitmap(
-        pdfDocument,
-        {
-          assetName,
-          pageIndex,
-          pageWidth: layout.width,
-          pageHeight: layout.height,
-          zoom,
-          pixelRatio,
-          quality: "final",
-        },
-        {
-          priority: -100 - pageIndex,
-          signal: controller.signal,
-        },
-      ).catch(() => undefined);
-      return controller;
-    });
-
-    return () => {
-      abortControllers.forEach((controller) => controller?.abort());
-    };
-  }, [
-    assetName,
-    layouts,
-    pageSizes,
-    pdfDocument,
-    preheatPageIndexes,
-    visiblePageIndexes,
-    zoom,
-  ]);
+    syncPdfRenderWindow(assetName, visiblePageIndexes, preheatPageIndexes);
+  }, [assetName, preheatPageIndexes, visiblePageIndexes]);
 
   useEffect(() => {
     if (!pdfDocument) {
@@ -173,10 +140,11 @@ export function PdfPaneViewport({
           pageHeight: layout.height,
           zoom,
           pixelRatio,
-          quality: isScrolling ? "preview" : order < 2 ? "final" : "preview",
+          quality: isScrolling || order >= PDF_PREHEAT_FINAL_PAGES ? "preview" : "final",
         },
         {
           priority: isScrolling ? -order - 1 : 10 - order,
+          priorityClass: order === 0 ? "visible-adjacent" : "preheat-near",
           signal: controller.signal,
         },
       ).catch(() => undefined);
@@ -248,6 +216,9 @@ export function PdfPaneViewport({
                   ? dragSelection.previewRect
                   : null
               }
+              activeSearchMatch={
+                activeSearchMatch?.pageIndex === pageIndex ? activeSearchMatch : null
+              }
               hoveredBlockId={hoverState.hoveredBlockId}
               hoveredGroupIdx={hoverState.hoveredGroupIdx}
               key={pageIndex}
@@ -277,7 +248,7 @@ export function PdfPaneViewport({
               pageLayout={layout}
               selectionOrderByBlock={selectionOrderByBlock}
               pdfDocument={pdfDocument}
-              renderQuality="final"
+              renderQuality={isScrolling ? "preview" : "final"}
               zoom={zoom}
             />
           );

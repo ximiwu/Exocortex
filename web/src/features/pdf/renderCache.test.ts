@@ -5,6 +5,7 @@ import {
   clearPdfRenderCache,
   ensureRenderedBitmap,
   peekCachedBitmap,
+  syncPdfRenderWindow,
 } from "./renderCache";
 
 describe("renderCache", () => {
@@ -144,5 +145,106 @@ describe("renderCache", () => {
     expect(first.bitmap).toBe(second.bitmap);
     expect(getPage).toHaveBeenCalledTimes(1);
     expect(render).toHaveBeenCalledTimes(1);
+  });
+
+  it("downgrades oversized final renders to preview quality", async () => {
+    const render = vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() }));
+    const getViewport = vi.fn(({ scale }: { scale: number }) => ({
+      width: 1200 * scale,
+      height: 1800 * scale,
+    }));
+    const page = {
+      getViewport,
+      render,
+      cleanup: vi.fn(),
+    } as unknown as PDFPageProxy;
+    const getPage = vi.fn(async () => page);
+    const pdfDocument = {
+      getPage,
+    } as unknown as PDFDocumentProxy;
+
+    const entry = await ensureRenderedBitmap(
+      pdfDocument,
+      {
+        assetName: "asset-a",
+        pageIndex: 0,
+        pageWidth: 1200,
+        pageHeight: 1800,
+        zoom: 1,
+        pixelRatio: 4,
+        quality: "final",
+      },
+      { priority: 100 },
+    );
+
+    expect(entry.quality).toBe("preview");
+  });
+
+  it("evicts offscreen bitmaps when syncing the render window", async () => {
+    const render = vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() }));
+    const page = {
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 400 * scale,
+        height: 600 * scale,
+      }),
+      render,
+      cleanup: vi.fn(),
+    } as unknown as PDFPageProxy;
+    const getPage = vi.fn(async () => page);
+    const pdfDocument = {
+      getPage,
+    } as unknown as PDFDocumentProxy;
+
+    await ensureRenderedBitmap(
+      pdfDocument,
+      {
+        assetName: "asset-a",
+        pageIndex: 0,
+        pageWidth: 400,
+        pageHeight: 600,
+        zoom: 1,
+        pixelRatio: 1,
+        quality: "final",
+      },
+      { priority: 100 },
+    );
+    await ensureRenderedBitmap(
+      pdfDocument,
+      {
+        assetName: "asset-a",
+        pageIndex: 1,
+        pageWidth: 400,
+        pageHeight: 600,
+        zoom: 1,
+        pixelRatio: 1,
+        quality: "preview",
+      },
+      { priority: 50 },
+    );
+
+    syncPdfRenderWindow("asset-a", [0], []);
+
+    expect(
+      peekCachedBitmap({
+        assetName: "asset-a",
+        pageIndex: 1,
+        pageWidth: 400,
+        pageHeight: 600,
+        zoom: 1,
+        pixelRatio: 1,
+        quality: "preview",
+      }),
+    ).toBeNull();
+    expect(
+      peekCachedBitmap({
+        assetName: "asset-a",
+        pageIndex: 0,
+        pageWidth: 400,
+        pageHeight: 600,
+        zoom: 1,
+        pixelRatio: 1,
+        quality: "final",
+      }),
+    ).not.toBeNull();
   });
 });

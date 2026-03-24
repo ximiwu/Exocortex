@@ -63,6 +63,7 @@ class TaskRecord:
     title: str
     asset_name: str | None
     status: TaskStatus
+    dedupe_key: str | None = None
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
     events: list[TaskEvent] = field(default_factory=list)

@@ -437,3 +437,265 @@ def test_preview_merge_markdown_reports_invalid_preview_source(
 
     assert excinfo.value.status_code == 500
     assert excinfo.value.code == "invalid_markdown_preview_source"
+
+
+def test_preview_merge_markdown_reads_asset_state_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_dir = tmp_path / "asset-single-state"
+    _write_content_list_unified(
+        asset_dir,
+        [
+            {
+                "page_idx": 1,
+                "type": "text",
+                "text": "Only once",
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.2,
+                "height": 0.08,
+            }
+        ],
+    )
+
+    build_calls = 0
+
+    def _counted_build_asset_state(_asset_name: str) -> AssetStateModel:
+        nonlocal build_calls
+        build_calls += 1
+        return _build_asset_state(
+            [
+                {
+                    "blockId": 1,
+                    "pageIndex": 0,
+                    "fractionRect": {"x": 0.05, "y": 0.05, "width": 0.45, "height": 0.45},
+                    "groupIdx": None,
+                }
+            ]
+        )
+
+    monkeypatch.setattr(pdf_service, "build_asset_state", _counted_build_asset_state)
+    monkeypatch.setattr(
+        pdf_service,
+        "resolve_asset_dir",
+        lambda _asset_name, *, must_exist=True: asset_dir,
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "ensure_content_list_unified",
+        lambda _asset_name: asset_dir / "content_list_unified.json",
+    )
+
+    result = pdf_service.preview_merge_markdown("asset-single-state", [1])
+
+    assert result.markdown == "Only once"
+    assert build_calls == 1
+
+
+def test_search_pdf_content_matches_only_rendered_markdown_fragments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_dir = tmp_path / "asset-search"
+    _write_content_list_unified(
+        asset_dir,
+        [
+            {
+                "page_idx": 1,
+                "type": "text",
+                "text": "Energy conservation",
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.2,
+                "height": 0.08,
+            },
+            {
+                "page_idx": 1,
+                "type": "table",
+                "table_caption": ["Conservation Table"],
+                "table_body": "<table><tr><td>Energy</td></tr></table>",
+                "x": 0.15,
+                "y": 0.2,
+                "width": 0.25,
+                "height": 0.12,
+            },
+            {
+                "page_idx": 2,
+                "type": "image",
+                "image_explaination": "Energy flow diagram",
+                "x": 0.2,
+                "y": 0.12,
+                "width": 0.2,
+                "height": 0.1,
+            },
+            {
+                "page_idx": 2,
+                "type": "footnote",
+                "text": "Ignored footnote",
+                "x": 0.22,
+                "y": 0.24,
+                "width": 0.2,
+                "height": 0.08,
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "build_asset_state",
+        lambda _asset_name: _build_asset_state([]),
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "resolve_asset_dir",
+        lambda _asset_name, *, must_exist=True: asset_dir,
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "ensure_content_list_unified",
+        lambda _asset_name: asset_dir / "content_list_unified.json",
+    )
+
+    result = pdf_service.search_pdf_content("asset-search", "energy")
+
+    assert result.query == "energy"
+    assert [(match.itemIndex, match.pageIndex) for match in result.matches] == [
+        (1, 0),
+        (2, 0),
+        (3, 1),
+    ]
+
+
+def test_search_pdf_content_skips_disabled_items(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_dir = tmp_path / "asset-search-disabled"
+    _write_content_list_unified(
+        asset_dir,
+        [
+            {
+                "page_idx": 1,
+                "type": "text",
+                "text": "Momentum theorem",
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.2,
+                "height": 0.08,
+            },
+            {
+                "page_idx": 2,
+                "type": "text",
+                "text": "Momentum balance",
+                "x": 0.18,
+                "y": 0.2,
+                "width": 0.22,
+                "height": 0.08,
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "build_asset_state",
+        lambda _asset_name: _build_asset_state([], disabled_content_item_indexes=[2]),
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "resolve_asset_dir",
+        lambda _asset_name, *, must_exist=True: asset_dir,
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "ensure_content_list_unified",
+        lambda _asset_name: asset_dir / "content_list_unified.json",
+    )
+
+    result = pdf_service.search_pdf_content("asset-search-disabled", "momentum")
+
+    assert [match.itemIndex for match in result.matches] == [1]
+
+
+def test_search_pdf_content_returns_empty_matches_for_blank_query(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_dir = tmp_path / "asset-search-empty"
+    _write_content_list_unified(asset_dir, [])
+    monkeypatch.setattr(
+        pdf_service,
+        "build_asset_state",
+        lambda _asset_name: _build_asset_state([]),
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "resolve_asset_dir",
+        lambda _asset_name, *, must_exist=True: asset_dir,
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "ensure_content_list_unified",
+        lambda _asset_name: asset_dir / "content_list_unified.json",
+    )
+
+    result = pdf_service.search_pdf_content("asset-search-empty", "   ")
+
+    assert result.query == ""
+    assert result.matches == []
+
+
+def test_search_pdf_content_reports_invalid_search_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_dir = tmp_path / "asset-search-bad"
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    (asset_dir / "content_list_unified.json").write_text("{bad json", encoding="utf-8")
+    monkeypatch.setattr(
+        pdf_service,
+        "build_asset_state",
+        lambda _asset_name: _build_asset_state([]),
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "resolve_asset_dir",
+        lambda _asset_name, *, must_exist=True: asset_dir,
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "ensure_content_list_unified",
+        lambda _asset_name: asset_dir / "content_list_unified.json",
+    )
+
+    with pytest.raises(ApiError) as excinfo:
+        pdf_service.search_pdf_content("asset-search-bad", "energy")
+
+    assert excinfo.value.status_code == 500
+    assert excinfo.value.code == "invalid_pdf_search_source"
+
+
+def test_render_markdown_fragment_uses_table_image_fallback() -> None:
+    rendered = pdf_service._render_markdown_fragment(
+        {
+            "type": "table",
+            "table_caption": ["Table A"],
+            "img_path": "images/table-a.png",
+            "table_footnote": ["Table note"],
+        }
+    )
+
+    assert rendered.markdown == "Table A\n![](images/table-a.png)\nTable note"
+    assert rendered.warning is None
+
+
+def test_render_markdown_fragment_renders_algorithm_without_code_fence() -> None:
+    rendered = pdf_service._render_markdown_fragment(
+        {
+            "type": "code",
+            "sub_type": "algorithm",
+            "code_caption": ["Algorithm 1"],
+            "algorithm_content": "step 1 -> step 2",
+        }
+    )
+
+    assert rendered.markdown == "Algorithm 1  \nstep 1 -> step 2"
+    assert rendered.warning is None

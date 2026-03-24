@@ -21,6 +21,7 @@ interface TaskCenterValue {
   refreshTask(taskId: string): Promise<void>;
   trackSubmittedTask(task: TaskSummary): void;
   isTaskRunning(kind: string, assetName?: string | null): boolean;
+  isGroupTaskRunning(kind: string, assetName: string, groupIdx: number): boolean;
 }
 
 const TaskCenterContext = createContext<TaskCenterValue | null>(null);
@@ -210,6 +211,18 @@ export function TaskCenterProvider({
     });
   }
 
+  function isGroupTaskRunning(kind: string, assetName: string, groupIdx: number): boolean {
+    return tasks.some((task) => {
+      if (task.kind !== kind || task.assetName !== assetName) {
+        return false;
+      }
+      if (task.status !== "queued" && task.status !== "running") {
+        return false;
+      }
+      return taskGroupIdx(task) === groupIdx;
+    });
+  }
+
   return (
     <TaskCenterContext.Provider
       value={{
@@ -220,7 +233,8 @@ export function TaskCenterProvider({
         setSelectedTaskId,
         refreshTask,
         trackSubmittedTask,
-        isTaskRunning
+        isTaskRunning,
+        isGroupTaskRunning,
       }}
     >
       {children}
@@ -378,4 +392,32 @@ function pushStartToastIfNeeded(
     description: "Started.",
     tone: "neutral",
   });
+}
+
+function taskGroupIdx(task: TaskDetail): number | null {
+  const payloads: Array<Record<string, unknown> | null | undefined> = [
+    task.result ?? null,
+    task.latestEvent?.payload,
+    ...task.events.map((event) => event.payload),
+  ];
+  for (const payload of payloads) {
+    const groupIdx = parseGroupIdx(payload);
+    if (groupIdx !== null) {
+      return groupIdx;
+    }
+  }
+  return parseGroupIdxFromTitle(task.title);
+}
+
+function parseGroupIdx(payload: Record<string, unknown> | null | undefined): number | null {
+  return typeof payload?.groupIdx === "number" ? payload.groupIdx : null;
+}
+
+function parseGroupIdxFromTitle(title: string): number | null {
+  const match = /group\s+(\d+)/i.exec(title);
+  if (!match) {
+    return null;
+  }
+  const parsed = Number.parseInt(match[1] ?? "", 10);
+  return Number.isFinite(parsed) ? parsed : null;
 }

@@ -25,12 +25,21 @@
   display: flex;
   align-items: center;
   gap: 5px;
+  min-width: 0;
 }
 
-.pdf-pane__toolbar-group--spacer {
-  flex: 1;
+.pdf-pane__toolbar-group--search {
+  min-width: min(100%, 16rem);
+  flex: 1 1 18rem;
+}
+
+.pdf-pane__toolbar-actions {
+  display: inline-flex;
+  align-items: center;
   justify-content: flex-end;
-  min-width: 0;
+  gap: 6px;
+  margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .pdf-pane__label {
@@ -55,6 +64,50 @@
   color: inherit;
 }
 
+.pdf-pane__searchField {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 1px solid color-mix(in srgb, var(--pdf-input-border) 82%, #11241a 18%);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(14, 20, 17, 0.96), rgba(18, 26, 22, 0.96));
+  box-shadow: inset 0 0 0 1px rgba(98, 120, 107, 0.08);
+  overflow: hidden;
+}
+
+.pdf-pane__searchLabel {
+  flex: 0 0 auto;
+  padding: 0.42rem 0.58rem;
+  border-right: 1px solid rgba(104, 126, 113, 0.22);
+  background: rgba(112, 131, 119, 0.08);
+  color: rgba(225, 236, 230, 0.74);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pdf-pane__searchInput {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0.42rem 0.62rem;
+  color: #eef7f2;
+  font-size: 0.82rem;
+  font-family: "Cascadia Code", "Consolas", monospace;
+}
+
+.pdf-pane__searchInput::placeholder {
+  color: rgba(202, 217, 208, 0.48);
+}
+
+.pdf-pane__searchInput:focus {
+  outline: none;
+}
+
 .pdf-pane__button {
   border: 0;
   border-radius: 999px;
@@ -64,6 +117,8 @@
   font-size: 0.78rem;
   font-weight: 700;
   line-height: 1.15;
+  flex: 0 0 auto;
+  white-space: nowrap;
   cursor: pointer;
   transition:
     transform 140ms ease,
@@ -91,8 +146,37 @@
   background: var(--pdf-button-secondary-hover);
 }
 
+.pdf-pane__button--search {
+  min-width: 2rem;
+  border-radius: 12px;
+  padding-inline: 0.58rem;
+  background: linear-gradient(180deg, #173124, #13271d);
+  color: #dff6e9;
+}
+
+.pdf-pane__button--search:hover {
+  background: linear-gradient(180deg, #20422f, #173124);
+}
+
 .pdf-pane__button--refresh {
-  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.pdf-pane__searchStatus {
+  min-width: 4.6rem;
+  flex: 0 0 auto;
+  color: var(--pdf-meta);
+  font-size: 0.76rem;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  text-align: right;
+}
+
+.pdf-pane__searchStatus--busy {
+  color: color-mix(in srgb, var(--pdf-meta) 70%, #d9912b 30%);
+}
+
+.pdf-pane__searchStatus--error {
+  color: var(--pdf-error-text);
 }
 
 .pdf-pane__error {
@@ -117,7 +201,7 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 1.25rem 1.5rem 1.5rem;
+  padding: 0.75rem 1rem 1rem;
 }
 
 .pdf-pane__viewport--panning {
@@ -146,7 +230,7 @@
   height: 100%;
   overflow: hidden;
   isolation: isolate;
-  border-radius: 18px;
+  border-radius: 0;
   background: var(--pdf-page-surface);
   box-shadow: var(--pdf-page-shadow);
   outline: 1px solid var(--pdf-page-outline);
@@ -178,8 +262,7 @@
   opacity: 0;
 }
 
-.pdf-page__loading,
-.pdf-page__busy {
+.pdf-page__loading {
   position: absolute;
   z-index: 4;
   display: inline-flex;
@@ -187,10 +270,12 @@
   gap: 0.5rem;
   border-radius: 999px;
   background: var(--pdf-overlay-surface);
-  color: var(--pdf-overlay-text);
-  font-size: 0.82rem;
-  letter-spacing: 0.02em;
-  padding: 0.45rem 0.8rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  color: transparent;
+  font-size: 0;
+  padding: 0;
 }
 
 .pdf-page__loading {
@@ -198,29 +283,14 @@
   right: 0.9rem;
 }
 
-.pdf-page__loading--preview {
-  background: color-mix(in srgb, var(--pdf-overlay-surface) 80%, #d9912b 20%);
-}
-
-.pdf-page__busy {
-  left: 50%;
-  bottom: 0.9rem;
-  transform: translateX(-50%);
-}
-
-.pdf-page__label {
-  position: absolute;
-  z-index: 4;
-  top: 0.9rem;
-  left: 0.9rem;
-  padding: 0.45rem 0.8rem;
+.pdf-page__loading::after {
+  content: "";
+  width: 0.9rem;
+  height: 0.9rem;
   border-radius: 999px;
-  background: var(--pdf-page-label-surface);
-  color: var(--pdf-page-label-text);
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  border: 2px solid color-mix(in srgb, var(--pdf-overlay-text) 20%, transparent);
+  border-top-color: var(--pdf-overlay-text);
+  animation: pdf-page-loading-spin 0.9s linear infinite;
 }
 
 .pdf-page__surface {
@@ -272,6 +342,18 @@
 .pdf-page__textBox--disabled:focus-visible {
   background: rgba(111, 117, 125, 0.22);
   box-shadow: 0 0 0 2px rgba(111, 117, 125, 0.14);
+}
+
+.pdf-page__searchMatch {
+  position: absolute;
+  z-index: 4;
+  border-radius: 6px;
+  border: 2px solid rgba(34, 197, 94, 0.96);
+  background: rgba(34, 197, 94, 0.14);
+  box-shadow:
+    0 0 0 1px rgba(11, 71, 34, 0.3),
+    0 0 0 4px rgba(34, 197, 94, 0.15);
+  pointer-events: none;
 }
 
 .pdf-page__mergeActions {
@@ -422,4 +504,10 @@
   background: var(--pdf-error-surface);
   color: var(--pdf-error-text);
   padding: 0.7rem 0.9rem;
+}
+
+@keyframes pdf-page-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

@@ -5,13 +5,32 @@ export const DEFAULT_MAX_DPI = 1200;
 export const PDF_MIN_ZOOM = 0.35;
 export const PDF_MAX_ZOOM = 3;
 export const PDF_ZOOM_STEP = 0.15;
-export const PDF_PAGE_GAP = 28;
+export const PDF_PAGE_GAP = 12;
 export const PDF_VIEWPORT_BUFFER = 900;
 export const PDF_SCROLL_SETTLE_MS = 140;
 export const PDF_PREHEAT_AHEAD_PAGES = 3;
 export const PDF_PREHEAT_BEHIND_PAGES = 1;
+export const PDF_PREHEAT_FINAL_PAGES = 1;
+export const PDF_PREVIEW_SCALE = 0.7;
+export const PDF_PAGE_CACHE_RADIUS = 2;
+export const PDF_MAX_BITMAP_BYTES_BY_DEVICE_MEMORY = {
+  low: 96 * 1024 * 1024,
+  medium: 160 * 1024 * 1024,
+  high: 256 * 1024 * 1024,
+} as const;
+export const PDF_MAX_IN_FLIGHT_BYTES_BY_DEVICE_MEMORY = {
+  low: 24 * 1024 * 1024,
+  medium: 40 * 1024 * 1024,
+  high: 64 * 1024 * 1024,
+} as const;
+export const PDF_SINGLE_PAGE_CAP_BYTES_BY_DEVICE_MEMORY = {
+  low: 20 * 1024 * 1024,
+  medium: 28 * 1024 * 1024,
+  high: 40 * 1024 * 1024,
+} as const;
 export const PDF_PAGE_TEXT_BOX_STALE_TIME_MS = 5 * 60 * 1000;
 export const PDF_TEXT_BOX_CONTAINMENT_EPSILON = 1e-6;
+export const PDF_SEARCH_SCROLL_TOP_OFFSET_PX = 48;
 export const MIN_SELECTION_SIZE = 4;
 
 export interface OverlayVisualStyle {

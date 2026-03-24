@@ -271,3 +271,104 @@ describe("usePdfPaneInteractions full-page block creation", () => {
     expect(onCreateBlock).not.toHaveBeenCalled();
   });
 });
+
+interface JumpToRectHarnessProps {
+  onUiStateChange: (patch: Partial<PdfUiState>) => void;
+  scrollToSpy: ReturnType<typeof vi.fn>;
+}
+
+function PdfJumpToRectHarness({ onUiStateChange, scrollToSpy }: JumpToRectHarnessProps) {
+  const interactions = usePdfPaneInteractions({
+    assetName: "asset-a",
+    assetState: ASSET_STATE,
+    metadata: METADATA,
+    appMode: "normal",
+    initialCompressSelection: null,
+    onUiStateChange,
+  });
+
+  return (
+    <>
+      <output data-testid="current-page">{interactions.currentPage}</output>
+      <div
+        data-testid="viewport"
+        ref={(element) => {
+          if (!element) {
+            interactions.viewportRef(null);
+            return;
+          }
+
+          Object.defineProperty(element, "clientHeight", {
+            configurable: true,
+            value: 150,
+          });
+          Object.defineProperty(element, "clientWidth", {
+            configurable: true,
+            value: 80,
+          });
+          Object.defineProperty(element, "scrollTo", {
+            configurable: true,
+            value: ({ top = 0, left = 0, behavior = "auto" }: ScrollToOptions) => {
+              if (typeof top === "number") {
+                element.scrollTop = top;
+              }
+              if (typeof left === "number") {
+                element.scrollLeft = left;
+              }
+              scrollToSpy({ top, left, behavior });
+            },
+          });
+          interactions.viewportRef(element);
+        }}
+      />
+      <button
+        onClick={() => {
+          interactions.jumpToRect(
+            4,
+            { x: 0.2, y: 0.3, width: 0.1, height: 0.1 },
+            { topOffsetPx: 48, leftOffsetPx: 48 },
+          );
+        }}
+        type="button"
+      >
+        Jump to rect
+      </button>
+    </>
+  );
+}
+
+describe("usePdfPaneInteractions direct rect navigation", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("jumps directly to the requested rect without smooth scrolling", () => {
+    const onUiStateChange = vi.fn();
+    const scrollToSpy = vi.fn();
+
+    render(
+      <PdfJumpToRectHarness
+        onUiStateChange={onUiStateChange}
+        scrollToSpy={scrollToSpy}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Jump to rect" }));
+
+    expect(screen.getByTestId("current-page")).toHaveTextContent("5");
+    expect(scrollToSpy).toHaveBeenCalledWith({
+      top: 924,
+      left: 0,
+      behavior: "auto",
+    });
+    expect(onUiStateChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentPage: 5,
+        zoom: 1,
+        pdfScrollLeftFraction: 0,
+      }),
+    );
+    const latestUiState = onUiStateChange.mock.calls.at(-1)?.[0];
+    expect(latestUiState.pdfScrollFraction).toBeCloseTo(924 / 2558, 5);
+  });
+});

@@ -2,14 +2,17 @@ import {
   useEffect,
   useRef,
   useState,
+  type ChangeEvent,
+  type KeyboardEvent,
   type ReactNode,
 } from "react";
 
 import type { PdfNavigationRequest } from "../../app/store/appStore.types";
-import { PDF_ZOOM_STEP } from "./constants";
+import { PDF_SEARCH_SCROLL_TOP_OFFSET_PX, PDF_ZOOM_STEP } from "./constants";
 import { PdfMarkdownMergeDialog } from "./components/PdfMarkdownMergeDialog";
 import { PdfPaneToolbar } from "./components/PdfPaneToolbar";
 import { PdfPaneViewport } from "./components/PdfPaneViewport";
+import { usePdfContentSearch } from "./hooks/usePdfContentSearch";
 import { usePdfPageTextBoxes } from "./hooks/usePdfPageTextBoxes";
 import { usePdfPaneInteractions, type PdfHoverState } from "./hooks/usePdfPaneInteractions";
 import { usePdfJsDocument } from "./hooks/usePdfJsDocument";
@@ -21,11 +24,13 @@ import type {
   PdfBlockRecord,
   PdfMetadata,
   PdfRect,
+  PdfSearchMatch,
   PdfUiState,
 } from "./types";
 import "./PdfPane.css";
 
 type HoverState = PdfHoverState;
+type SearchDirection = -1 | 1;
 
 export interface PdfPaneProps {
   assetName: string | null;
@@ -90,8 +95,11 @@ export function PdfPane({
   const [markdownMergeInput, setMarkdownMergeInput] = useState("");
   const [markdownPrefillPending, setMarkdownPrefillPending] = useState(false);
   const [markdownPrefillError, setMarkdownPrefillError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeSearchMatchIndex, setActiveSearchMatchIndex] = useState<number | null>(null);
   const previousAssetNameRef = useRef<string | null>(null);
   const markdownPreviewRequestIdRef = useRef(0);
+  const previousSearchMatchesRef = useRef<PdfSearchMatch[]>([]);
 
   const interactions = usePdfPaneInteractions({
     assetName,
@@ -121,8 +129,37 @@ export function PdfPane({
     visiblePageIndexes: interactions.visiblePageIndexes,
     preheatPageIndexes: interactions.preheatPageIndexes,
   });
+  const contentSearch = usePdfContentSearch({
+    assetName,
+    query: searchQuery,
+    disabledContentItemIndexes: assetState?.disabledContentItemIndexes ?? [],
+    enabled: Boolean(assetName),
+  });
   const paneLoading = loading || pdfDocumentLoading;
   const paneError = error ?? pdfDocumentError?.message ?? pageTextBoxes.error?.message ?? null;
+  const normalizedSearchQuery = searchQuery.trim();
+  const searchMatches = contentSearch.matches;
+  const searchStatus = buildSearchStatus({
+    query: normalizedSearchQuery,
+    matches: searchMatches,
+    activeMatchIndex: activeSearchMatchIndex,
+    loading: contentSearch.loading,
+    error: contentSearch.error,
+  });
+  const searchUpIndex = resolveSearchNavigationIndex(
+    searchMatches,
+    activeSearchMatchIndex,
+    interactions.currentPage,
+    -1,
+  );
+  const searchDownIndex = resolveSearchNavigationIndex(
+    searchMatches,
+    activeSearchMatchIndex,
+    interactions.currentPage,
+    1,
+  );
+  const activeSearchMatch =
+    activeSearchMatchIndex != null ? searchMatches[activeSearchMatchIndex] ?? null : null;
 
   useEffect(() => {
     const previousAssetName = previousAssetNameRef.current;
@@ -138,7 +175,30 @@ export function PdfPane({
     setMarkdownPrefillPending(false);
     setMarkdownPrefillError(null);
     markdownPreviewRequestIdRef.current += 1;
+    previousSearchMatchesRef.current = [];
+    setSearchQuery("");
+    setActiveSearchMatchIndex(null);
   }, [assetName, initialCompressSelection]);
+
+  useEffect(() => {
+    const previousMatches = previousSearchMatchesRef.current;
+    setActiveSearchMatchIndex((current) => {
+      if (current == null) {
+        return null;
+      }
+
+      const previousActiveMatch = previousMatches[current];
+      if (!previousActiveMatch) {
+        return null;
+      }
+
+      const nextIndex = searchMatches.findIndex(
+        (match) => match.itemIndex === previousActiveMatch.itemIndex,
+      );
+      return nextIndex >= 0 ? nextIndex : null;
+    });
+    previousSearchMatchesRef.current = searchMatches;
+  }, [searchMatches]);
 
   function cancelMarkdownPreview(): void {
     markdownPreviewRequestIdRef.current += 1;
@@ -209,13 +269,65 @@ export function PdfPane({
 
   const dialogBusy = busy || markdownPrefillPending;
 
+  function handleSearchInputChange(event: ChangeEvent<HTMLInputElement>): void {
+    setSearchQuery(event.target.value);
+    setActiveSearchMatchIndex(null);
+  }
+
+  function handleSearchInputKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    event.preventDefault();
+    handleSearchNavigate(event.shiftKey ? -1 : 1);
+  }
+
+  function handleSearchNavigate(direction: SearchDirection): void {
+    const nextIndex = resolveSearchNavigationIndex(
+      searchMatches,
+      activeSearchMatchIndex,
+      interactions.currentPage,
+      direction,
+    );
+    if (nextIndex == null) {
+      return;
+    }
+
+    const nextMatch = searchMatches[nextIndex];
+    if (!nextMatch) {
+      return;
+    }
+
+    if (
+      !interactions.jumpToRect(nextMatch.pageIndex, nextMatch.fractionRect, {
+        topOffsetPx: PDF_SEARCH_SCROLL_TOP_OFFSET_PX,
+        leftOffsetPx: PDF_SEARCH_SCROLL_TOP_OFFSET_PX,
+      })
+    ) {
+      return;
+    }
+
+    setActiveSearchMatchIndex(nextIndex);
+  }
+
   return (
     <section className={joinClasses("pdf-pane", className)}>
       <PdfPaneToolbar
+        canNavigateSearchDown={searchDownIndex != null && !contentSearch.loading}
+        canNavigateSearchUp={searchUpIndex != null && !contentSearch.loading}
         currentPage={interactions.currentPage}
         onPageInputChange={interactions.handlePageInputChange}
+        onSearchDown={() => {
+          handleSearchNavigate(1);
+        }}
+        onSearchInputChange={handleSearchInputChange}
+        onSearchInputKeyDown={handleSearchInputKeyDown}
         onRefresh={() => {
           onRefresh?.();
+        }}
+        onSearchUp={() => {
+          handleSearchNavigate(-1);
         }}
         onZoomIn={() => {
           interactions.applyZoom(interactions.zoom + PDF_ZOOM_STEP);
@@ -227,6 +339,10 @@ export function PdfPane({
           interactions.applyZoom(1);
         }}
         pageCount={interactions.pageCount}
+        searchBusy={contentSearch.loading}
+        searchError={Boolean(contentSearch.error && normalizedSearchQuery)}
+        searchQuery={searchQuery}
+        searchStatus={searchStatus}
         toolbarSlot={toolbarSlot}
         zoom={interactions.zoom}
       />
@@ -247,6 +363,7 @@ export function PdfPane({
           canvasWidth={interactions.canvasWidth}
           compressSelection={interactions.compressSelection}
           dragSelection={interactions.dragSelection}
+          activeSearchMatch={activeSearchMatch}
           hoverState={interactions.hoverState}
           isScrolling={interactions.isScrolling}
           isRightPanning={interactions.isRightPanning}
@@ -296,6 +413,62 @@ export function PdfPane({
 
 function joinClasses(...values: Array<string | undefined>): string {
   return values.filter(Boolean).join(" ");
+}
+
+function resolveSearchNavigationIndex(
+  matches: PdfSearchMatch[],
+  activeMatchIndex: number | null,
+  currentPage: number,
+  direction: SearchDirection,
+): number | null {
+  if (!matches.length) {
+    return null;
+  }
+
+  if (activeMatchIndex != null) {
+    const nextIndex = activeMatchIndex + direction;
+    return nextIndex >= 0 && nextIndex < matches.length ? nextIndex : null;
+  }
+
+  if (direction > 0) {
+    const nextIndex = matches.findIndex((match) => match.pageIndex + 1 >= currentPage);
+    return nextIndex >= 0 ? nextIndex : null;
+  }
+
+  for (let index = matches.length - 1; index >= 0; index -= 1) {
+    if ((matches[index]?.pageIndex ?? Number.MAX_SAFE_INTEGER) + 1 <= currentPage) {
+      return index;
+    }
+  }
+  return null;
+}
+
+function buildSearchStatus({
+  query,
+  matches,
+  activeMatchIndex,
+  loading,
+  error,
+}: {
+  query: string;
+  matches: PdfSearchMatch[];
+  activeMatchIndex: number | null;
+  loading: boolean;
+  error: Error | null;
+}): string {
+  if (!query) {
+    return "";
+  }
+  if (loading) {
+    return "Searching...";
+  }
+  if (error) {
+    return "Search failed";
+  }
+  if (!matches.length) {
+    return "No results";
+  }
+  return `${activeMatchIndex == null ? 0 : activeMatchIndex + 1} / ${matches.length}`;
 }
 
 function toErrorMessage(reason: unknown): string {

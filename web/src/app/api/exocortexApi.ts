@@ -32,6 +32,7 @@ import type {
   GroupTaskInput,
   ImportAssetInput,
   IntegrateTaskInput,
+  PdfSearchResponse,
   MergeGroupInput,
   PdfPageTextBoxes,
   PreviewMergeMarkdownResponse,
@@ -71,6 +72,7 @@ export interface ExocortexApi {
     buildFileUrl(assetName: string): string;
     getMetadata(assetName: string): Promise<PdfMetadata>;
     getPageTextBoxes(assetName: string, pageIndex: number): Promise<PdfPageTextBoxes>;
+    searchContent(assetName: string, query: string): Promise<PdfSearchResponse>;
     createBlock(assetName: string, input: CreateBlockInput): Promise<AssetState>;
     deleteBlock(assetName: string, blockId: number): Promise<AssetState>;
     deleteGroup(assetName: string, groupIdx: number): Promise<AssetState>;
@@ -109,78 +111,117 @@ export const queryKeys = {
   pdfMetadata: (assetName: string | null) => ["pdf-metadata", assetName] as const,
   pdfPageTextBoxes: (assetName: string | null, pageIndex: number) =>
     ["pdf-page-text-boxes", assetName, pageIndex] as const,
+  pdfSearch: (assetName: string | null, query: string, disabledSignature: string) =>
+    ["pdf-search", assetName, query, disabledSignature] as const,
   markdownContent: (assetName: string | null, path: string | null) =>
     ["markdown-content", assetName, path] as const,
 };
 
-export function buildFileUrl(assetName: string): string {
-  return buildClientPdfFileUrl(assetName);
-}
-
-export function buildPdfFileUrl(assetName: string): string {
-  return buildClientPdfFileUrl(assetName);
-}
+export const buildPdfFileUrl = buildClientPdfFileUrl;
+export const buildFileUrl = buildPdfFileUrl;
 
 export function createExocortexApi(options: CreateExocortexApiOptions = {}): ExocortexApi {
   return wrapCoreApi(createCoreExocortexApi(options));
 }
 
 export function wrapCoreApi(core: CoreExocortexApi): ExocortexApi {
+  const bind = <Key extends CoreMethodKey>(key: Key) => bindCoreMethod(core, key);
+
   return {
     mode: core.mode,
     capabilities: core.capabilities,
-    system: {
-      getConfig: () => core.getSystemConfig(),
-      updateConfig: (config) => core.updateSystemConfig(config),
-    },
-    assets: {
-      list: () => core.listAssets(),
-      getState: (assetName) => core.getAssetState(assetName),
-      updateUiState: (assetName, uiState) => core.updateAssetUiState(assetName, uiState),
-      importAsset: (input) => core.importAsset(input),
-      deleteAsset: (assetName) => core.deleteAsset(assetName),
-      revealAsset: (assetName, path) => core.revealAsset(assetName, path),
-    },
-    markdown: {
-      getTree: (assetName) => core.getMarkdownTree(assetName),
-      getContent: async (assetName, path) => normalizeMarkdownContent(path, await core.getMarkdownDocument(assetName, path)),
-      getReference: (assetName, name) => core.getReference(assetName, name),
-      renameNodeAlias: (input) => core.renameMarkdownNodeAlias(input),
-      reorderSiblings: (input) => core.reorderMarkdownSiblings(input),
-    },
-    pdf: {
-      buildFileUrl: (assetName) => buildPdfFileUrl(assetName),
-      getMetadata: (assetName) => core.getPdfMetadata(assetName),
-      getPageTextBoxes: (assetName, pageIndex) => core.getPdfPageTextBoxes(assetName, pageIndex),
-      createBlock: (assetName, input) => core.createBlock(assetName, input),
-      deleteBlock: (assetName, blockId) => core.deleteBlock(assetName, blockId),
-      deleteGroup: (assetName, groupIdx) => core.deleteGroup(assetName, groupIdx),
-      updateDisabledContentItems: (assetName, disabledContentItemIndexes) =>
-        core.updateDisabledContentItems(assetName, disabledContentItemIndexes),
-      updateSelection: (assetName, mergeOrder) => core.updateBlockSelection(assetName, mergeOrder),
-      previewMergeMarkdown: (assetName, blockIds) => core.previewMergeMarkdown(assetName, blockIds),
-      mergeGroup: (assetName, blockIds, options) => core.mergeGroup(assetName, blockIds, options),
-      updateUiState: (assetName, uiState) => core.updatePdfUiState(assetName, uiState),
-    },
-    tasks: {
-      list: () => core.listTasks(),
-      get: (taskId) => core.getTask(taskId),
-      subscribe: (listener) => core.subscribeToTaskEvents(listener),
-    },
-    workflows: {
-      createTutorSession: (input) => core.createTutorSession(input),
-      submitGroupDive: (input) => core.submitGroupDive(input),
-      submitAskTutor: (input) => core.submitAskTutor(input),
-      submitReTutor: (input) => core.submitReTutor(input),
-      submitIntegrate: (input) => core.submitIntegrate(input),
-      submitBugFinder: (input) => core.submitBugFinder(input),
-      submitStudentNote: (input) => core.submitStudentNote(input),
-      submitFixLatex: (input) => core.submitFixLatex(input),
-      submitCompressPreview: (input) => core.submitCompressPreview(input),
-      submitCompressExecute: (input) => core.submitCompressExecute(input),
-      deleteQuestion: (input) => core.deleteQuestion(input),
-      deleteTutorSession: (input) => core.deleteTutorSession(input),
-    },
+    system: createSystemApi(bind),
+    assets: createAssetApi(bind),
+    markdown: createMarkdownApi(bind),
+    pdf: createPdfApi(bind),
+    tasks: createTaskApi(bind),
+    workflows: createWorkflowApi(bind),
+  };
+}
+
+type CoreMethodKey = {
+  [Key in keyof CoreExocortexApi]: CoreExocortexApi[Key] extends (...args: infer _Args) => unknown ? Key : never;
+}[keyof CoreExocortexApi];
+
+function bindCoreMethod<Key extends CoreMethodKey>(
+  core: CoreExocortexApi,
+  key: Key,
+): CoreExocortexApi[Key] {
+  const method = core[key] as (...args: unknown[]) => unknown;
+  return method.bind(core) as CoreExocortexApi[Key];
+}
+
+type BindCoreMethod = <Key extends CoreMethodKey>(key: Key) => CoreExocortexApi[Key];
+
+function createSystemApi(bind: BindCoreMethod): ExocortexApi["system"] {
+  return {
+    getConfig: bind("getSystemConfig"),
+    updateConfig: bind("updateSystemConfig"),
+  };
+}
+
+function createAssetApi(bind: BindCoreMethod): ExocortexApi["assets"] {
+  return {
+    list: bind("listAssets"),
+    getState: bind("getAssetState"),
+    updateUiState: bind("updateAssetUiState"),
+    importAsset: bind("importAsset"),
+    deleteAsset: bind("deleteAsset"),
+    revealAsset: bind("revealAsset"),
+  };
+}
+
+function createMarkdownApi(bind: BindCoreMethod): ExocortexApi["markdown"] {
+  const getMarkdownDocument = bind("getMarkdownDocument");
+  return {
+    getTree: bind("getMarkdownTree"),
+    getContent: async (assetName, path) =>
+      normalizeMarkdownContent(path, await getMarkdownDocument(assetName, path)),
+    getReference: bind("getReference"),
+    renameNodeAlias: bind("renameMarkdownNodeAlias"),
+    reorderSiblings: bind("reorderMarkdownSiblings"),
+  };
+}
+
+function createPdfApi(bind: BindCoreMethod): ExocortexApi["pdf"] {
+  return {
+    buildFileUrl: buildPdfFileUrl,
+    getMetadata: bind("getPdfMetadata"),
+    getPageTextBoxes: bind("getPdfPageTextBoxes"),
+    searchContent: bind("searchPdfContent"),
+    createBlock: bind("createBlock"),
+    deleteBlock: bind("deleteBlock"),
+    deleteGroup: bind("deleteGroup"),
+    updateDisabledContentItems: bind("updateDisabledContentItems"),
+    updateSelection: bind("updateBlockSelection"),
+    previewMergeMarkdown: bind("previewMergeMarkdown"),
+    mergeGroup: bind("mergeGroup"),
+    updateUiState: bind("updatePdfUiState"),
+  };
+}
+
+function createTaskApi(bind: BindCoreMethod): ExocortexApi["tasks"] {
+  return {
+    list: bind("listTasks"),
+    get: bind("getTask"),
+    subscribe: bind("subscribeToTaskEvents"),
+  };
+}
+
+function createWorkflowApi(bind: BindCoreMethod): ExocortexApi["workflows"] {
+  return {
+    createTutorSession: bind("createTutorSession"),
+    submitGroupDive: bind("submitGroupDive"),
+    submitAskTutor: bind("submitAskTutor"),
+    submitReTutor: bind("submitReTutor"),
+    submitIntegrate: bind("submitIntegrate"),
+    submitBugFinder: bind("submitBugFinder"),
+    submitStudentNote: bind("submitStudentNote"),
+    submitFixLatex: bind("submitFixLatex"),
+    submitCompressPreview: bind("submitCompressPreview"),
+    submitCompressExecute: bind("submitCompressExecute"),
+    deleteQuestion: bind("deleteQuestion"),
+    deleteTutorSession: bind("deleteTutorSession"),
   };
 }
 

@@ -2,6 +2,7 @@ import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PdfPane } from "./PdfPane";
+import { usePdfContentSearch } from "./hooks/usePdfContentSearch";
 import { usePdfPageTextBoxes } from "./hooks/usePdfPageTextBoxes";
 import { usePdfPaneInteractions } from "./hooks/usePdfPaneInteractions";
 import { usePdfJsDocument } from "./hooks/usePdfJsDocument";
@@ -13,6 +14,10 @@ vi.mock("./hooks/usePdfPaneInteractions", () => ({
 
 vi.mock("./hooks/usePdfPageTextBoxes", () => ({
   usePdfPageTextBoxes: vi.fn(),
+}));
+
+vi.mock("./hooks/usePdfContentSearch", () => ({
+  usePdfContentSearch: vi.fn(),
 }));
 
 vi.mock("./hooks/usePdfJsDocument", () => ({
@@ -126,6 +131,7 @@ function createInteractions() {
     handleBlockHoverLeave: vi.fn(),
     cancelPan: vi.fn(),
     endPan: vi.fn(),
+    jumpToRect: vi.fn(() => true),
     handleScroll: vi.fn(),
     handleSurfaceDoubleClick: vi.fn(),
     updatePan: vi.fn(),
@@ -152,6 +158,12 @@ describe("PdfPane", () => {
     });
     vi.mocked(usePdfJsDocument).mockReturnValue({
       pdfDocument: null,
+      loading: false,
+      error: null,
+    });
+    vi.mocked(usePdfContentSearch).mockReturnValue({
+      query: "",
+      matches: [],
       loading: false,
       error: null,
     });
@@ -195,6 +207,12 @@ describe("PdfPane", () => {
     });
     vi.mocked(usePdfJsDocument).mockReturnValue({
       pdfDocument: null,
+      loading: false,
+      error: null,
+    });
+    vi.mocked(usePdfContentSearch).mockReturnValue({
+      query: "",
+      matches: [],
       loading: false,
       error: null,
     });
@@ -249,6 +267,12 @@ describe("PdfPane", () => {
       loading: false,
       error: null,
     });
+    vi.mocked(usePdfContentSearch).mockReturnValue({
+      query: "",
+      matches: [],
+      loading: false,
+      error: null,
+    });
 
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
     const onPreviewMergeMarkdown = vi.fn(async () => ({
@@ -287,6 +311,12 @@ describe("PdfPane", () => {
       loading: false,
       error: null,
     });
+    vi.mocked(usePdfContentSearch).mockReturnValue({
+      query: "",
+      matches: [],
+      loading: false,
+      error: null,
+    });
 
     const onPreviewMergeMarkdown = vi.fn(async () => {
       throw new Error("Preview failed");
@@ -306,5 +336,74 @@ describe("PdfPane", () => {
 
     expect(await findByText("Preview failed")).toBeTruthy();
     expect(getByRole("textbox", { name: "Markdown" })).toBeInTheDocument();
+  });
+
+  it("navigates search matches from the current page, resets active status on input change, and stops at the boundary", async () => {
+    const interactions = createInteractions();
+    interactions.currentPage = 2;
+    vi.mocked(usePdfPaneInteractions).mockReturnValue(interactions);
+    vi.mocked(usePdfPageTextBoxes).mockReturnValue({
+      textBoxesByPage: new Map(),
+      loading: false,
+      error: null,
+    });
+    vi.mocked(usePdfJsDocument).mockReturnValue({
+      pdfDocument: null,
+      loading: false,
+      error: null,
+    });
+    vi.mocked(usePdfContentSearch).mockReturnValue({
+      query: "energy",
+      matches: [
+        {
+          itemIndex: 3,
+          pageIndex: 0,
+          fractionRect: { x: 0.1, y: 0.1, width: 0.2, height: 0.1 },
+        },
+        {
+          itemIndex: 8,
+          pageIndex: 1,
+          fractionRect: { x: 0.2, y: 0.25, width: 0.18, height: 0.12 },
+        },
+      ],
+      loading: false,
+      error: null,
+    });
+
+    const { getByLabelText, getByText } = render(
+      <PdfPane
+        assetName="asset-a"
+        assetState={ASSET_STATE}
+        metadata={METADATA}
+      />,
+    );
+
+    const searchInput = getByLabelText("Search PDF content");
+    const previousButton = getByLabelText("Find previous match");
+    const nextButton = getByLabelText("Find next match");
+
+    fireEvent.change(searchInput, { target: { value: "energy" } });
+
+    expect(previousButton).not.toBeDisabled();
+    expect(nextButton).not.toBeDisabled();
+    expect(getByText("0 / 2")).toBeTruthy();
+
+    fireEvent.click(previousButton);
+
+    expect(interactions.jumpToRect).toHaveBeenCalledWith(
+      1,
+      { x: 0.2, y: 0.25, width: 0.18, height: 0.12 },
+      {
+        topOffsetPx: 48,
+        leftOffsetPx: 48,
+      },
+    );
+    expect(getByText("2 / 2")).toBeTruthy();
+    expect(previousButton).not.toBeDisabled();
+    expect(nextButton).toBeDisabled();
+
+    fireEvent.change(searchInput, { target: { value: "ener" } });
+
+    expect(getByText("0 / 2")).toBeTruthy();
   });
 });

@@ -200,6 +200,7 @@ def submit_group_dive_task(manager: TaskManager, *, asset_name: str, group_idx: 
         title=f"Group dive: group {group_idx}",
         asset_name=normalized,
         runner=_runner,
+        dedupe_key=f"group_dive:{normalized}:{group_idx}",
     )
 
 

@@ -24,6 +24,7 @@ import type {
   ImportAssetPayload,
   IntegrateTaskPayload,
   PdfPageTextBoxes,
+  PdfSearchResponse,
   PreviewMergeMarkdownResponse,
   TutorTaskPayload,
 } from "./schema";
@@ -46,6 +47,7 @@ export interface ExocortexClient {
   revealAsset(assetName: string, path?: string | null): Promise<void>;
   getPdfMetadata(assetName: string): Promise<PdfMetadata>;
   getPdfPageTextBoxes(assetName: string, pageIndex: number): Promise<PdfPageTextBoxes>;
+  searchPdfContent(assetName: string, query: string): Promise<PdfSearchResponse>;
   buildPdfFileUrl(assetName: string): string;
   createBlock(assetName: string, input: { pageIndex: number; fractionRect: Rect }): Promise<AssetState>;
   deleteBlock(assetName: string, blockId: number): Promise<AssetState>;
@@ -128,13 +130,7 @@ class HttpExocortexClient implements ExocortexClient {
     if (config.tutorWithGlobalContext !== undefined) {
       payload.tutorWithGlobalContext = config.tutorWithGlobalContext;
     }
-    return this.requestJson("/system/config", {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
+    return this.requestJsonBody("/system/config", "PUT", payload);
   }
 
   listAssets(): Promise<AssetSummary[]> {
@@ -142,55 +138,43 @@ class HttpExocortexClient implements ExocortexClient {
   }
 
   getAssetState(assetName: string): Promise<AssetState> {
-    return this.requestJson(`/assets/${encodeURIComponent(assetName)}/state`);
+    return this.requestJson(buildAssetApiPath(assetName, "/state"));
   }
 
   getMarkdownTree(assetName: string): Promise<MarkdownTreeNode[]> {
-    return this.requestJson(`/assets/${encodeURIComponent(assetName)}/markdown/tree`);
+    return this.requestJson(buildAssetApiPath(assetName, "/markdown/tree"));
   }
 
   getMarkdownDocument(assetName: string, path: string): Promise<MarkdownContentPayload> {
-    return this.requestJson(
-      `/assets/${encodeURIComponent(assetName)}/markdown/content?path=${encodeURIComponent(path)}`,
-    );
+    return this.requestJson(buildAssetApiPath(assetName, `/markdown/content?path=${encodeURIComponent(path)}`));
   }
 
   getReference(assetName: string, name: string): Promise<string> {
-    return this.requestText(`/assets/${encodeURIComponent(assetName)}/references/${encodeURIComponent(name)}`);
+    return this.requestText(buildAssetApiPath(assetName, `/references/${encodeURIComponent(name)}`));
   }
 
   updateAssetUiState(assetName: string, uiState: Partial<AssetState["uiState"]>): Promise<AssetState> {
-    return this.requestJson(`/assets/${encodeURIComponent(assetName)}/ui-state`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        currentPage: uiState.currentPage ?? null,
-        zoom: uiState.zoom ?? null,
-        pdfScrollFraction: uiState.pdfScrollFraction ?? null,
-        pdfScrollLeftFraction: uiState.pdfScrollLeftFraction ?? null,
-        currentMarkdownPath: uiState.currentMarkdownPath ?? null,
-        openMarkdownPaths: uiState.openMarkdownPaths ?? null,
-        sidebarCollapsed: uiState.sidebarCollapsed ?? null,
-        sidebarCollapsedNodeIds: uiState.sidebarCollapsedNodeIds ?? null,
-        markdownScrollFractions: uiState.markdownScrollFractions ?? null,
-        sidebarWidthRatio: uiState.sidebarWidthRatio ?? null,
-        rightRailWidthRatio: uiState.rightRailWidthRatio ?? null,
-      }),
+    return this.requestJsonBody(buildAssetApiPath(assetName, "/ui-state"), "PUT", {
+      currentPage: uiState.currentPage ?? null,
+      zoom: uiState.zoom ?? null,
+      pdfScrollFraction: uiState.pdfScrollFraction ?? null,
+      pdfScrollLeftFraction: uiState.pdfScrollLeftFraction ?? null,
+      currentMarkdownPath: uiState.currentMarkdownPath ?? null,
+      openMarkdownPaths: uiState.openMarkdownPaths ?? null,
+      sidebarCollapsed: uiState.sidebarCollapsed ?? null,
+      sidebarCollapsedNodeIds: uiState.sidebarCollapsedNodeIds ?? null,
+      markdownScrollFractions: uiState.markdownScrollFractions ?? null,
+      sidebarWidthRatio: uiState.sidebarWidthRatio ?? null,
+      rightRailWidthRatio: uiState.rightRailWidthRatio ?? null,
     });
   }
 
   async createTutorSession(payload: CreateTutorSessionPayload): Promise<TutorSession> {
-    return this.requestJson(`/assets/${encodeURIComponent(payload.assetName)}/groups/${payload.groupIdx}/tutors`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        focusMarkdown: payload.focusMarkdown,
-      }),
-    });
+    return this.requestJsonBody(
+      buildAssetApiPath(payload.assetName, `/groups/${payload.groupIdx}/tutors`),
+      "POST",
+      { focusMarkdown: payload.focusMarkdown },
+    );
   }
 
   importAsset(payload: ImportAssetPayload): Promise<TaskSummary> {
@@ -200,29 +184,28 @@ class HttpExocortexClient implements ExocortexClient {
     form.set("content_list_file", payload.contentListFile);
     form.set("asset_name", payload.assetName);
     form.set("asset_subfolder", payload.assetSubfolder);
-    return this.requestJson("/assets/import", {
-      method: "POST",
-      body: form,
-    });
+    return this.requestFormData("/assets/import", form);
   }
 
   deleteAsset(assetName: string): Promise<void> {
-    return this.requestVoid(`/assets/${encodeURIComponent(assetName)}`, { method: "DELETE" });
+    return this.requestVoid(buildAssetApiPath(assetName), { method: "DELETE" });
   }
 
   revealAsset(assetName: string, path?: string | null): Promise<void> {
     const suffix = path ? `?path=${encodeURIComponent(path)}` : "";
-    return this.requestVoid(`/assets/${encodeURIComponent(assetName)}/reveal${suffix}`, { method: "POST" });
+    return this.requestVoid(buildAssetApiPath(assetName, `/reveal${suffix}`), { method: "POST" });
   }
 
   getPdfMetadata(assetName: string): Promise<PdfMetadata> {
-    return this.requestJson(`/assets/${encodeURIComponent(assetName)}/pdf/metadata`);
+    return this.requestJson(buildAssetApiPath(assetName, "/pdf/metadata"));
   }
 
   getPdfPageTextBoxes(assetName: string, pageIndex: number): Promise<PdfPageTextBoxes> {
-    return this.requestJson(
-      `/assets/${encodeURIComponent(assetName)}/pdf/pages/${pageIndex}/text-boxes`,
-    );
+    return this.requestJson(buildAssetApiPath(assetName, `/pdf/pages/${pageIndex}/text-boxes`));
+  }
+
+  searchPdfContent(assetName: string, query: string): Promise<PdfSearchResponse> {
+    return this.requestJsonBody(buildAssetApiPath(assetName, "/pdf/search"), "POST", { query });
   }
 
   buildPdfFileUrl(assetName: string): string {
@@ -230,64 +213,38 @@ class HttpExocortexClient implements ExocortexClient {
   }
 
   createBlock(assetName: string, input: { pageIndex: number; fractionRect: Rect }): Promise<AssetState> {
-    return this.requestJson(`/assets/${encodeURIComponent(assetName)}/blocks`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        pageIndex: input.pageIndex,
-        fractionRect: input.fractionRect,
-      }),
+    return this.requestJsonBody(buildAssetApiPath(assetName, "/blocks"), "POST", {
+      pageIndex: input.pageIndex,
+      fractionRect: input.fractionRect,
     });
   }
 
   deleteBlock(assetName: string, blockId: number): Promise<AssetState> {
-    return this.requestJson(`/assets/${encodeURIComponent(assetName)}/blocks/${blockId}`, {
+    return this.requestJson(buildAssetApiPath(assetName, `/blocks/${blockId}`), {
       method: "DELETE",
     });
   }
 
   deleteGroup(assetName: string, groupIdx: number): Promise<AssetState> {
-    return this.requestJson(`/assets/${encodeURIComponent(assetName)}/groups/${groupIdx}`, {
+    return this.requestJson(buildAssetApiPath(assetName, `/groups/${groupIdx}`), {
       method: "DELETE",
     });
   }
 
   updateDisabledContentItems(assetName: string, disabledContentItemIndexes: number[]): Promise<AssetState> {
-    return this.requestJson(`/assets/${encodeURIComponent(assetName)}/content-list/disabled-items`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        disabledContentItemIndexes,
-      }),
-    });
+    return this.requestJsonBody(
+      buildAssetApiPath(assetName, "/content-list/disabled-items"),
+      "PUT",
+      { disabledContentItemIndexes },
+    );
   }
 
   updateBlockSelection(assetName: string, mergeOrder: number[]): Promise<AssetState> {
-    return this.requestJson(`/assets/${encodeURIComponent(assetName)}/blocks/selection`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        mergeOrder,
-      }),
-    });
+    return this.requestJsonBody(buildAssetApiPath(assetName, "/blocks/selection"), "POST", { mergeOrder });
   }
 
   previewMergeMarkdown(assetName: string, blockIds: number[]): Promise<PreviewMergeMarkdownResponse> {
-    return this.requestJson(`/assets/${encodeURIComponent(assetName)}/groups/markdown-preview`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        blockIds,
-      }),
-    });
+    return this.requestJsonBody(buildAssetApiPath(assetName, "/groups/markdown-preview"), "POST", { blockIds });
   }
 
   mergeGroup(
@@ -295,16 +252,10 @@ class HttpExocortexClient implements ExocortexClient {
     blockIds: number[],
     options: { markdownContent?: string | null; groupIdx?: number | null } = {},
   ): Promise<AssetState> {
-    return this.requestJson(`/assets/${encodeURIComponent(assetName)}/groups/merge`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        blockIds,
-        markdownContent: options.markdownContent ?? null,
-        groupIdx: options.groupIdx ?? null,
-      }),
+    return this.requestJsonBody(buildAssetApiPath(assetName, "/groups/merge"), "POST", {
+      blockIds,
+      markdownContent: options.markdownContent ?? null,
+      groupIdx: options.groupIdx ?? null,
     });
   }
 
@@ -422,13 +373,8 @@ class HttpExocortexClient implements ExocortexClient {
     form.set("assetName", payload.assetName);
     form.set("groupIdx", String(payload.groupIdx));
     form.set("tutorIdx", String(payload.tutorIdx));
-    for (const file of payload.manuscriptFiles) {
-      form.append("manuscript_files", file);
-    }
-    return this.requestJson("/tasks/bug-finder", {
-      method: "POST",
-      body: form,
-    });
+    appendFormDataFiles(form, "manuscript_files", payload.manuscriptFiles);
+    return this.requestFormData("/tasks/bug-finder", form);
   }
 
   submitStudentNote(payload: IntegrateTaskPayload): Promise<TaskSummary> {
@@ -453,18 +399,13 @@ class HttpExocortexClient implements ExocortexClient {
     path?: string | null;
     alias: string;
   }): Promise<{ nodeId: string; path: string | null; title: string }> {
-    const response = await this.requestJson<{ details?: { nodeId?: string; path?: string | null; title?: string } }>(
-      `/assets/${encodeURIComponent(payload.assetName)}/markdown/nodes/alias`,
+    const response = await this.requestJsonBody<{ details?: { nodeId?: string; path?: string | null; title?: string } }>(
+      buildAssetApiPath(payload.assetName, "/markdown/nodes/alias"),
+      "PATCH",
       {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          nodeId: payload.nodeId,
-          path: payload.path ?? null,
-          alias: payload.alias,
-        }),
+        nodeId: payload.nodeId,
+        path: payload.path ?? null,
+        alias: payload.alias,
       },
     );
     return {
@@ -479,17 +420,12 @@ class HttpExocortexClient implements ExocortexClient {
     parentId?: string | null;
     orderedNodeIds: string[];
   }): Promise<{ parentId: string | null; orderedNodeIds: string[] }> {
-    const response = await this.requestJson<{ details?: { parentId?: string | null; orderedNodeIds?: string[] } }>(
-      `/assets/${encodeURIComponent(payload.assetName)}/markdown/nodes/reorder`,
+    const response = await this.requestJsonBody<{ details?: { parentId?: string | null; orderedNodeIds?: string[] } }>(
+      buildAssetApiPath(payload.assetName, "/markdown/nodes/reorder"),
+      "POST",
       {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          parentId: payload.parentId ?? null,
-          orderedNodeIds: payload.orderedNodeIds,
-        }),
+        parentId: payload.parentId ?? null,
+        orderedNodeIds: payload.orderedNodeIds,
       },
     );
     return {
@@ -502,7 +438,10 @@ class HttpExocortexClient implements ExocortexClient {
 
   deleteQuestion(payload: DeleteQuestionPayload): Promise<void> {
     return this.requestVoid(
-      `/assets/${encodeURIComponent(payload.assetName)}/groups/${payload.groupIdx}/tutors/${payload.tutorIdx}/questions?path=${encodeURIComponent(payload.markdownPath)}`,
+      buildAssetApiPath(
+        payload.assetName,
+        `/groups/${payload.groupIdx}/tutors/${payload.tutorIdx}/questions?path=${encodeURIComponent(payload.markdownPath)}`,
+      ),
       {
         method: "DELETE",
       },
@@ -511,7 +450,7 @@ class HttpExocortexClient implements ExocortexClient {
 
   deleteTutorSession(payload: DeleteTutorSessionInput): Promise<void> {
     return this.requestVoid(
-      `/assets/${encodeURIComponent(payload.assetName)}/groups/${payload.groupIdx}/tutors/${payload.tutorIdx}`,
+      buildAssetApiPath(payload.assetName, `/groups/${payload.groupIdx}/tutors/${payload.tutorIdx}`),
       {
         method: "DELETE",
       },
@@ -519,8 +458,12 @@ class HttpExocortexClient implements ExocortexClient {
   }
 
   private submitJsonTask<TPayload extends object>(path: string, payload: TPayload): Promise<TaskSummary> {
+    return this.requestJsonBody(path, "POST", payload);
+  }
+
+  private requestJsonBody<T>(path: string, method: "POST" | "PUT" | "PATCH", payload: unknown): Promise<T> {
     return this.requestJson(path, {
-      method: "POST",
+      method,
       headers: {
         "Content-Type": "application/json",
       },
@@ -528,34 +471,34 @@ class HttpExocortexClient implements ExocortexClient {
     });
   }
 
+  private requestFormData<T>(path: string, form: FormData): Promise<T> {
+    return this.requestJson(path, {
+      method: "POST",
+      body: form,
+    });
+  }
+
   private async requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(buildApiUrl(path, this.apiBase), {
+    const response = await this.request(path, {
       ...init,
       headers: {
         Accept: "application/json",
         ...init?.headers,
       },
-      cache: "no-store",
     });
-
-    if (!response.ok) {
-      throw await toRequestError(response);
-    }
-
     return (await response.json()) as T;
   }
 
   private async requestText(path: string): Promise<string> {
-    const response = await fetch(buildApiUrl(path, this.apiBase), {
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      throw await toRequestError(response);
-    }
+    const response = await this.request(path);
     return response.text();
   }
 
   private async requestVoid(path: string, init?: RequestInit): Promise<void> {
+    await this.request(path, init);
+  }
+
+  private async request(path: string, init?: RequestInit): Promise<Response> {
     const response = await fetch(buildApiUrl(path, this.apiBase), {
       ...init,
       cache: "no-store",
@@ -563,6 +506,7 @@ class HttpExocortexClient implements ExocortexClient {
     if (!response.ok) {
       throw await toRequestError(response);
     }
+    return response;
   }
 }
 
@@ -571,8 +515,22 @@ export function buildApiUrl(path: string, base = DEFAULT_API_BASE): string {
   return `${normalizedBase}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+function buildAssetApiPath(assetName: string, suffix = ""): string {
+  const encodedAssetName = encodeURIComponent(assetName);
+  if (!suffix) {
+    return `/assets/${encodedAssetName}`;
+  }
+  return `/assets/${encodedAssetName}${suffix.startsWith("/") ? suffix : `/${suffix}`}`;
+}
+
+function appendFormDataFiles(form: FormData, fieldName: string, files: File[]): void {
+  for (const file of files) {
+    form.append(fieldName, file);
+  }
+}
+
 export function buildPdfFileUrl(assetName: string): string {
-  return buildApiUrl(`/assets/${encodeURIComponent(assetName)}/pdf/file`);
+  return buildApiUrl(buildAssetApiPath(assetName, "/pdf/file"));
 }
 
 export function resolveExocortexApiMode(rawMode: unknown = import.meta.env.VITE_EXOCORTEX_API_MODE): ExocortexApiMode {

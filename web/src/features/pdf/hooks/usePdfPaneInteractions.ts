@@ -60,6 +60,11 @@ interface PanSession {
   moved: boolean;
 }
 
+interface JumpToRectOptions {
+  topOffsetPx?: number;
+  leftOffsetPx?: number;
+}
+
 interface UsePdfPaneInteractionsInput {
   assetName: string | null;
   assetState: PdfAssetState | null;
@@ -428,6 +433,58 @@ export function usePdfPaneInteractions({
     return true;
   }
 
+  function jumpToRect(pageIndex: number, rect: PdfRect, options: JumpToRectOptions = {}): boolean {
+    const element = viewportElement;
+    const layout = layouts[pageIndex];
+    if (!layout || !element) {
+      return false;
+    }
+
+    const topOffsetPx = Math.max(0, options.topOffsetPx ?? 0);
+    const leftOffsetPx = Math.max(0, options.leftOffsetPx ?? 0);
+    const maxScrollTop = Math.max(0, canvasHeight - element.clientHeight);
+    const maxScrollLeft = Math.max(0, canvasWidth - element.clientWidth);
+    const nextScrollTop = clamp(
+      layout.top + rect.y * layout.height - topOffsetPx,
+      0,
+      maxScrollTop,
+    );
+    const nextScrollLeft = clamp(
+      layout.left + rect.x * layout.width - leftOffsetPx,
+      0,
+      maxScrollLeft,
+    );
+    const nextCurrentPage = pageIndex + 1;
+    const nextUiState = {
+      currentPage: nextCurrentPage,
+      zoom,
+      pdfScrollFraction: maxScrollTop > 0 ? nextScrollTop / maxScrollTop : 0,
+      pdfScrollLeftFraction: maxScrollLeft > 0 ? nextScrollLeft / maxScrollLeft : 0,
+    };
+
+    previousScrollTopRef.current = nextScrollTop;
+    if (scrollStopTimerRef.current != null) {
+      window.clearTimeout(scrollStopTimerRef.current);
+      scrollStopTimerRef.current = null;
+    }
+    setScrollTop(nextScrollTop);
+    setScrollDirection(
+      nextScrollTop > scrollTop ? 1 : nextScrollTop < scrollTop ? -1 : scrollDirection,
+    );
+    setIsScrolling(false);
+    setCurrentPage(nextCurrentPage);
+    if (assetName) {
+      appliedUiStateSignatureRef.current = buildUiStateSignature(assetName, nextUiState);
+    }
+    onUiStateChange?.(nextUiState);
+    element.scrollTo({
+      top: nextScrollTop,
+      left: nextScrollLeft,
+      behavior: "auto",
+    });
+    return true;
+  }
+
   function handlePageInputChange(event: ChangeEvent<HTMLInputElement>): void {
     if (!pageCount) {
       return;
@@ -592,6 +649,7 @@ export function usePdfPaneInteractions({
     updatePan,
     endPan,
     cancelPan,
+    jumpToRect,
     handlePageInputChange,
     applyZoom,
     handleBlockHoverEnter,
