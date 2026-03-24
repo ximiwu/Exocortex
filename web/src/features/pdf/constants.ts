@@ -21,6 +21,7 @@ export interface OverlayVisualStyle {
   borderWidth: number;
   badgeBackground: string;
   badgeColor: string;
+  opacity?: number;
 }
 
 export const BLOCK_VISUAL_STYLES: Record<
@@ -34,6 +35,7 @@ export const BLOCK_VISUAL_STYLES: Record<
     borderWidth: 2,
     badgeBackground: "rgba(0, 160, 0, 0.92)",
     badgeColor: "#f7fff7",
+    opacity: 1,
   },
   selected: {
     borderColor: "rgba(30, 144, 255, 0.98)",
@@ -42,6 +44,7 @@ export const BLOCK_VISUAL_STYLES: Record<
     borderWidth: 3,
     badgeBackground: "rgba(30, 144, 255, 0.98)",
     badgeColor: "#f8fbff",
+    opacity: 1,
   },
   hover: {
     borderColor: "rgba(255, 140, 0, 0.98)",
@@ -50,22 +53,25 @@ export const BLOCK_VISUAL_STYLES: Record<
     borderWidth: 3,
     badgeBackground: "rgba(255, 140, 0, 0.98)",
     badgeColor: "#fff8f0",
+    opacity: 1,
   },
   group: {
     borderColor: "rgba(147, 112, 219, 0.82)",
-    backgroundColor: "rgba(147, 112, 219, 0.1)",
+    backgroundColor: "rgba(147, 112, 219, 0.08)",
     borderStyle: "dashed",
     borderWidth: 2,
     badgeBackground: "rgba(147, 112, 219, 0.95)",
     badgeColor: "#fcf9ff",
+    opacity: 0.72,
   },
   groupHover: {
-    borderColor: "rgba(186, 85, 211, 0.98)",
-    backgroundColor: "rgba(186, 85, 211, 0.14)",
-    borderStyle: "solid",
-    borderWidth: 3,
-    badgeBackground: "rgba(186, 85, 211, 0.98)",
-    badgeColor: "#fff7ff",
+    borderColor: "rgba(147, 112, 219, 0.82)",
+    backgroundColor: "rgba(147, 112, 219, 0.08)",
+    borderStyle: "dashed",
+    borderWidth: 2,
+    badgeBackground: "rgba(147, 112, 219, 0.95)",
+    badgeColor: "#fcf9ff",
+    opacity: 0.72,
   },
   compress: {
     borderColor: "rgba(220, 120, 0, 0.92)",
@@ -74,5 +80,6 @@ export const BLOCK_VISUAL_STYLES: Record<
     borderWidth: 2,
     badgeBackground: "rgba(220, 120, 0, 0.92)",
     badgeColor: "#fff8ef",
+    opacity: 1,
   },
 };

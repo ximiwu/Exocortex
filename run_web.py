@@ -15,6 +15,7 @@ from shutil import which
 import platform
 import uvicorn
 
+from exocortex_core.runtime import RUNTIME_MODE_DEV, RUNTIME_MODE_PRODUCTION, set_runtime_mode
 from server.app import app
 from server.config import HOST, browser_root_url, health_url
 
@@ -328,6 +329,7 @@ def open_in_desktop_shell(root_url: str, *, title: str, width: int, height: int)
 
 def main() -> int:
     args = parse_args()
+    set_runtime_mode(RUNTIME_MODE_DEV if args.dev else RUNTIME_MODE_PRODUCTION)
     try:
         if args.dev:
             ensure_frontend_built()

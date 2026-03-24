@@ -55,10 +55,12 @@ def test_get_page_text_boxes_converts_page_idx_to_zero_based(
 
     assert page_zero.pageIndex == 0
     assert len(page_zero.items) == 1
+    assert page_zero.items[0].itemIndex == 1
     assert page_zero.items[0].pageIndex == 0
 
     assert page_one.pageIndex == 1
     assert len(page_one.items) == 1
+    assert page_one.items[0].itemIndex == 2
     assert page_one.items[0].pageIndex == 1
 
 
@@ -100,6 +102,7 @@ def test_get_page_text_boxes_cache_invalidation_when_file_changes(
     third = pdf_service.get_page_text_boxes("asset-cache", 0)
     assert json_load_count == 2
     assert third.items[0].fractionRect.x == 0.25
+    assert third.items[0].itemIndex == 1
 
 
 def test_get_page_text_boxes_missing_file_returns_empty(
@@ -171,6 +174,7 @@ def test_get_page_text_boxes_generates_missing_unified_file_from_content_list(
 
     assert result.pageIndex == 0
     assert len(result.items) == 1
+    assert result.items[0].itemIndex == 1
     assert result.items[0].fractionRect.x == pytest.approx(0.013)
     assert result.items[0].fractionRect.y == pytest.approx(0.026)
     assert result.items[0].fractionRect.width == pytest.approx(0.052)

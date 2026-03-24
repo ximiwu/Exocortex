@@ -1,9 +1,47 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AppStoreState } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
 import { WorkbenchShell } from "./WorkbenchShell";
+
+const workflowControllerMock: any = {
+  tutorAskVisible: false,
+  selectedAssetName: null,
+  effectiveGroupIdx: null,
+  effectiveTutorIdx: null,
+  questionText: "",
+  pendingImportIntent: null,
+  feynman: null,
+  markdownContextMenu: null,
+  deleteQuestionEnabled: false,
+  activeTaskPanel: false,
+  importDialogOpen: false,
+  importSubmitting: false,
+  importError: null,
+  confirmation: null,
+  confirmationBusy: false,
+  compressPreview: null,
+  setPendingImportIntent: vi.fn(),
+  setCompressPreview: vi.fn(),
+  setFeynman: vi.fn(),
+  setActiveTaskPanel: vi.fn(),
+  setImportDialogOpen: vi.fn(),
+  closeMarkdownContextMenu: vi.fn(),
+  runMarkdownContextAction: vi.fn(),
+  handleShowInfo: vi.fn(),
+  handleShowInitial: vi.fn(),
+  handleFixLatex: vi.fn(),
+  handleReveal: vi.fn(),
+  openDeleteQuestionConfirmation: vi.fn(),
+  handleAskTutor: vi.fn(),
+  setQuestionText: vi.fn(),
+  closeImportDialog: vi.fn(),
+  handleImportSubmit: vi.fn(),
+  closeConfirmation: vi.fn(),
+  confirmAction: vi.fn(),
+};
 
 vi.mock("../../features/sidebar/AssetPickerOverlay", () => ({
   AssetPickerOverlay: () => <div data-testid="asset-picker-overlay" />,
@@ -18,7 +56,11 @@ vi.mock("../../features/markdown/MarkdownWorkspace", () => ({
 }));
 
 vi.mock("../../features/pdf", () => ({
-  PdfPaneContainer: () => <div data-testid="pdf-pane-container" />,
+  PdfPaneContainer: ({ toolbarSlot }: { toolbarSlot?: ReactNode }) => (
+    <div data-testid="pdf-pane-container">
+      {toolbarSlot}
+    </div>
+  ),
 }));
 
 vi.mock("../../features/tasks/TaskCenterContext", () => ({
@@ -40,42 +82,7 @@ vi.mock("../../features/workflows/components/WorkflowTutorDock", () => ({
 }));
 
 vi.mock("../../features/workflows/controllers/useWorkflowCommandController", () => ({
-  useWorkflowCommandController: () => ({
-    tutorAskVisible: false,
-    selectedAssetName: null,
-    effectiveGroupIdx: null,
-    effectiveTutorIdx: null,
-    questionText: "",
-    pendingImportIntent: null,
-    feynman: null,
-    markdownContextMenu: null,
-    deleteQuestionEnabled: false,
-    activeTaskPanel: false,
-    importDialogOpen: false,
-    importSubmitting: false,
-    importError: null,
-    confirmation: null,
-    confirmationBusy: false,
-    compressPreview: null,
-    setPendingImportIntent: vi.fn(),
-    setCompressPreview: vi.fn(),
-    setFeynman: vi.fn(),
-    setActiveTaskPanel: vi.fn(),
-    setImportDialogOpen: vi.fn(),
-    closeMarkdownContextMenu: vi.fn(),
-    runMarkdownContextAction: vi.fn(),
-    handleShowInfo: vi.fn(),
-    handleShowInitial: vi.fn(),
-    handleFixLatex: vi.fn(),
-    handleReveal: vi.fn(),
-    openDeleteQuestionConfirmation: vi.fn(),
-    handleAskTutor: vi.fn(),
-    setQuestionText: vi.fn(),
-    closeImportDialog: vi.fn(),
-    handleImportSubmit: vi.fn(),
-    closeConfirmation: vi.fn(),
-    confirmAction: vi.fn(),
-  }),
+  useWorkflowCommandController: () => workflowControllerMock,
 }));
 
 vi.mock("../../features/workflows/controllers/useWorkflowTaskEffectsBridge", () => ({
@@ -189,9 +196,65 @@ describe("WorkbenchShell pane dragging", () => {
 
   afterEach(() => {
     cleanup();
+    Object.assign(workflowControllerMock, {
+      tutorAskVisible: false,
+      selectedAssetName: null,
+      effectiveGroupIdx: null,
+      effectiveTutorIdx: null,
+      questionText: "",
+      pendingImportIntent: null,
+      feynman: null,
+      markdownContextMenu: null,
+      deleteQuestionEnabled: false,
+      activeTaskPanel: false,
+      importDialogOpen: false,
+      importSubmitting: false,
+      importError: null,
+      confirmation: null,
+      confirmationBusy: false,
+      compressPreview: null,
+    });
+    workflowControllerMock.setPendingImportIntent.mockClear();
+    workflowControllerMock.setCompressPreview.mockClear();
+    workflowControllerMock.setFeynman.mockClear();
+    workflowControllerMock.setActiveTaskPanel.mockClear();
+    workflowControllerMock.setImportDialogOpen.mockClear();
+    workflowControllerMock.closeMarkdownContextMenu.mockClear();
+    workflowControllerMock.runMarkdownContextAction.mockClear();
+    workflowControllerMock.handleShowInfo.mockClear();
+    workflowControllerMock.handleShowInitial.mockClear();
+    workflowControllerMock.handleFixLatex.mockClear();
+    workflowControllerMock.handleReveal.mockClear();
+    workflowControllerMock.openDeleteQuestionConfirmation.mockClear();
+    workflowControllerMock.handleAskTutor.mockClear();
+    workflowControllerMock.setQuestionText.mockClear();
+    workflowControllerMock.closeImportDialog.mockClear();
+    workflowControllerMock.handleImportSubmit.mockClear();
+    workflowControllerMock.closeConfirmation.mockClear();
+    workflowControllerMock.confirmAction.mockClear();
     useAppStore.setState(INITIAL_STORE_STATE, true);
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("keeps manual workflow button behavior", async () => {
+    workflowControllerMock.selectedAssetName = "asset-a";
+
+    render(
+      <WorkbenchShell
+        assets={[]}
+        markdownTree={[]}
+        dataSource="mock"
+        assetsLoading={false}
+        assetsError={null}
+        treeLoading={false}
+        treeError={null}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "workflow" }));
+
+    expect(workflowControllerMock.setActiveTaskPanel).toHaveBeenCalledWith(true);
   });
 
   it("updates the DOM preview during pointermove but commits the right-rail ratio only on pointerup", async () => {

@@ -155,7 +155,10 @@ export function findContainedTextBoxes(
       continue;
     }
 
-    const key = buildRectKey(textBox.fractionRect);
+    const key =
+      Number.isInteger(textBox.itemIndex) && textBox.itemIndex > 0
+        ? `item:${textBox.itemIndex}`
+        : buildRectKey(textBox.fractionRect);
     if (seen.has(key)) {
       continue;
     }

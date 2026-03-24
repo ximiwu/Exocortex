@@ -90,6 +90,7 @@ function createAssetState(assetName: string): AssetState {
     references: ["background.md", "concept.md", "formula.md"],
     blocks: [],
     mergeOrder: [],
+    disabledContentItemIndexes: [],
     nextBlockId: 1,
     groups: [{ groupIdx: 1, blockIds: [] }],
     uiState: {
@@ -158,6 +159,7 @@ function createApi(overrides: {
       createBlock: vi.fn(async () => assetState),
       deleteBlock: vi.fn(async () => assetState),
       deleteGroup: vi.fn(async () => assetState),
+      updateDisabledContentItems: vi.fn(async () => assetState),
       updateSelection: vi.fn(async () => assetState),
       previewMergeMarkdown: vi.fn(async () => ({ markdown: "" })),
       mergeGroup: vi.fn(async () => assetState),

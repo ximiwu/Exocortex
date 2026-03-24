@@ -57,6 +57,7 @@ const ASSET_STATE: PdfAssetState = {
   references: [],
   blocks: [],
   mergeOrder: [1, 2],
+  disabledContentItemIndexes: [],
   nextBlockId: 3,
   groups: [],
   uiState: {
@@ -126,6 +127,7 @@ function createInteractions() {
     cancelPan: vi.fn(),
     endPan: vi.fn(),
     handleScroll: vi.fn(),
+    handleSurfaceDoubleClick: vi.fn(),
     updatePan: vi.fn(),
     pageSizes: METADATA.pageSizes,
     preheatPageIndexes: [],
@@ -232,6 +234,44 @@ describe("PdfPane", () => {
       expect(onMergeSelection).toHaveBeenCalledWith([1, 2], {
         markdownContent: "## Auto filled",
       });
+    });
+  });
+
+  it("alerts when preview generation falls back to img_path for images", async () => {
+    vi.mocked(usePdfPaneInteractions).mockReturnValue(createInteractions());
+    vi.mocked(usePdfPageTextBoxes).mockReturnValue({
+      textBoxesByPage: new Map(),
+      loading: false,
+      error: null,
+    });
+    vi.mocked(usePdfJsDocument).mockReturnValue({
+      pdfDocument: null,
+      loading: false,
+      error: null,
+    });
+
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    const onPreviewMergeMarkdown = vi.fn(async () => ({
+      markdown: "## Suggested",
+      warning: "Image item 4 is missing image_explaination. The markdown preview fell back to img_path.",
+    }));
+
+    const { getByRole } = render(
+      <PdfPane
+        assetName="asset-a"
+        assetState={ASSET_STATE}
+        metadata={METADATA}
+        onMergeSelection={vi.fn(async () => undefined)}
+        onPreviewMergeMarkdown={onPreviewMergeMarkdown}
+      />,
+    );
+
+    fireEvent.click(getByRole("button", { name: "Merge" }));
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith(
+        "Image item 4 is missing image_explaination. The markdown preview fell back to img_path.",
+      );
     });
   });
 

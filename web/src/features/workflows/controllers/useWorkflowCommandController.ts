@@ -144,7 +144,6 @@ export function useWorkflowCommandController(): WorkflowCommandController {
       .submitGroupDive({ assetName, groupIdx })
       .then((task) => {
         trackSubmittedTask(task);
-        setActiveTaskPanel(true);
       })
       .catch((error) => {
         pushToast({
@@ -153,7 +152,7 @@ export function useWorkflowCommandController(): WorkflowCommandController {
           tone: "danger",
         });
       });
-  }, [api, consumeGroupDiveRequest, groupDiveRequest, pushToast, setActiveTaskPanel, trackSubmittedTask]);
+  }, [api, consumeGroupDiveRequest, groupDiveRequest, pushToast, trackSubmittedTask]);
 
   useEffect(() => {
     if (!assetDeleteRequest) {
@@ -244,7 +243,6 @@ export function useWorkflowCommandController(): WorkflowCommandController {
         taskId: task.id,
       });
       setImportDialogOpen(false);
-      setActiveTaskPanel(true);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to start asset import.";
       setImportError(message);
@@ -267,7 +265,6 @@ export function useWorkflowCommandController(): WorkflowCommandController {
       markdownPath: currentMarkdownPath,
     });
     trackSubmittedTask(task);
-    setActiveTaskPanel(true);
   }
 
   async function handleReveal() {
@@ -316,7 +313,6 @@ export function useWorkflowCommandController(): WorkflowCommandController {
     });
     trackSubmittedTask(task);
     setQuestionText("");
-    setActiveTaskPanel(true);
   }
 
   function closeConfirmation() {

@@ -43,9 +43,9 @@ export function PdfPaneContainer({
     createBlock,
     deleteBlock,
     deleteGroup,
+    updateDisabledContentItems,
     previewMergeMarkdown,
     mergeGroup,
-    updateSelection,
     patchUiState,
   } = usePdfDocument(assetName);
   const pdfNavigationRequest = useAppStore((state) => state.pdfNavigationRequest);
@@ -86,6 +86,7 @@ export function PdfPaneContainer({
       onCreateBlock={createBlock}
       onDeleteBlock={(block) => deleteBlock(block.blockId)}
       onDeleteGroup={deleteGroup}
+      onDisabledContentItemsChange={updateDisabledContentItems}
       onPreviewMergeMarkdown={previewMergeMarkdown}
       onMergeSelection={mergeGroup}
       onGroupedBlockActivate={onGroupedBlockActivate}
@@ -97,7 +98,6 @@ export function PdfPaneContainer({
           current?.nonce === request.nonce ? null : current,
         );
       }}
-      onSelectionChange={updateSelection}
       onUiStateChange={(patch) => {
         void patchUiState(patch);
       }}

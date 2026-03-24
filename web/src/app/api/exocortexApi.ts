@@ -74,6 +74,7 @@ export interface ExocortexApi {
     createBlock(assetName: string, input: CreateBlockInput): Promise<AssetState>;
     deleteBlock(assetName: string, blockId: number): Promise<AssetState>;
     deleteGroup(assetName: string, groupIdx: number): Promise<AssetState>;
+    updateDisabledContentItems(assetName: string, disabledContentItemIndexes: number[]): Promise<AssetState>;
     updateSelection(assetName: string, mergeOrder: number[]): Promise<AssetState>;
     previewMergeMarkdown(assetName: string, blockIds: number[]): Promise<PreviewMergeMarkdownResponse>;
     mergeGroup(assetName: string, blockIds: number[], options?: MergeGroupInput): Promise<AssetState>;
@@ -154,6 +155,8 @@ export function wrapCoreApi(core: CoreExocortexApi): ExocortexApi {
       createBlock: (assetName, input) => core.createBlock(assetName, input),
       deleteBlock: (assetName, blockId) => core.deleteBlock(assetName, blockId),
       deleteGroup: (assetName, groupIdx) => core.deleteGroup(assetName, groupIdx),
+      updateDisabledContentItems: (assetName, disabledContentItemIndexes) =>
+        core.updateDisabledContentItems(assetName, disabledContentItemIndexes),
       updateSelection: (assetName, mergeOrder) => core.updateBlockSelection(assetName, mergeOrder),
       previewMergeMarkdown: (assetName, blockIds) => core.previewMergeMarkdown(assetName, blockIds),
       mergeGroup: (assetName, blockIds, options) => core.mergeGroup(assetName, blockIds, options),

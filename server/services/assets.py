@@ -139,6 +139,30 @@ def _list_reference_names(asset_name: str) -> list[str]:
     return sorted(path.name for path in references_dir.iterdir() if path.is_file())
 
 
+def _normalize_disabled_content_item_indexes(raw_values: object) -> list[int]:
+    if not isinstance(raw_values, list):
+        return []
+
+    normalized: list[int] = []
+    for raw_value in raw_values:
+        if isinstance(raw_value, bool):
+            continue
+        try:
+            value = int(raw_value)
+        except Exception:
+            continue
+        if value <= 0 or value in normalized:
+            continue
+        normalized.append(value)
+    normalized.sort()
+    return normalized
+
+
+def _load_disabled_content_item_indexes(asset_name: str) -> list[int]:
+    config = get_asset_config(asset_name) or {}
+    return _normalize_disabled_content_item_indexes(config.get("disabled_content_item_indexes"))
+
+
 def _load_ui_state(asset_name: str, page_count: int) -> UiStateModel:
     config = get_asset_config(asset_name) or {}
     zoom_raw = config.get("zoom")
@@ -403,6 +427,7 @@ def build_asset_state(asset_name: str) -> AssetStateModel:
         references=_list_reference_names(normalized),
         blocks=blocks,
         mergeOrder=list(block_data.merge_order),
+        disabledContentItemIndexes=_load_disabled_content_item_indexes(normalized),
         nextBlockId=block_data.next_block_id,
         groups=groups,
         uiState=_load_ui_state(normalized, page_count),
@@ -440,7 +465,7 @@ def create_block(asset_name: str, page_index: int, fraction_rect: RectModel) -> 
         normalized,
         BlockData(
             blocks=blocks,
-            merge_order=list(data.merge_order),
+            merge_order=[*data.merge_order, block_id],
             next_block_id=block_id + 1,
             coordinate_space=COORDINATE_SPACE_PAGE_FRACTION,
         ),
@@ -628,6 +653,21 @@ def update_ui_state(
         return build_asset_state(normalized)
 
 
+def update_disabled_content_items(
+    asset_name: str,
+    disabled_content_item_indexes: list[int],
+) -> AssetStateModel:
+    normalized = _normalize_asset_name(asset_name)
+    resolve_asset_dir(normalized)
+    with asset_config_write_lock(normalized):
+        config = get_asset_config(normalized) or {}
+        config["disabled_content_item_indexes"] = _normalize_disabled_content_item_indexes(
+            disabled_content_item_indexes
+        )
+        save_asset_config(normalized, config)
+        return build_asset_state(normalized)
+
+
 def delete_asset(asset_name: str) -> None:
     asset_dir = resolve_asset_dir(asset_name)
     _safe_rmtree(asset_dir)
@@ -721,6 +761,7 @@ __all__ = [
     "resolve_asset_dir",
     "resolve_reference_file",
     "resolve_relative_file",
+    "update_disabled_content_items",
     "update_selection",
     "update_ui_state",
 ]

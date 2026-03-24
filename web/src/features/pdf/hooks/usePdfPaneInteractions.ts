@@ -69,7 +69,6 @@ interface UsePdfPaneInteractionsInput {
   onCreateBlock?: (pageIndex: number, rect: PdfRect) => Promise<unknown> | void;
   onDeleteBlock?: (block: PdfBlockRecord) => Promise<unknown> | void;
   onDeleteGroup?: (groupIdx: number) => Promise<unknown> | void;
-  onSelectionChange?: (mergeOrder: number[]) => Promise<unknown> | void;
   onGroupedBlockActivate?: (groupIdx: number, block: PdfBlockRecord) => void;
   onHoverChange?: (hover: PdfHoverState) => void;
   onCompressSelectionChange?: (selection: NormalizedPageRect | null) => void;
@@ -89,7 +88,6 @@ export function usePdfPaneInteractions({
   onCreateBlock,
   onDeleteBlock,
   onDeleteGroup,
-  onSelectionChange,
   onGroupedBlockActivate,
   onHoverChange,
   onCompressSelectionChange,
@@ -499,32 +497,22 @@ export function usePdfPaneInteractions({
   }
 
   function handleBlockHoverEnter(block: PdfBlockRecord): void {
-    if (block.groupIdx != null) {
-      setHover({
-        hoveredBlockId: null,
-        hoveredGroupIdx: block.groupIdx,
-      });
+    if (block.groupIdx == null) {
       return;
     }
 
     setHover({
-      hoveredBlockId: block.blockId,
-      hoveredGroupIdx: null,
+      hoveredBlockId: null,
+      hoveredGroupIdx: block.groupIdx,
     });
   }
 
   function handleBlockHoverLeave(block: PdfBlockRecord): void {
-    if (block.groupIdx != null) {
-      if (hoverState.hoveredGroupIdx === block.groupIdx) {
-        setHover({
-          hoveredBlockId: null,
-          hoveredGroupIdx: null,
-        });
-      }
+    if (block.groupIdx == null) {
       return;
     }
 
-    if (hoverState.hoveredBlockId === block.blockId) {
+    if (hoverState.hoveredGroupIdx === block.groupIdx) {
       setHover({
         hoveredBlockId: null,
         hoveredGroupIdx: null,
@@ -533,21 +521,9 @@ export function usePdfPaneInteractions({
   }
 
   function handleBlockClick(block: PdfBlockRecord): void {
-    if (!assetState) {
-      return;
-    }
-
     if (block.groupIdx != null) {
       onGroupedBlockActivate?.(block.groupIdx, block);
-      return;
     }
-
-    if (!onSelectionChange) {
-      return;
-    }
-
-    const nextMergeOrder = toggleMergeOrder(assetState.mergeOrder, block.blockId);
-    void onSelectionChange(nextMergeOrder);
   }
 
   function handleBlockDelete(block: PdfBlockRecord): void {
@@ -575,6 +551,19 @@ export function usePdfPaneInteractions({
     }
 
     void onDeleteBlock(block);
+  }
+
+  function handleSurfaceDoubleClick(pageIndex: number): void {
+    if (appMode === "compress" || !onCreateBlock) {
+      return;
+    }
+
+    void onCreateBlock(pageIndex, {
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+    });
   }
 
   return {
@@ -609,6 +598,7 @@ export function usePdfPaneInteractions({
     handleBlockHoverLeave,
     handleBlockClick,
     handleBlockDelete,
+    handleSurfaceDoubleClick,
   };
 }
 
@@ -626,14 +616,6 @@ function groupBlocksByPage(blocks: PdfBlockRecord[]): Map<number, PdfBlockRecord
   });
 
   return blocksByPage;
-}
-
-function toggleMergeOrder(mergeOrder: number[], blockId: number): number[] {
-  if (mergeOrder.includes(blockId)) {
-    return mergeOrder.filter((id) => id !== blockId);
-  }
-
-  return [...mergeOrder, blockId];
 }
 
 function buildMergeSelectionAction(

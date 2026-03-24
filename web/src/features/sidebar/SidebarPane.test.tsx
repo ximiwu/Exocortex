@@ -49,6 +49,7 @@ const ASSET_STATE: AssetState = {
     },
   ],
   mergeOrder: [],
+  disabledContentItemIndexes: [],
   nextBlockId: 22,
   groups: [
     {
@@ -149,6 +150,7 @@ function createApi(): ExocortexApi {
       createBlock: vi.fn(async () => ASSET_STATE),
       deleteBlock: vi.fn(async () => ASSET_STATE),
       deleteGroup: vi.fn(async () => ASSET_STATE),
+      updateDisabledContentItems: vi.fn(async () => ASSET_STATE),
       updateSelection: vi.fn(async () => ASSET_STATE),
       previewMergeMarkdown: vi.fn(async () => ({ markdown: "" })),
       mergeGroup: vi.fn(async () => ASSET_STATE),

@@ -110,3 +110,54 @@ def test_update_ui_state_serializes_overlapping_asset_config_writes(
     assert failures == []
     assert stored_config["current_page"] == 5
     assert stored_config["sidebar_collapsed"] is True
+
+
+def test_build_asset_state_reads_disabled_content_item_indexes_from_asset_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(asset_service, "resolve_asset_dir", lambda _asset_name, *, must_exist=True: tmp_path)
+    monkeypatch.setattr(asset_service, "get_asset_pdf_path", lambda _asset_name: tmp_path / "raw.pdf")
+    monkeypatch.setattr(asset_service, "ensure_content_list_unified", lambda _asset_name: None)
+    monkeypatch.setattr(asset_service, "_load_page_sizes_at_reference_dpi", lambda _pdf_path: [])
+    monkeypatch.setattr(asset_service, "_load_fraction_block_data", lambda _asset_name, _pdf_path: asset_service.BlockData.empty())
+    monkeypatch.setattr(asset_service, "load_group_records", lambda _asset_name: [])
+    monkeypatch.setattr(asset_service, "_list_reference_names", lambda _asset_name: [])
+    monkeypatch.setattr(asset_service, "relative_to_assets_root", lambda path: str(path))
+    monkeypatch.setattr(
+        asset_service,
+        "get_asset_config",
+        lambda _asset_name: {
+            "disabled_content_item_indexes": [5, "2", 5, 0, -1, True, "bad"],
+        },
+    )
+
+    result = asset_service.build_asset_state("physics/ch1")
+
+    assert result.disabledContentItemIndexes == [2, 5]
+
+
+def test_update_disabled_content_items_persists_sorted_unique_indexes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    saved: dict[str, object] = {}
+
+    monkeypatch.setattr(asset_service, "resolve_asset_dir", lambda _asset_name, *, must_exist=True: tmp_path)
+    monkeypatch.setattr(asset_service, "get_asset_config", lambda _asset_name: {})
+
+    def _save_asset_config(_asset_name: str, data: dict[str, object]) -> Path:
+        saved.update(data)
+        return tmp_path / "config.json"
+
+    monkeypatch.setattr(asset_service, "save_asset_config", _save_asset_config)
+    monkeypatch.setattr(
+        asset_service,
+        "build_asset_state",
+        lambda _asset_name: {"disabledContentItemIndexes": saved.get("disabled_content_item_indexes", [])},
+    )
+
+    result = asset_service.update_disabled_content_items("physics/ch1", [4, 2, 4, 0, -1, True, 3])
+
+    assert result == {"disabledContentItemIndexes": [2, 3, 4]}
+    assert saved["disabled_content_item_indexes"] == [2, 3, 4]

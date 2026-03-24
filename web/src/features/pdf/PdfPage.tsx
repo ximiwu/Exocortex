@@ -34,6 +34,7 @@ interface PdfPageProps {
   pageLayout: PdfPageLayout;
   blocks: PdfBlockRecord[];
   textBoxes: PdfTextBox[];
+  disabledContentItemIndexes: number[];
   hoveredBlockId: number | null;
   hoveredGroupIdx: number | null;
   selectionOrderByBlock: Map<number, number>;
@@ -51,8 +52,10 @@ interface PdfPageProps {
   onSurfacePointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onSurfacePointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
   onSurfacePointerCancel: () => void;
+  onSurfaceDoubleClick?: (pageIndex: number) => void;
   onBlockClick: (block: PdfBlockRecord) => void;
   onBlockDelete: (block: PdfBlockRecord) => void;
+  onTextBoxToggle: (itemIndex: number) => void;
   onMergeSelection: () => void;
   onBlockHoverEnter: (block: PdfBlockRecord) => void;
   onBlockHoverLeave: (block: PdfBlockRecord) => void;
@@ -67,6 +70,7 @@ export function PdfPage({
   pageLayout,
   blocks,
   textBoxes,
+  disabledContentItemIndexes,
   hoveredBlockId,
   hoveredGroupIdx,
   selectionOrderByBlock,
@@ -80,8 +84,10 @@ export function PdfPage({
   onSurfacePointerMove,
   onSurfacePointerUp,
   onSurfacePointerCancel,
+  onSurfaceDoubleClick,
   onBlockClick,
   onBlockDelete,
+  onTextBoxToggle,
   onMergeSelection,
   onBlockHoverEnter,
   onBlockHoverLeave,
@@ -221,6 +227,7 @@ export function PdfPage({
     blocks,
     textBoxes,
   );
+  const disabledTextBoxIndexes = new Set(disabledContentItemIndexes);
 
   return (
     <article className="pdf-page" style={pageStyle}>
@@ -276,6 +283,14 @@ export function PdfPage({
           onPointerUp={(event) => {
             onSurfacePointerUp(event);
           }}
+          onDoubleClick={(event) => {
+            if (busy || event.target !== event.currentTarget) {
+              return;
+            }
+
+            event.preventDefault();
+            onSurfaceDoubleClick?.(pageLayout.pageIndex);
+          }}
         >
           {compressRect ? (
             <div
@@ -315,23 +330,6 @@ export function PdfPage({
               </button>
             </div>
           ) : null}
-          {containedTextBoxes.map((textBox, index) => {
-            const rect = normalizedPageRectToCssRect(textBox.fractionRect, pageLayout);
-            return (
-              <div
-                aria-hidden="true"
-                className="pdf-page__textBox"
-                data-testid="pdf-text-box-overlay"
-                key={`${textBox.pageIndex}:${textBox.fractionRect.x}:${textBox.fractionRect.y}:${textBox.fractionRect.width}:${textBox.fractionRect.height}:${index}`}
-                style={{
-                  left: rect.x,
-                  top: rect.y,
-                  width: rect.width,
-                  height: rect.height,
-                }}
-              />
-            );
-          })}
           {blocks.map((block) => {
             const variant = blockVariant(block, hoveredBlockId, hoveredGroupIdx, selectionOrderByBlock);
             const rect = normalizedPageRectToCssRect(getBlockFractionRect(block), pageLayout);
@@ -342,6 +340,7 @@ export function PdfPage({
               top: rect.y,
               width: rect.width,
               height: rect.height,
+              opacity: visual.opacity ?? 1,
               ["--pdf-block-border" as string]: visual.borderColor,
               ["--pdf-block-background" as string]: visual.backgroundColor,
               ["--pdf-block-style" as string]: visual.borderStyle,
@@ -406,6 +405,43 @@ export function PdfPage({
                   {block.groupIdx != null ? "Delete group" : "Delete"}
                 </span>
               </button>
+            );
+          })}
+          {containedTextBoxes.map((textBox, index) => {
+            const rect = normalizedPageRectToCssRect(textBox.fractionRect, pageLayout);
+            const disabled = disabledTextBoxIndexes.has(textBox.itemIndex);
+            const label = disabled
+              ? `Enable content item ${textBox.itemIndex}`
+              : `Disable content item ${textBox.itemIndex}`;
+
+            return (
+              <button
+                aria-label={label}
+                aria-pressed={disabled}
+                className={joinClasses(
+                  "pdf-page__textBox",
+                  disabled ? "pdf-page__textBox--disabled" : undefined,
+                )}
+                data-testid="pdf-text-box-overlay"
+                disabled={busy}
+                key={`${textBox.itemIndex}:${textBox.pageIndex}:${textBox.fractionRect.x}:${textBox.fractionRect.y}:${textBox.fractionRect.width}:${textBox.fractionRect.height}:${index}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onTextBoxToggle(textBox.itemIndex);
+                }}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                }}
+                style={{
+                  left: rect.x,
+                  top: rect.y,
+                  width: rect.width,
+                  height: rect.height,
+                }}
+                title={label}
+                type="button"
+              />
             );
           })}
           {dragPreviewActive ? <DragSelectionOverlay rect={dragPreviewRect} /> : null}

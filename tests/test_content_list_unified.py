@@ -201,6 +201,58 @@ def test_write_unified_content_list_preserves_image_entry_fields(tmp_path: Path)
     assert payload[0]["height"] == pytest.approx(0.026)
 
 
+def test_write_unified_content_list_keeps_only_supported_entry_types(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "source.pdf"
+    _make_pdf(pdf_path)
+    source_path = tmp_path / "content_list.json"
+    source_path.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "text",
+                    "text": "Kept text",
+                    "bbox": [13, 26, 65, 78],
+                    "page_idx": 0,
+                },
+                {
+                    "type": "abandon",
+                    "text": "Dropped entry",
+                    "bbox": [20, 20, 40, 40],
+                    "page_idx": 0,
+                },
+                {
+                    "type": "page_number",
+                    "text": "12",
+                    "bbox": [22, 22, 42, 42],
+                    "page_idx": 0,
+                },
+                {
+                    "type": "container",
+                    "sub_type": "code",
+                    "code_body": "print('ok')",
+                    "bbox": [26, 13, 78, 39],
+                    "page_idx": 1,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    target_path = tmp_path / "content_list_unified.json"
+
+    item_count = assets_manager.write_unified_content_list(
+        source_path=source_path,
+        pdf_path=pdf_path,
+        target_path=target_path,
+    )
+
+    payload = json.loads(target_path.read_text(encoding="utf-8"))
+    assert item_count == 2
+    assert [entry["type"] for entry in payload] == ["text", "container"]
+    assert payload[0]["text"] == "Kept text"
+    assert payload[1]["sub_type"] == "code"
+
+
 def test_write_unified_content_list_rejects_out_of_range_page_index(tmp_path: Path) -> None:
     pdf_path = tmp_path / "source.pdf"
     _make_pdf(pdf_path)

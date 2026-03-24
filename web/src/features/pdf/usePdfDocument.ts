@@ -185,6 +185,57 @@ export function usePdfDocument(assetName: string | null) {
     }
   }
 
+  async function updateDisabledContentItems(
+    disabledContentItemIndexes: number[],
+  ): Promise<PdfAssetState | null> {
+    const currentAssetName = assetName;
+    if (!currentAssetName) {
+      return null;
+    }
+
+    const previousAssetState = queryClient.getQueryData<PdfAssetState>(
+      queryKeys.assetState(currentAssetName),
+    );
+    const normalizedDisabledContentItemIndexes = Array.from(
+      new Set(
+        disabledContentItemIndexes
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value > 0),
+      ),
+    ).sort((left, right) => left - right);
+
+    if (previousAssetState) {
+      writeAssetStateCache(currentAssetName, {
+        ...previousAssetState,
+        disabledContentItemIndexes: normalizedDisabledContentItemIndexes,
+      });
+    }
+
+    setMutating(true);
+    setMutationError(null);
+
+    try {
+      const nextAssetState = await api.pdf.updateDisabledContentItems(
+        currentAssetName,
+        normalizedDisabledContentItemIndexes,
+      );
+      writeAssetStateCache(currentAssetName, nextAssetState, {
+        overlayLocalShellUi: true,
+      });
+      return nextAssetState;
+    } catch (reason) {
+      if (previousAssetState) {
+        writeAssetStateCache(currentAssetName, previousAssetState);
+      }
+      const nextError = toError(reason);
+      setMutationError(nextError);
+      void refresh();
+      throw nextError;
+    } finally {
+      setMutating(false);
+    }
+  }
+
   async function updateSelection(mergeOrder: number[]): Promise<PdfAssetState | null> {
     const currentAssetName = assetName;
     if (!currentAssetName) {
@@ -357,6 +408,7 @@ export function usePdfDocument(assetName: string | null) {
     createBlock,
     deleteBlock,
     deleteGroup,
+    updateDisabledContentItems,
     previewMergeMarkdown,
     mergeGroup,
     updateSelection,

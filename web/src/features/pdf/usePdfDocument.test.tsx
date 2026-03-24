@@ -20,6 +20,7 @@ const ASSET_STATE: PdfAssetState = {
   references: [],
   blocks: [],
   mergeOrder: [],
+  disabledContentItemIndexes: [],
   nextBlockId: 1,
   groups: [],
   uiState: {
@@ -159,6 +160,10 @@ function createApiMock(
       createBlock: vi.fn(),
       deleteBlock: vi.fn(),
       deleteGroup: vi.fn(),
+      updateDisabledContentItems: vi.fn(async (_assetName, disabledContentItemIndexes) => ({
+        ...clone(ASSET_STATE),
+        disabledContentItemIndexes,
+      })),
       updateSelection: vi.fn(),
       previewMergeMarkdown: vi.fn(previewMergeMarkdown),
       mergeGroup: vi.fn(),
@@ -452,5 +457,49 @@ describe("usePdfDocument", () => {
     });
 
     expect(previewMergeMarkdown).toHaveBeenCalledWith("asset-a", [4, 7]);
+  });
+
+  it("optimistically updates disabled content item indexes and persists them", async () => {
+    const updateDisabledContentItems = vi.fn(async (_assetName: string, disabledContentItemIndexes: number[]) => ({
+      ...clone(ASSET_STATE),
+      disabledContentItemIndexes,
+    }));
+    const api = createApiMock(vi.fn(async (_assetName, uiState) => buildAssetState(uiState)));
+    api.pdf.updateDisabledContentItems = updateDisabledContentItems;
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+    let latestValue: PdfDocumentResult | null = null;
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ExocortexApiProvider api={api}>
+          <PdfDocumentHarness
+            assetName="asset-a"
+            onChange={(value) => {
+              latestValue = value;
+            }}
+          />
+        </ExocortexApiProvider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(latestValue?.assetState).not.toBeNull();
+    });
+
+    await act(async () => {
+      await latestValue?.updateDisabledContentItems([4, 2, 4, 1]);
+    });
+
+    expect(updateDisabledContentItems).toHaveBeenCalledWith("asset-a", [1, 2, 4]);
+    await waitFor(() => {
+      const cachedState = queryClient.getQueryData<PdfAssetState>(queryKeys.assetState("asset-a"));
+      expect(cachedState?.disabledContentItemIndexes).toEqual([1, 2, 4]);
+    });
   });
 });

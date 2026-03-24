@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from exocortex_core.paths import AGENT_WORKSPACE_DIR_PREFIX
+from exocortex_core.runtime import is_dev_runtime
 from exocortex_core.settings import (
     CODEX_MODEL,
     GEMINI_MODEL,
@@ -24,6 +25,12 @@ from exocortex_core.settings import (
 from exocortex_core.workflow_events import WorkflowEventCallback, emit_workflow_event
 
 logger = logging.getLogger(__name__)
+
+
+def _creation_flags_for_new_console(new_console: bool) -> int:
+    if new_console and is_dev_runtime() and hasattr(subprocess, "CREATE_NEW_CONSOLE"):
+        return subprocess.CREATE_NEW_CONSOLE
+    return 0
 
 
 def _pid_is_running(pid: int) -> bool:
@@ -347,10 +354,6 @@ def run_codex(
         path_env = os.environ.get("PATH", "")
         raise FileNotFoundError(f"`codex` not found on PATH; current PATH={path_env}")
 
-    creation_flags = 0
-    if new_console and hasattr(subprocess, "CREATE_NEW_CONSOLE"):
-        creation_flags = subprocess.CREATE_NEW_CONSOLE
-
     return subprocess.run(
         _build_codex_exec_command(
             codex_exe,
@@ -360,7 +363,7 @@ def run_codex(
         ),
         cwd=workdir,
         check=True,
-        creationflags=creation_flags,
+        creationflags=_creation_flags_for_new_console(new_console),
     )
 
 
@@ -405,10 +408,6 @@ def run_codex_capture_last_message(
 
     output_last_message_path.parent.mkdir(parents=True, exist_ok=True)
 
-    creation_flags = 0
-    if new_console and hasattr(subprocess, "CREATE_NEW_CONSOLE"):
-        creation_flags = subprocess.CREATE_NEW_CONSOLE
-
     subprocess.run(
         _build_codex_exec_command(
             codex_exe,
@@ -419,7 +418,7 @@ def run_codex_capture_last_message(
         ),
         cwd=workdir,
         check=True,
-        creationflags=creation_flags,
+        creationflags=_creation_flags_for_new_console(new_console),
     )
     if not output_last_message_path.is_file():
         raise FileNotFoundError(f"Codex last message not found: {output_last_message_path}")
@@ -438,10 +437,6 @@ def run_gemini(
         path_env = os.environ.get("PATH", "")
         raise FileNotFoundError(f"`gemini` not found on PATH; current PATH={path_env}")
 
-    creation_flags = 0
-    if new_console and hasattr(subprocess, "CREATE_NEW_CONSOLE"):
-        creation_flags = subprocess.CREATE_NEW_CONSOLE
-
     return subprocess.run(
         [
             gemini_exe,
@@ -453,7 +448,7 @@ def run_gemini(
         ],
         cwd=workdir,
         check=True,
-        creationflags=creation_flags,
+        creationflags=_creation_flags_for_new_console(new_console),
     )
 
 

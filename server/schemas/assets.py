@@ -49,6 +49,7 @@ class AssetStateModel(BaseModel):
     references: list[str] = Field(default_factory=list)
     blocks: list[BlockModel] = Field(default_factory=list)
     mergeOrder: list[int] = Field(default_factory=list)
+    disabledContentItemIndexes: list[int] = Field(default_factory=list)
     nextBlockId: int = 1
     groups: list[GroupModel] = Field(default_factory=list)
     uiState: UiStateModel = Field(default_factory=UiStateModel)
@@ -80,6 +81,7 @@ class PdfMetadataModel(BaseModel):
 
 
 class PdfTextBoxModel(BaseModel):
+    itemIndex: int
     pageIndex: int
     fractionRect: RectModel
 
@@ -98,6 +100,10 @@ class UpdateSelectionRequest(BaseModel):
     mergeOrder: list[int] = Field(default_factory=list)
 
 
+class UpdateDisabledContentItemsRequest(BaseModel):
+    disabledContentItemIndexes: list[int] = Field(default_factory=list)
+
+
 class MergeGroupRequest(BaseModel):
     blockIds: list[int] | None = None
     markdownContent: str | None = None
@@ -110,6 +116,7 @@ class PreviewMergeMarkdownRequest(BaseModel):
 
 class PreviewMergeMarkdownResponse(BaseModel):
     markdown: str = ""
+    warning: str | None = None
 
 
 class UpdateUiStateRequest(BaseModel):
@@ -168,6 +175,7 @@ __all__ = [
     "ReorderMarkdownSiblingsRequest",
     "TutorSessionModel",
     "UiStateModel",
+    "UpdateDisabledContentItemsRequest",
     "UpdateMarkdownNodeAliasRequest",
     "UpdateSelectionRequest",
     "UpdateUiStateRequest",

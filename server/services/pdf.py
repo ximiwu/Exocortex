@@ -32,13 +32,6 @@ _CONTENT_LIST_CONTAINMENT_EPSILON = 1e-6
 _TEXT_LIKE_ENTRY_TYPES = {
     "text",
     "title",
-    "header",
-    "footer",
-    "aside_text",
-    "page_number",
-    "page_footnote",
-    "phonetic",
-    "ref_text",
 }
 
 
@@ -48,6 +41,12 @@ class _UnifiedContentListEntry:
     page_index: int
     rect: RectModel
     item: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _RenderedMarkdownFragment:
+    markdown: str
+    warning: str | None = None
 
 
 def _resolve_pdf_path(asset_name: str) -> Path:
@@ -340,15 +339,28 @@ def _render_list_item(item: dict[str, Any]) -> str:
     return _join_nonempty(list_items, "  \n")
 
 
-def _render_image_item(item: dict[str, Any]) -> str:
+def _render_image_item(item: dict[str, Any], *, item_index: int | None = None) -> _RenderedMarkdownFragment:
+    explanation = _coerce_text(item.get("image_explaination"))
     image_path = _coerce_text(item.get("img_path"))
-    body = f"![]({image_path})" if image_path else ""
+    warning: str | None = None
+    if explanation:
+        body = explanation
+    else:
+        body = f"![]({image_path})" if image_path else ""
+        index_label = f" {item_index}" if item_index is not None else ""
+        warning = (
+            f"Image item{index_label} is missing image_explaination. "
+            "The markdown preview fell back to img_path."
+        )
     captions = _join_nonempty(_string_list(item.get("image_caption")), "  \n")
     footnotes = _join_nonempty(_string_list(item.get("image_footnote")), "  \n")
 
     if footnotes:
-        return _join_nonempty([captions, body, footnotes], "  \n")
-    return _join_nonempty([body, captions], "  \n")
+        return _RenderedMarkdownFragment(
+            markdown=_join_nonempty([captions, body, footnotes], "  \n"),
+            warning=warning,
+        )
+    return _RenderedMarkdownFragment(markdown=_join_nonempty([body, captions], "  \n"), warning=warning)
 
 
 def _render_table_item(item: dict[str, Any]) -> str:
@@ -382,25 +394,25 @@ def _render_equation_item(item: dict[str, Any]) -> str:
     return _coerce_text(item.get("text"))
 
 
-def _render_markdown_fragment(item: dict[str, Any]) -> str:
+def _render_markdown_fragment(item: dict[str, Any], *, item_index: int | None = None) -> _RenderedMarkdownFragment:
     entry_type = _normalize_entry_type(item.get("type"))
     text_format = _normalize_entry_type(item.get("text_format"))
 
     if entry_type in _TEXT_LIKE_ENTRY_TYPES:
-        return _render_text_item(item)
+        return _RenderedMarkdownFragment(markdown=_render_text_item(item))
     if entry_type == "list":
-        return _render_list_item(item)
+        return _RenderedMarkdownFragment(markdown=_render_list_item(item))
     if entry_type == "image":
-        return _render_image_item(item)
+        return _render_image_item(item, item_index=item_index)
     if entry_type == "table":
-        return _render_table_item(item)
+        return _RenderedMarkdownFragment(markdown=_render_table_item(item))
     if entry_type in {"code", "algorithm"} or _normalize_entry_type(item.get("sub_type")) in {"code", "algorithm"}:
-        return _render_code_item(item)
+        return _RenderedMarkdownFragment(markdown=_render_code_item(item))
     if entry_type in {"equation", "interline_equation"} or text_format == "latex":
-        return _render_equation_item(item)
+        return _RenderedMarkdownFragment(markdown=_render_equation_item(item))
 
     logger.warning("Skipping unsupported content_list_unified entry type %r.", item.get("type"))
-    return ""
+    return _RenderedMarkdownFragment(markdown="")
 
 
 def get_pdf_metadata(asset_name: str) -> PdfMetadataModel:
@@ -431,6 +443,7 @@ def get_page_text_boxes(asset_name: str, page_index: int) -> PdfPageTextBoxesMod
         pageIndex=page_index,
         items=[
             PdfTextBoxModel(
+                itemIndex=entry.item_index,
                 pageIndex=entry.page_index,
                 fractionRect=entry.rect,
             )
@@ -442,21 +455,29 @@ def get_page_text_boxes(asset_name: str, page_index: int) -> PdfPageTextBoxesMod
 
 def preview_merge_markdown(asset_name: str, block_ids: list[int]) -> PreviewMergeMarkdownResponse:
     selected_blocks = _resolve_selected_blocks(asset_name, block_ids)
+    asset_state = build_asset_state(asset_name)
+    disabled_item_indexes = set(asset_state.disabledContentItemIndexes)
     entries = _load_preview_source_entries(asset_name)
 
     fragments: list[str] = []
+    warnings: list[str] = []
     for entry in entries:
+        if entry.item_index in disabled_item_indexes:
+            continue
         if not any(
             block.pageIndex == entry.page_index and _rect_fully_contains(block.fractionRect, entry.rect)
             for block in selected_blocks
         ):
             continue
 
-        fragment = _render_markdown_fragment(entry.item)
-        if fragment.strip():
-            fragments.append(fragment.strip())
+        rendered = _render_markdown_fragment(entry.item, item_index=entry.item_index)
+        if rendered.markdown.strip():
+            fragments.append(rendered.markdown.strip())
+        if rendered.warning:
+            warnings.append(rendered.warning)
 
-    return PreviewMergeMarkdownResponse(markdown="\n\n".join(fragments))
+    warning = "\n".join(dict.fromkeys(warnings)) or None
+    return PreviewMergeMarkdownResponse(markdown="\n\n".join(fragments), warning=warning)
 
 
 __all__ = ["get_pdf_metadata", "get_page_text_boxes", "preview_merge_markdown", "resolve_pdf_path"]

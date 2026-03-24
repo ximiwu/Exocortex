@@ -80,6 +80,9 @@ function createApi(options: {
       deleteGroup: vi.fn(async () => {
         throw new Error("not implemented");
       }),
+      updateDisabledContentItems: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
       updateSelection: vi.fn(async () => {
         throw new Error("not implemented");
       }),

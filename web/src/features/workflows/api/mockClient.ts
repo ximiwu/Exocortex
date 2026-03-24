@@ -48,6 +48,7 @@ interface MockContentListEntry {
   text_level?: number;
   list_items?: string[];
   img_path?: string;
+  image_explaination?: string;
   image_caption?: string[];
   image_footnote?: string[];
   table_caption?: string[];
@@ -256,6 +257,7 @@ class MockExocortexClient implements ExocortexApi {
       items: asset.contentListEntries
         .filter((entry) => entry.page_idx === pageIndex + 1)
         .map((entry) => ({
+          itemIndex: asset.contentListEntries.indexOf(entry) + 1,
           pageIndex,
           fractionRect: {
             x: entry.x,
@@ -280,6 +282,7 @@ class MockExocortexClient implements ExocortexApi {
       fractionRect: input.fractionRect,
       groupIdx: null,
     });
+    asset.state.mergeOrder = [...asset.state.mergeOrder.filter((candidate) => candidate !== blockId), blockId];
     asset.state.nextBlockId += 1;
     this.syncAssetSummary(asset);
     return deepClone(asset.state);
@@ -314,6 +317,18 @@ class MockExocortexClient implements ExocortexApi {
     return deepClone(asset.state);
   }
 
+  async updateDisabledContentItems(assetName: string, disabledContentItemIndexes: number[]): Promise<AssetState> {
+    const asset = this.requireAsset(assetName);
+    asset.state.disabledContentItemIndexes = Array.from(
+      new Set(
+        disabledContentItemIndexes
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value > 0),
+      ),
+    ).sort((left, right) => left - right);
+    return deepClone(asset.state);
+  }
+
   async updateBlockSelection(assetName: string, mergeOrder: number[]): Promise<AssetState> {
     const asset = this.requireAsset(assetName);
     asset.state.mergeOrder = Array.from(new Set(mergeOrder));
@@ -323,8 +338,11 @@ class MockExocortexClient implements ExocortexApi {
   async previewMergeMarkdown(assetName: string, blockIds: number[]): Promise<PreviewMergeMarkdownResponse> {
     const asset = this.requireAsset(assetName);
     const selectedBlocks = resolvePreviewBlocks(asset, blockIds);
+    const disabledContentItemIndexes = new Set(asset.state.disabledContentItemIndexes);
+    const warnings: string[] = [];
     const markdown = asset.contentListEntries
-      .filter((entry) =>
+      .flatMap((entry, index) =>
+        !disabledContentItemIndexes.has(index + 1) &&
         selectedBlocks.some(
           (block) =>
             block.pageIndex + 1 === entry.page_idx &&
@@ -334,13 +352,15 @@ class MockExocortexClient implements ExocortexApi {
               width: entry.width,
               height: entry.height,
             }),
-        ),
+        )
+          ? [{ entry, itemIndex: index + 1 }]
+          : [],
       )
-      .map((entry) => renderContentListEntry(entry))
+      .map(({ entry, itemIndex }) => renderContentListEntry(entry, itemIndex, warnings))
       .filter((fragment) => fragment.trim().length > 0)
       .join("\n\n");
 
-    return { markdown };
+    return { markdown, warning: warnings.length ? Array.from(new Set(warnings)).join("\n") : null };
   }
 
   async mergeGroup(
@@ -940,6 +960,7 @@ function createAssetRecord(assetName: string, pageCount: number): MockAssetRecor
       }
     ],
     mergeOrder: [1, 2],
+    disabledContentItemIndexes: [],
     nextBlockId: 3,
     groups: [
       { groupIdx: 1, blockIds: [1] },
@@ -993,6 +1014,7 @@ function createAssetRecord(assetName: string, pageCount: number): MockAssetRecor
       page_idx: 1,
       type: "image",
       img_path: "images/mock-figure.png",
+      image_explaination: "Mock figure explanation.",
       image_caption: ["Figure 1"],
       image_footnote: ["Mock source"],
       x: 0.2,
@@ -1243,7 +1265,7 @@ function rectFullyContainsRect(container: Rect, candidate: Rect, epsilon = 1e-6)
   );
 }
 
-function renderContentListEntry(entry: MockContentListEntry): string {
+function renderContentListEntry(entry: MockContentListEntry, itemIndex?: number, warnings?: string[]): string {
   const entryType = normalizeEntryType(entry.type);
   const textFormat = normalizeEntryType(entry.text_format);
 
@@ -1251,7 +1273,13 @@ function renderContentListEntry(entry: MockContentListEntry): string {
     return joinNonEmpty(entry.list_items ?? [], "  \n");
   }
   if (entryType === "image") {
-    const body = entry.img_path ? `![](${entry.img_path})` : "";
+    let body = (entry.image_explaination ?? "").trim();
+    if (!body) {
+      body = entry.img_path ? `![](${entry.img_path})` : "";
+      warnings?.push(
+        `Image item${itemIndex != null ? ` ${itemIndex}` : ""} is missing image_explaination. The markdown preview fell back to img_path.`,
+      );
+    }
     const captions = joinNonEmpty(entry.image_caption ?? [], "  \n");
     const footnotes = joinNonEmpty(entry.image_footnote ?? [], "  \n");
     return footnotes ? joinNonEmpty([captions, body, footnotes], "  \n") : joinNonEmpty([body, captions], "  \n");

@@ -73,6 +73,7 @@ export interface CreateBlockInput {
 }
 
 export interface PdfTextBox {
+  itemIndex: number;
   pageIndex: number;
   fractionRect: Rect;
 }
@@ -89,6 +90,7 @@ export interface MergeGroupInput {
 
 export interface PreviewMergeMarkdownResponse {
   markdown: string;
+  warning?: string | null;
 }
 
 export type GroupTaskInput = GroupWorkflowRequest;

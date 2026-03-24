@@ -87,5 +87,7 @@ describe("mock workflow client task artifacts", () => {
     expect(preview.markdown).toContain("## Mock heading");
     expect(preview.markdown).toContain("Mock paragraph for auto merge preview.");
     expect(preview.markdown).toContain("Figure 1");
+    expect(preview.markdown).toContain("Mock figure explanation.");
+    expect(preview.warning ?? null).toBeNull();
   });
 });

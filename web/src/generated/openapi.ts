@@ -72,6 +72,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/assets/{asset_name}/content-list/disabled-items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Disabled Content Items */
+        put: operations["update_disabled_content_items_api_assets__asset_name__content_list_disabled_items_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/assets/{asset_name}/groups/merge": {
         parameters: {
             query?: never;
@@ -719,6 +736,8 @@ export interface components {
             blocks?: components["schemas"]["BlockModel"][];
             /** Mergeorder */
             mergeOrder?: number[];
+            /** Disabledcontentitemindexes */
+            disabledContentItemIndexes?: number[];
             /**
              * Nextblockid
              * @default 1
@@ -927,6 +946,8 @@ export interface components {
         };
         /** PdfTextBoxModel */
         PdfTextBoxModel: {
+            /** Itemindex */
+            itemIndex: number;
             /** Pageindex */
             pageIndex: number;
             fractionRect: components["schemas"]["RectModel"];
@@ -943,6 +964,8 @@ export interface components {
              * @default
              */
             markdown: string;
+            /** Warning */
+            warning?: string | null;
         };
         /** ReTutorWorkflowRequest */
         ReTutorWorkflowRequest: {
@@ -1142,6 +1165,11 @@ export interface components {
             /** Tutorwithglobalcontext */
             tutorWithGlobalContext?: boolean | null;
         };
+        /** UpdateDisabledContentItemsRequest */
+        UpdateDisabledContentItemsRequest: {
+            /** Disabledcontentitemindexes */
+            disabledContentItemIndexes?: number[];
+        };
         /** UpdateMarkdownNodeAliasRequest */
         UpdateMarkdownNodeAliasRequest: {
             /** Nodeid */
@@ -1304,6 +1332,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["UpdateSelectionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetStateModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_disabled_content_items_api_assets__asset_name__content_list_disabled_items_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asset_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateDisabledContentItemsRequest"];
             };
         };
         responses: {

@@ -50,6 +50,7 @@ export interface ExocortexClient {
   createBlock(assetName: string, input: { pageIndex: number; fractionRect: Rect }): Promise<AssetState>;
   deleteBlock(assetName: string, blockId: number): Promise<AssetState>;
   deleteGroup(assetName: string, groupIdx: number): Promise<AssetState>;
+  updateDisabledContentItems(assetName: string, disabledContentItemIndexes: number[]): Promise<AssetState>;
   updateBlockSelection(assetName: string, mergeOrder: number[]): Promise<AssetState>;
   previewMergeMarkdown(assetName: string, blockIds: number[]): Promise<PreviewMergeMarkdownResponse>;
   mergeGroup(
@@ -250,6 +251,18 @@ class HttpExocortexClient implements ExocortexClient {
   deleteGroup(assetName: string, groupIdx: number): Promise<AssetState> {
     return this.requestJson(`/assets/${encodeURIComponent(assetName)}/groups/${groupIdx}`, {
       method: "DELETE",
+    });
+  }
+
+  updateDisabledContentItems(assetName: string, disabledContentItemIndexes: number[]): Promise<AssetState> {
+    return this.requestJson(`/assets/${encodeURIComponent(assetName)}/content-list/disabled-items`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        disabledContentItemIndexes,
+      }),
     });
   }
 

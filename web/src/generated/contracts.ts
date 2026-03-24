@@ -51,6 +51,7 @@ export type MarkdownContentPayload = components["schemas"]["MarkdownContentModel
 export type TutorSession = components["schemas"]["TutorSessionModel"];
 export type CreateBlockRequest = components["schemas"]["CreateBlockRequest"];
 export type MergeGroupRequest = components["schemas"]["MergeGroupRequest"];
+export type UpdateDisabledContentItemsRequest = components["schemas"]["UpdateDisabledContentItemsRequest"];
 export type UpdateUiStateRequest = components["schemas"]["UpdateUiStateRequest"];
 export type CreateTutorRequest = components["schemas"]["CreateTutorRequest"];
 export type UpdateMarkdownNodeAliasRequest = components["schemas"]["UpdateMarkdownNodeAliasRequest"];
@@ -154,6 +155,7 @@ export interface AssetState
   references: string[];
   blocks: AssetBlock[];
   mergeOrder: number[];
+  disabledContentItemIndexes: number[];
   groups: AssetGroup[];
   uiState: AssetUiState;
 }

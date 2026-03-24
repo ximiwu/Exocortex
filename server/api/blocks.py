@@ -8,6 +8,7 @@ from server.schemas import (
     MergeGroupRequest,
     PreviewMergeMarkdownRequest,
     PreviewMergeMarkdownResponse,
+    UpdateDisabledContentItemsRequest,
     UpdateSelectionRequest,
     UpdateUiStateRequest,
 )
@@ -31,6 +32,14 @@ def delete_block(asset_name: str, block_id: int) -> AssetStateModel:
 @router.post("/assets/{asset_name:path}/blocks/selection", response_model=AssetStateModel)
 def update_selection(asset_name: str, request: UpdateSelectionRequest) -> AssetStateModel:
     return asset_service.update_selection(asset_name, request.mergeOrder)
+
+
+@router.put("/assets/{asset_name:path}/content-list/disabled-items", response_model=AssetStateModel)
+def update_disabled_content_items(
+    asset_name: str,
+    request: UpdateDisabledContentItemsRequest,
+) -> AssetStateModel:
+    return asset_service.update_disabled_content_items(asset_name, request.disabledContentItemIndexes)
 
 
 @router.post("/assets/{asset_name:path}/groups/merge", response_model=AssetStateModel)

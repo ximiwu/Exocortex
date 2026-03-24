@@ -243,10 +243,35 @@
 
 .pdf-page__textBox {
   position: absolute;
-  pointer-events: none;
+  z-index: 3;
+  padding: 0;
   border-radius: 4px;
   border: 1px solid rgba(217, 145, 43, 0.92);
   background: rgba(217, 145, 43, 0.12);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    opacity 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.pdf-page__textBox:hover,
+.pdf-page__textBox:focus-visible {
+  background: rgba(217, 145, 43, 0.18);
+  box-shadow: 0 0 0 2px rgba(217, 145, 43, 0.18);
+  outline: none;
+}
+
+.pdf-page__textBox--disabled {
+  border-color: rgba(111, 117, 125, 0.86);
+  background: rgba(111, 117, 125, 0.16);
+}
+
+.pdf-page__textBox--disabled:hover,
+.pdf-page__textBox--disabled:focus-visible {
+  background: rgba(111, 117, 125, 0.22);
+  box-shadow: 0 0 0 2px rgba(111, 117, 125, 0.14);
 }
 
 .pdf-page__mergeActions {
@@ -313,15 +338,20 @@
   background: var(--pdf-block-background);
   box-sizing: border-box;
   padding: 0;
-  cursor: pointer;
+  cursor: default;
   transition:
     transform 120ms ease,
     box-shadow 120ms ease,
-    background 120ms ease;
+    background 120ms ease,
+    opacity 120ms ease;
 }
 
-.pdf-block:hover,
-.pdf-block:focus-visible {
+.pdf-block--grouped {
+  cursor: pointer;
+}
+
+.pdf-block--grouped:hover,
+.pdf-block--grouped:focus-visible {
   transform: translateY(-1px);
   box-shadow: var(--pdf-block-shadow);
   outline: none;

@@ -123,6 +123,9 @@ function createApi(): ExocortexApi {
       deleteGroup: vi.fn(async () => {
         throw new Error("not implemented");
       }),
+      updateDisabledContentItems: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
       updateSelection: vi.fn(async () => {
         throw new Error("not implemented");
       }),
@@ -185,6 +188,8 @@ describe("TaskCenterProvider", () => {
     });
 
     expect(screen.getByTestId("statuses").textContent).toContain("task-1:queued");
+    expect(screen.getByText("Started.")).toBeInTheDocument();
+    expect(screen.getAllByText("Started.")).toHaveLength(1);
 
     expect(api.tasks.get).toHaveBeenCalledTimes(1);
 
@@ -194,5 +199,6 @@ describe("TaskCenterProvider", () => {
 
     expect(screen.getByTestId("statuses").textContent).toContain("task-1:completed");
     expect(screen.getByText("done")).toBeInTheDocument();
+    expect(screen.getAllByText("Started.")).toHaveLength(1);
   });
 });

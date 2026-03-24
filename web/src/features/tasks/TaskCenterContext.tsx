@@ -71,6 +71,7 @@ export function TaskCenterProvider({
       }));
     });
     setSelectedTaskId((current) => current ?? task.id);
+    pushStartToastIfNeeded(task.id, task.kind, seenNotifications.current, pushToast);
     void refreshTask(task.id);
   });
 
@@ -135,6 +136,10 @@ export function TaskCenterProvider({
     }
 
     void refreshTask(event.taskId);
+
+    if (isStartTaskEvent(event)) {
+      pushStartToastIfNeeded(event.taskId, event.kind, seenNotifications.current, pushToast);
+    }
 
     if (event.eventType === "completed" || event.eventType === "failed") {
       const key = notificationKey(event);
@@ -311,7 +316,18 @@ function isTerminalTaskEvent(event: TaskEvent): boolean {
   return event.eventType === "completed" || event.eventType === "failed";
 }
 
+function isStartTaskEvent(event: TaskEvent): boolean {
+  return event.eventType === "queued" || event.eventType === "started";
+}
+
+function startNotificationKey(taskId: string): string {
+  return `${taskId}:started`;
+}
+
 function markTaskNotificationsSeen(task: TaskDetail, seenNotifications: Set<string>): void {
+  if (task.status === "queued" || task.status === "running") {
+    seenNotifications.add(startNotificationKey(task.id));
+  }
   for (const event of task.events) {
     if (!isTerminalTaskEvent(event)) {
       continue;
@@ -344,4 +360,22 @@ function notifyNewTerminalEvents(
       tone: event.eventType === "completed" ? "success" : "danger",
     });
   }
+}
+
+function pushStartToastIfNeeded(
+  taskId: string,
+  kind: string,
+  seenNotifications: Set<string>,
+  pushToast: ReturnType<typeof useToasts>["pushToast"],
+): void {
+  const key = startNotificationKey(taskId);
+  if (seenNotifications.has(key)) {
+    return;
+  }
+  seenNotifications.add(key);
+  pushToast({
+    title: humanizeTaskTitle(kind),
+    description: "Started.",
+    tone: "neutral",
+  });
 }

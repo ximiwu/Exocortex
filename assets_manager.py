@@ -64,6 +64,23 @@ from agent_manager import (
 
 logger = logging.getLogger(__name__)
 
+_UNIFIED_TEXT_LIKE_ENTRY_TYPES = {
+    "text",
+    "title",
+}
+_UNIFIED_SUPPORTED_ENTRY_TYPES = (
+    _UNIFIED_TEXT_LIKE_ENTRY_TYPES
+    | {
+        "list",
+        "image",
+        "table",
+        "code",
+        "algorithm",
+        "equation",
+        "interline_equation",
+    }
+)
+
 if TYPE_CHECKING:
     from PIL import Image
 
@@ -586,14 +603,27 @@ def _require_content_list_number(value: object, *, field_name: str, item_index: 
         raise ValueError(f"content list item {item_index} has an invalid {field_name} value.") from exc
 
 
+def _normalize_content_list_type(value: object) -> str:
+    return str(value).strip().lower() if isinstance(value, str) else ""
+
+
+def _is_supported_unified_content_list_entry(entry: dict[str, object]) -> bool:
+    entry_type = _normalize_content_list_type(entry.get("type"))
+    sub_type = _normalize_content_list_type(entry.get("sub_type"))
+    return entry_type in _UNIFIED_SUPPORTED_ENTRY_TYPES or sub_type in {"code", "algorithm"}
+
+
 def _normalize_content_list_entry(
     entry: object,
     *,
     item_index: int,
     page_count: int,
-) -> dict[str, object]:
+) -> dict[str, object] | None:
     if not isinstance(entry, dict):
         raise ValueError(f"content list item {item_index} must be an object.")
+    if not _is_supported_unified_content_list_entry(entry):
+        logger.info("Skipping unsupported content list item %s with type=%r.", item_index, entry.get("type"))
+        return None
 
     try:
         page_index = int(entry["page_idx"])
@@ -646,6 +676,7 @@ def write_unified_content_list(
         _normalize_content_list_entry(entry, item_index=item_index, page_count=page_count)
         for item_index, entry in enumerate(_parse_content_list_items(payload), start=1)
     ]
+    normalized_items = [entry for entry in normalized_items if entry is not None]
     serialized = json.dumps(normalized_items, ensure_ascii=False, indent=2)
     atomic_write_text(resolved_target_path, serialized)
     return len(normalized_items)

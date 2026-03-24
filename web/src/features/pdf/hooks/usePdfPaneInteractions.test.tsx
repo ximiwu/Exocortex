@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PdfNavigationRequest } from "../../../app/store/appStore.types";
@@ -14,6 +14,7 @@ const ASSET_STATE: PdfAssetState = {
   references: [],
   blocks: [],
   mergeOrder: [],
+  disabledContentItemIndexes: [],
   nextBlockId: 1,
   groups: [],
   uiState: {
@@ -210,5 +211,63 @@ describe("usePdfPaneInteractions external navigation", () => {
       top: 456,
       left: 0,
     });
+  });
+});
+
+interface DoubleClickHarnessProps {
+  appMode: "normal" | "compress";
+  onCreateBlock: (pageIndex: number, rect: { x: number; y: number; width: number; height: number }) => void;
+}
+
+function PdfDoubleClickHarness({ appMode, onCreateBlock }: DoubleClickHarnessProps) {
+  const interactions = usePdfPaneInteractions({
+    assetName: "asset-a",
+    assetState: ASSET_STATE,
+    metadata: METADATA,
+    appMode,
+    initialCompressSelection: null,
+    onCreateBlock,
+  });
+
+  return (
+    <button
+      onClick={() => {
+        interactions.handleSurfaceDoubleClick(4);
+      }}
+      type="button"
+    >
+      Double click page
+    </button>
+  );
+}
+
+describe("usePdfPaneInteractions full-page block creation", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("creates a full-page block in normal mode", () => {
+    const onCreateBlock = vi.fn();
+
+    render(<PdfDoubleClickHarness appMode="normal" onCreateBlock={onCreateBlock} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Double click page" }));
+
+    expect(onCreateBlock).toHaveBeenCalledWith(4, {
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+    });
+  });
+
+  it("ignores page-surface double-clicks in compress mode", () => {
+    const onCreateBlock = vi.fn();
+
+    render(<PdfDoubleClickHarness appMode="compress" onCreateBlock={onCreateBlock} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Double click page" }));
+
+    expect(onCreateBlock).not.toHaveBeenCalled();
   });
 });

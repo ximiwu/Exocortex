@@ -181,6 +181,58 @@
         }
       }
     },
+    "/api/assets/{asset_name}/content-list/disabled-items": {
+      "put": {
+        "tags": [
+          "blocks"
+        ],
+        "summary": "Update Disabled Content Items",
+        "operationId": "update_disabled_content_items_api_assets__asset_name__content_list_disabled_items_put",
+        "parameters": [
+          {
+            "name": "asset_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateDisabledContentItemsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetStateModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/assets/{asset_name}/groups/merge": {
       "post": {
         "tags": [
@@ -1862,6 +1914,13 @@
             "type": "array",
             "title": "Mergeorder"
           },
+          "disabledContentItemIndexes": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Disabledcontentitemindexes"
+          },
           "nextBlockId": {
             "type": "integer",
             "title": "Nextblockid",
@@ -2423,6 +2482,10 @@
       },
       "PdfTextBoxModel": {
         "properties": {
+          "itemIndex": {
+            "type": "integer",
+            "title": "Itemindex"
+          },
           "pageIndex": {
             "type": "integer",
             "title": "Pageindex"
@@ -2433,6 +2496,7 @@
         },
         "type": "object",
         "required": [
+          "itemIndex",
           "pageIndex",
           "fractionRect"
         ],
@@ -2457,6 +2521,17 @@
             "type": "string",
             "title": "Markdown",
             "default": ""
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning"
           }
         },
         "type": "object",
@@ -3119,6 +3194,19 @@
         },
         "type": "object",
         "title": "UpdateAppConfigRequest"
+      },
+      "UpdateDisabledContentItemsRequest": {
+        "properties": {
+          "disabledContentItemIndexes": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Disabledcontentitemindexes"
+          }
+        },
+        "type": "object",
+        "title": "UpdateDisabledContentItemsRequest"
       },
       "UpdateMarkdownNodeAliasRequest": {
         "properties": {

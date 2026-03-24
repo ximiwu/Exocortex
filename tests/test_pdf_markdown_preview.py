@@ -24,7 +24,11 @@ def _write_content_list_unified(asset_dir: Path, payload: object) -> Path:
     return target
 
 
-def _build_asset_state(blocks: list[dict[str, object]]) -> AssetStateModel:
+def _build_asset_state(
+    blocks: list[dict[str, object]],
+    *,
+    disabled_content_item_indexes: list[int] | None = None,
+) -> AssetStateModel:
     return AssetStateModel.model_validate(
         {
             "asset": {
@@ -35,6 +39,7 @@ def _build_asset_state(blocks: list[dict[str, object]]) -> AssetStateModel:
             "references": [],
             "blocks": blocks,
             "mergeOrder": [],
+            "disabledContentItemIndexes": disabled_content_item_indexes or [],
             "nextBlockId": 3,
             "groups": [],
             "uiState": {
@@ -93,7 +98,7 @@ def test_preview_merge_markdown_renders_contained_items_in_original_order(
             {
                 "page_idx": 1,
                 "type": "image",
-                "img_path": "images/chart.png",
+                "image_explaination": "Figure 1 explanation",
                 "image_caption": ["Figure 1"],
                 "image_footnote": ["Caption note"],
                 "x": 0.16,
@@ -184,7 +189,7 @@ def test_preview_merge_markdown_renders_contained_items_in_original_order(
         "alpha  \n"
         "beta\n\n"
         "Figure 1  \n"
-        "![](images/chart.png)  \n"
+        "Figure 1 explanation  \n"
         "Caption note\n\n"
         "Table 1\n"
         "<table><tr><td>A</td></tr></table>\n"
@@ -197,6 +202,59 @@ def test_preview_merge_markdown_renders_contained_items_in_original_order(
         "a=b\n"
         "$$"
     )
+    assert result.warning is None
+
+
+def test_preview_merge_markdown_warns_and_falls_back_when_image_explaination_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_dir = tmp_path / "asset-image-fallback"
+    _write_content_list_unified(
+        asset_dir,
+        [
+            {
+                "page_idx": 1,
+                "type": "image",
+                "img_path": "images/chart.png",
+                "image_caption": ["Figure 1"],
+                "image_footnote": ["Caption note"],
+                "x": 0.16,
+                "y": 0.46,
+                "width": 0.2,
+                "height": 0.08,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "build_asset_state",
+        lambda _asset_name: _build_asset_state(
+            [
+                {
+                    "blockId": 1,
+                    "pageIndex": 0,
+                    "fractionRect": {"x": 0.05, "y": 0.05, "width": 0.45, "height": 0.55},
+                    "groupIdx": None,
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "resolve_asset_dir",
+        lambda _asset_name, *, must_exist=True: asset_dir,
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "ensure_content_list_unified",
+        lambda _asset_name: asset_dir / "content_list_unified.json",
+    )
+
+    result = pdf_service.preview_merge_markdown("asset-image-fallback", [1])
+
+    assert result.markdown == "Figure 1  \n![](images/chart.png)  \nCaption note"
+    assert result.warning == "Image item 1 is missing image_explaination. The markdown preview fell back to img_path."
 
 
 def test_preview_merge_markdown_returns_empty_when_nothing_is_contained(
@@ -246,6 +304,75 @@ def test_preview_merge_markdown_returns_empty_when_nothing_is_contained(
     result = pdf_service.preview_merge_markdown("asset-empty", [1])
 
     assert result.markdown == ""
+
+
+def test_preview_merge_markdown_skips_disabled_content_items(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_dir = tmp_path / "asset-disabled"
+    _write_content_list_unified(
+        asset_dir,
+        [
+            {
+                "page_idx": 1,
+                "type": "text",
+                "text": "Heading",
+                "text_level": 2,
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.2,
+                "height": 0.08,
+            },
+            {
+                "page_idx": 1,
+                "type": "text",
+                "text": "Body paragraph",
+                "x": 0.12,
+                "y": 0.22,
+                "width": 0.3,
+                "height": 0.08,
+            },
+            {
+                "page_idx": 1,
+                "type": "list",
+                "list_items": ["alpha", "beta"],
+                "x": 0.14,
+                "y": 0.34,
+                "width": 0.3,
+                "height": 0.1,
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "build_asset_state",
+        lambda _asset_name: _build_asset_state(
+            [
+                {
+                    "blockId": 1,
+                    "pageIndex": 0,
+                    "fractionRect": {"x": 0.05, "y": 0.05, "width": 0.45, "height": 0.45},
+                    "groupIdx": None,
+                }
+            ],
+            disabled_content_item_indexes=[2],
+        ),
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "resolve_asset_dir",
+        lambda _asset_name, *, must_exist=True: asset_dir,
+    )
+    monkeypatch.setattr(
+        pdf_service,
+        "ensure_content_list_unified",
+        lambda _asset_name: asset_dir / "content_list_unified.json",
+    )
+
+    result = pdf_service.preview_merge_markdown("asset-disabled", [1])
+
+    assert result.markdown == "## Heading\n\nalpha  \nbeta"
 
 
 def test_preview_merge_markdown_rejects_grouped_blocks(

@@ -45,6 +45,7 @@ interface PdfPaneViewportProps {
   isRightPanning: boolean;
   blocksByPage: Map<number, PdfBlockRecord[]>;
   textBoxesByPage: Map<number, PdfTextBox[]>;
+  disabledContentItemIndexes: number[];
   selectionOrderByBlock: Map<number, number>;
   mergeSelectionAction: PdfMergeSelectionAction | null;
   compressSelection: NormalizedPageRect | null;
@@ -62,7 +63,9 @@ interface PdfPaneViewportProps {
   onBlockDelete: (block: PdfBlockRecord) => void;
   onBlockHoverEnter: (block: PdfBlockRecord) => void;
   onBlockHoverLeave: (block: PdfBlockRecord) => void;
+  onTextBoxToggle: (itemIndex: number) => void;
   onMergeSelection: () => void;
+  onSurfaceDoubleClick?: (pageIndex: number) => void;
 }
 
 export function PdfPaneViewport({
@@ -81,6 +84,7 @@ export function PdfPaneViewport({
   isRightPanning,
   blocksByPage,
   textBoxesByPage,
+  disabledContentItemIndexes,
   selectionOrderByBlock,
   mergeSelectionAction,
   compressSelection,
@@ -98,7 +102,9 @@ export function PdfPaneViewport({
   onBlockDelete,
   onBlockHoverEnter,
   onBlockHoverLeave,
+  onTextBoxToggle,
   onMergeSelection,
+  onSurfaceDoubleClick,
 }: PdfPaneViewportProps) {
   useEffect(() => {
     if (!pdfDocument) {
@@ -235,6 +241,7 @@ export function PdfPaneViewport({
               textBoxes={textBoxesByPage.get(pageIndex) ?? []}
               busy={busy}
               compressSelection={compressSelection}
+              disabledContentItemIndexes={disabledContentItemIndexes}
               dragPreviewActive={dragSelection.activePageIndex === pageIndex}
               dragPreviewRect={
                 dragSelection.activePageIndex === pageIndex
@@ -253,6 +260,7 @@ export function PdfPaneViewport({
               onBlockHoverEnter={onBlockHoverEnter}
               onBlockHoverLeave={onBlockHoverLeave}
               onMergeSelection={onMergeSelection}
+              onTextBoxToggle={onTextBoxToggle}
               onSurfacePointerCancel={() => {
                 dragSelection.cancelDrag();
               }}
@@ -265,6 +273,7 @@ export function PdfPaneViewport({
               onSurfacePointerUp={(event) => {
                 dragSelection.endDrag(event);
               }}
+              onSurfaceDoubleClick={onSurfaceDoubleClick}
               pageLayout={layout}
               selectionOrderByBlock={selectionOrderByBlock}
               pdfDocument={pdfDocument}

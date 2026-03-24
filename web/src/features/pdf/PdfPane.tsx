@@ -43,7 +43,8 @@ export interface PdfPaneProps {
   onCreateBlock?: (pageIndex: number, rect: PdfRect) => Promise<unknown> | void;
   onDeleteBlock?: (block: PdfBlockRecord) => Promise<unknown> | void;
   onDeleteGroup?: (groupIdx: number) => Promise<unknown> | void;
-  onPreviewMergeMarkdown?: (blockIds: number[]) => Promise<{ markdown: string }> | { markdown: string };
+  onDisabledContentItemsChange?: (disabledContentItemIndexes: number[]) => Promise<unknown> | void;
+  onPreviewMergeMarkdown?: (blockIds: number[]) => Promise<{ markdown: string; warning?: string | null }> | { markdown: string; warning?: string | null };
   onMergeSelection?: (
     blockIds: number[],
     options?: {
@@ -51,7 +52,6 @@ export interface PdfPaneProps {
       groupIdx?: number | null;
     },
   ) => Promise<unknown> | void;
-  onSelectionChange?: (mergeOrder: number[]) => Promise<unknown> | void;
   onGroupedBlockActivate?: (groupIdx: number, block: PdfBlockRecord) => void;
   onHoverChange?: (hover: HoverState) => void;
   onCompressSelectionChange?: (selection: NormalizedPageRect | null) => void;
@@ -76,9 +76,9 @@ export function PdfPane({
   onCreateBlock,
   onDeleteBlock,
   onDeleteGroup,
+  onDisabledContentItemsChange,
   onPreviewMergeMarkdown,
   onMergeSelection,
-  onSelectionChange,
   onGroupedBlockActivate,
   onHoverChange,
   onCompressSelectionChange,
@@ -102,7 +102,6 @@ export function PdfPane({
     onCreateBlock,
     onDeleteBlock,
     onDeleteGroup,
-    onSelectionChange,
     onGroupedBlockActivate,
     onHoverChange,
     onCompressSelectionChange,
@@ -165,6 +164,9 @@ export function PdfPane({
 
         setMarkdownMergeInput(response.markdown);
         setMarkdownPrefillPending(false);
+        if (response.warning) {
+          window.alert(response.warning);
+        }
       })
       .catch((reason: unknown) => {
         if (markdownPreviewRequestIdRef.current !== requestId) {
@@ -188,6 +190,21 @@ export function PdfPane({
     setMarkdownPrefillError(null);
     setMarkdownMergeDialogOpen(false);
     setMarkdownMergeInput("");
+  }
+
+  function handleTextBoxToggle(itemIndex: number): void {
+    if (!assetState || !onDisabledContentItemsChange) {
+      return;
+    }
+
+    const disabledContentItemIndexes = new Set(assetState.disabledContentItemIndexes);
+    if (disabledContentItemIndexes.has(itemIndex)) {
+      disabledContentItemIndexes.delete(itemIndex);
+    } else {
+      disabledContentItemIndexes.add(itemIndex);
+    }
+
+    void onDisabledContentItemsChange(Array.from(disabledContentItemIndexes).sort((left, right) => left - right));
   }
 
   const dialogBusy = busy || markdownPrefillPending;
@@ -241,13 +258,16 @@ export function PdfPane({
           onBlockHoverEnter={interactions.handleBlockHoverEnter}
           onBlockHoverLeave={interactions.handleBlockHoverLeave}
           onCancelPan={interactions.cancelPan}
+          onTextBoxToggle={handleTextBoxToggle}
           onEndPan={interactions.endPan}
           onMergeSelection={handleMergeOpen}
+          onSurfaceDoubleClick={interactions.handleSurfaceDoubleClick}
           onScroll={interactions.handleScroll}
           onUpdatePan={interactions.updatePan}
           pageSizes={interactions.pageSizes}
           preheatPageIndexes={interactions.preheatPageIndexes}
           mergeSelectionBusy={dialogBusy}
+          disabledContentItemIndexes={assetState?.disabledContentItemIndexes ?? []}
           selectionOrderByBlock={interactions.selectionOrderByBlock}
           suppressNextContextMenuRef={interactions.suppressNextContextMenuRef}
           textBoxesByPage={pageTextBoxes.textBoxesByPage}

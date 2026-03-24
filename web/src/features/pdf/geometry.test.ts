@@ -80,10 +80,12 @@ describe("text box containment", () => {
   it("ignores text boxes from other pages", () => {
     const textBoxes: PdfTextBox[] = [
       {
+        itemIndex: 1,
         pageIndex: 0,
         fractionRect: { x: 0.12, y: 0.25, width: 0.1, height: 0.05 },
       },
       {
+        itemIndex: 2,
         pageIndex: 1,
         fractionRect: { x: 0.12, y: 0.25, width: 0.1, height: 0.05 },
       },
@@ -101,6 +103,7 @@ describe("text box containment", () => {
     };
     const textBoxes: PdfTextBox[] = [
       {
+        itemIndex: 1,
         pageIndex: 0,
         fractionRect: { x: 0.15, y: 0.25, width: 0.1, height: 0.05 },
       },
@@ -118,6 +121,7 @@ describe("text box containment", () => {
     };
     const textBoxes: PdfTextBox[] = [
       {
+        itemIndex: 1,
         pageIndex: 0,
         fractionRect: { x: 0.15, y: 0.25, width: 0.1, height: 0.05 },
       },

@@ -59,6 +59,7 @@ describe("PdfPage", () => {
         textBoxes={[]}
         busy={false}
         compressSelection={null}
+        disabledContentItemIndexes={[]}
         dragPreviewActive={false}
         dragPreviewRect={null}
         hoveredBlockId={null}
@@ -70,6 +71,7 @@ describe("PdfPage", () => {
         onBlockHoverEnter={() => undefined}
         onBlockHoverLeave={() => undefined}
         onMergeSelection={() => undefined}
+        onTextBoxToggle={() => undefined}
         onSurfacePointerCancel={() => undefined}
         onSurfacePointerDown={() => undefined}
         onSurfacePointerMove={() => undefined}
@@ -130,6 +132,7 @@ describe("PdfPage", () => {
         textBoxes={[]}
         busy={false}
         compressSelection={null}
+        disabledContentItemIndexes={[]}
         dragPreviewActive={false}
         dragPreviewRect={null}
         hoveredBlockId={null}
@@ -141,6 +144,7 @@ describe("PdfPage", () => {
         onBlockHoverEnter={() => undefined}
         onBlockHoverLeave={() => undefined}
         onMergeSelection={() => undefined}
+        onTextBoxToggle={() => undefined}
         onSurfacePointerCancel={() => undefined}
         onSurfacePointerDown={() => undefined}
         onSurfacePointerMove={() => undefined}
@@ -172,6 +176,7 @@ describe("PdfPage", () => {
         textBoxes={[]}
         busy={false}
         compressSelection={null}
+        disabledContentItemIndexes={[]}
         dragPreviewActive={false}
         dragPreviewRect={null}
         hoveredBlockId={null}
@@ -183,6 +188,7 @@ describe("PdfPage", () => {
         onBlockHoverEnter={() => undefined}
         onBlockHoverLeave={() => undefined}
         onMergeSelection={() => undefined}
+        onTextBoxToggle={() => undefined}
         onSurfacePointerCancel={() => undefined}
         onSurfacePointerDown={() => undefined}
         onSurfacePointerMove={() => undefined}
@@ -208,7 +214,7 @@ describe("PdfPage", () => {
     expect(getPage).toHaveBeenCalledTimes(1);
   });
 
-  it("renders contained text box overlays below block buttons", () => {
+  it("renders contained text box toggle buttons for blocks", () => {
     const { container } = render(
       <PdfPage
         assetName="asset-a"
@@ -223,16 +229,19 @@ describe("PdfPage", () => {
         ]}
         textBoxes={[
           {
+            itemIndex: 1,
             pageIndex: 0,
             fractionRect: { x: 0.2, y: 0.2, width: 0.1, height: 0.1 },
           },
           {
+            itemIndex: 2,
             pageIndex: 0,
             fractionRect: { x: 0.7, y: 0.7, width: 0.1, height: 0.1 },
           },
         ]}
         busy={false}
         compressSelection={null}
+        disabledContentItemIndexes={[]}
         dragPreviewActive={false}
         dragPreviewRect={null}
         hoveredBlockId={null}
@@ -244,6 +253,7 @@ describe("PdfPage", () => {
         onBlockHoverEnter={() => undefined}
         onBlockHoverLeave={() => undefined}
         onMergeSelection={() => undefined}
+        onTextBoxToggle={() => undefined}
         onSurfacePointerCancel={() => undefined}
         onSurfacePointerDown={() => undefined}
         onSurfacePointerMove={() => undefined}
@@ -267,6 +277,112 @@ describe("PdfPage", () => {
     expect(container.querySelectorAll(".pdf-block")).toHaveLength(1);
   });
 
+  it("creates a full-page block when the page surface is double-clicked", () => {
+    const onSurfaceDoubleClick = vi.fn();
+    const { container } = render(
+      <PdfPage
+        assetName="asset-a"
+        appMode="normal"
+        blocks={[]}
+        textBoxes={[]}
+        busy={false}
+        compressSelection={null}
+        disabledContentItemIndexes={[]}
+        dragPreviewActive={false}
+        dragPreviewRect={null}
+        hoveredBlockId={null}
+        hoveredGroupIdx={null}
+        mergeSelectionAction={null}
+        mergeSelectionBusy={false}
+        onBlockClick={() => undefined}
+        onBlockDelete={() => undefined}
+        onBlockHoverEnter={() => undefined}
+        onBlockHoverLeave={() => undefined}
+        onMergeSelection={() => undefined}
+        onSurfaceDoubleClick={onSurfaceDoubleClick}
+        onTextBoxToggle={() => undefined}
+        onSurfacePointerCancel={() => undefined}
+        onSurfacePointerDown={() => undefined}
+        onSurfacePointerMove={() => undefined}
+        onSurfacePointerUp={() => undefined}
+        pageLayout={{
+          pageIndex: 0,
+          top: 0,
+          left: 0,
+          width: 400,
+          height: 600,
+          bottom: 600,
+        }}
+        pdfDocument={null}
+        renderQuality="final"
+        selectionOrderByBlock={new Map()}
+        zoom={1}
+      />,
+    );
+
+    const surface = container.querySelector(".pdf-page__surface");
+    expect(surface).not.toBeNull();
+
+    fireEvent.doubleClick(surface!);
+
+    expect(onSurfaceDoubleClick).toHaveBeenCalledWith(0);
+  });
+
+  it("does not treat block double-clicks as page-surface double-clicks", () => {
+    const onSurfaceDoubleClick = vi.fn();
+    const { getByRole } = render(
+      <PdfPage
+        assetName="asset-a"
+        appMode="normal"
+        blocks={[
+          {
+            blockId: 1,
+            pageIndex: 0,
+            fractionRect: { x: 0.1, y: 0.1, width: 0.5, height: 0.5 },
+            groupIdx: null,
+          },
+        ]}
+        textBoxes={[]}
+        busy={false}
+        compressSelection={null}
+        disabledContentItemIndexes={[]}
+        dragPreviewActive={false}
+        dragPreviewRect={null}
+        hoveredBlockId={null}
+        hoveredGroupIdx={null}
+        mergeSelectionAction={null}
+        mergeSelectionBusy={false}
+        onBlockClick={() => undefined}
+        onBlockDelete={() => undefined}
+        onBlockHoverEnter={() => undefined}
+        onBlockHoverLeave={() => undefined}
+        onMergeSelection={() => undefined}
+        onSurfaceDoubleClick={onSurfaceDoubleClick}
+        onTextBoxToggle={() => undefined}
+        onSurfacePointerCancel={() => undefined}
+        onSurfacePointerDown={() => undefined}
+        onSurfacePointerMove={() => undefined}
+        onSurfacePointerUp={() => undefined}
+        pageLayout={{
+          pageIndex: 0,
+          top: 0,
+          left: 0,
+          width: 400,
+          height: 600,
+          bottom: 600,
+        }}
+        pdfDocument={null}
+        renderQuality="final"
+        selectionOrderByBlock={new Map()}
+        zoom={1}
+      />,
+    );
+
+    fireEvent.doubleClick(getByRole("button", { name: "Block 1" }));
+
+    expect(onSurfaceDoubleClick).not.toHaveBeenCalled();
+  });
+
   it("only shows text box overlays after a block exists, not during drag preview alone", () => {
     const onBlockClick = vi.fn();
     const { getByRole, queryAllByTestId, rerender } = render(
@@ -276,12 +392,14 @@ describe("PdfPage", () => {
         blocks={[]}
         textBoxes={[
           {
+            itemIndex: 1,
             pageIndex: 0,
             fractionRect: { x: 0.2, y: 0.2, width: 0.1, height: 0.1 },
           },
         ]}
         busy={false}
         compressSelection={null}
+        disabledContentItemIndexes={[]}
         dragPreviewActive={true}
         dragPreviewRect={{ x: 40, y: 60, width: 120, height: 90 }}
         hoveredBlockId={null}
@@ -293,6 +411,7 @@ describe("PdfPage", () => {
         onBlockHoverEnter={() => undefined}
         onBlockHoverLeave={() => undefined}
         onMergeSelection={() => undefined}
+        onTextBoxToggle={() => undefined}
         onSurfacePointerCancel={() => undefined}
         onSurfacePointerDown={() => undefined}
         onSurfacePointerMove={() => undefined}
@@ -328,12 +447,14 @@ describe("PdfPage", () => {
         ]}
         textBoxes={[
           {
+            itemIndex: 1,
             pageIndex: 0,
             fractionRect: { x: 0.2, y: 0.2, width: 0.1, height: 0.1 },
           },
         ]}
         busy={false}
         compressSelection={null}
+        disabledContentItemIndexes={[]}
         dragPreviewActive={false}
         dragPreviewRect={null}
         hoveredBlockId={null}
@@ -345,6 +466,7 @@ describe("PdfPage", () => {
         onBlockHoverEnter={() => undefined}
         onBlockHoverLeave={() => undefined}
         onMergeSelection={() => undefined}
+        onTextBoxToggle={() => undefined}
         onSurfacePointerCancel={() => undefined}
         onSurfacePointerDown={() => undefined}
         onSurfacePointerMove={() => undefined}
@@ -369,6 +491,72 @@ describe("PdfPage", () => {
     expect(onBlockClick).toHaveBeenCalledTimes(1);
   });
 
+  it("toggles disabled text boxes without triggering block clicks", () => {
+    const onBlockClick = vi.fn();
+    const onTextBoxToggle = vi.fn();
+
+    const { getByRole } = render(
+      <PdfPage
+        assetName="asset-a"
+        appMode="normal"
+        blocks={[
+          {
+            blockId: 1,
+            pageIndex: 0,
+            fractionRect: { x: 0.1, y: 0.1, width: 0.5, height: 0.5 },
+            groupIdx: null,
+          },
+        ]}
+        textBoxes={[
+          {
+            itemIndex: 1,
+            pageIndex: 0,
+            fractionRect: { x: 0.2, y: 0.2, width: 0.1, height: 0.1 },
+          },
+        ]}
+        busy={false}
+        compressSelection={null}
+        disabledContentItemIndexes={[1]}
+        dragPreviewActive={false}
+        dragPreviewRect={null}
+        hoveredBlockId={null}
+        hoveredGroupIdx={null}
+        mergeSelectionAction={null}
+        mergeSelectionBusy={false}
+        onBlockClick={onBlockClick}
+        onBlockDelete={() => undefined}
+        onBlockHoverEnter={() => undefined}
+        onBlockHoverLeave={() => undefined}
+        onMergeSelection={() => undefined}
+        onTextBoxToggle={onTextBoxToggle}
+        onSurfacePointerCancel={() => undefined}
+        onSurfacePointerDown={() => undefined}
+        onSurfacePointerMove={() => undefined}
+        onSurfacePointerUp={() => undefined}
+        pageLayout={{
+          pageIndex: 0,
+          top: 0,
+          left: 0,
+          width: 400,
+          height: 600,
+          bottom: 600,
+        }}
+        pdfDocument={null}
+        renderQuality="final"
+        selectionOrderByBlock={new Map()}
+        zoom={1}
+      />,
+    );
+
+    const toggleButton = getByRole("button", { name: "Enable content item 1" });
+    expect(toggleButton.className).toContain("pdf-page__textBox--disabled");
+
+    fireEvent.click(toggleButton);
+
+    expect(onTextBoxToggle).toHaveBeenCalledWith(1);
+    expect(onBlockClick).not.toHaveBeenCalled();
+  });
+
   it("renders a merge button for an active selection", () => {
     const onMergeSelection = vi.fn();
 
@@ -380,6 +568,7 @@ describe("PdfPage", () => {
         textBoxes={[]}
         busy={false}
         compressSelection={null}
+        disabledContentItemIndexes={[]}
         dragPreviewActive={false}
         dragPreviewRect={null}
         hoveredBlockId={null}
@@ -395,6 +584,7 @@ describe("PdfPage", () => {
         onBlockHoverEnter={() => undefined}
         onBlockHoverLeave={() => undefined}
         onMergeSelection={onMergeSelection}
+        onTextBoxToggle={() => undefined}
         onSurfacePointerCancel={() => undefined}
         onSurfacePointerDown={() => undefined}
         onSurfacePointerMove={() => undefined}

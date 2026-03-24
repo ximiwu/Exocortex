@@ -43,6 +43,7 @@ function createApi(
       createBlock: vi.fn(),
       deleteBlock: vi.fn(),
       deleteGroup: vi.fn(),
+      updateDisabledContentItems: vi.fn(),
       updateSelection: vi.fn(),
       previewMergeMarkdown: vi.fn(async () => ({ markdown: "" })),
       mergeGroup: vi.fn(),
@@ -105,6 +106,7 @@ describe("usePdfPageTextBoxes", () => {
       pageIndex,
       items: [
         {
+          itemIndex: pageIndex + 1,
           pageIndex,
           fractionRect: {
             x: 0.1,
@@ -195,6 +197,7 @@ describe("usePdfPageTextBoxes", () => {
       pageIndex,
       items: [
         {
+          itemIndex: pageIndex + 1,
           pageIndex,
           fractionRect: { x: 0.1, y: 0.1, width: 0.2, height: 0.1 },
         },

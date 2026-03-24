@@ -27,6 +27,7 @@ describe("sidebar tree utils", () => {
         },
       ],
       mergeOrder: [],
+      disabledContentItemIndexes: [],
       nextBlockId: 10,
       groups: [
         {
