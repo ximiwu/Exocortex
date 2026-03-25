@@ -3,12 +3,14 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import re
 from pathlib import Path
 from typing import Iterable, Sequence
 
 import fitz
 
 from exocortex_core.contracts import COORDINATE_SPACE_PAGE_FRACTION
+from exocortex_core.fs import atomic_write_text
 from server.config import DEFAULT_RENDER_DPI
 from server.domain.assets import (
     BlockData,
@@ -44,6 +46,25 @@ from server.schemas import (
 
 
 ASSETS_ROOT = asset_root()
+
+
+def _extract_group_alias_from_markdown(markdown_content: str) -> str:
+    first_line, *_ = markdown_content.splitlines() or [markdown_content]
+    without_heading_prefix = re.sub(r"^[#＃]+", "", first_line)
+    if without_heading_prefix != first_line:
+        return re.sub(r"^\s+", "", without_heading_prefix)
+    return first_line
+
+
+def _write_group_alias_from_markdown(group_dir: Path, group_idx: int, markdown_content: str) -> str:
+    alias_path = group_dir / "group.alias"
+    fallback = f"Group {group_idx}"
+    alias = _extract_group_alias_from_markdown(markdown_content)
+    if not alias or alias == fallback:
+        alias_path.unlink(missing_ok=True)
+        return fallback
+    atomic_write_text(alias_path, alias, newline="\n")
+    return alias
 
 
 def _safe_rmtree(path: Path) -> None:
@@ -545,6 +566,7 @@ def merge_group(
         group_dir = resolve_asset_dir(normalized) / "group_data" / str(record.group_idx)
         group_dir.mkdir(parents=True, exist_ok=True)
         (group_dir / "content.md").write_text(markdown_content, encoding="utf-8", newline="\n")
+        _write_group_alias_from_markdown(group_dir, record.group_idx, markdown_content)
     return build_asset_state(normalized)
 
 

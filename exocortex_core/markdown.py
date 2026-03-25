@@ -9,6 +9,7 @@ from .text import read_text_auto, write_text_utf8
 _FENCE_PATTERN = re.compile(r"^\s*(`{3,}|~{3,})")
 _BLOCKQUOTE_PREFIX_PATTERN = re.compile(r"^(?:\s{0,3}>\s?)+")
 _LIST_START_PATTERN = re.compile(r"^(?:\s{0,3})(?:[*+-]\s+|\d+[.)]\s+)")
+_BACKTICK_LATEX_PATTERN = re.compile(r"`(\\[^`\r\n]+)`")
 
 
 def normalize_paragraph_list_separation(content: str) -> str:
@@ -74,7 +75,35 @@ def clean_markdown_text(content: str) -> str:
     def fix_latex_syntax(text: str) -> str:
         return text.replace("\\\\", "\\")
 
+    def normalize_backtick_latex(text: str) -> str:
+        lines = text.splitlines(keepends=True)
+        normalized_lines: list[str] = []
+        in_fenced_code = False
+        fence_marker: str | None = None
+
+        for line in lines:
+            fence_match = _FENCE_PATTERN.match(line)
+            if fence_match:
+                marker = fence_match.group(1)[0]
+                if not in_fenced_code:
+                    in_fenced_code = True
+                    fence_marker = marker
+                elif fence_marker == marker:
+                    in_fenced_code = False
+                    fence_marker = None
+                normalized_lines.append(line)
+                continue
+
+            if in_fenced_code:
+                normalized_lines.append(line)
+                continue
+
+            normalized_lines.append(_BACKTICK_LATEX_PATTERN.sub(r"$\1$", line))
+
+        return "".join(normalized_lines)
+
     content = content.lstrip("\ufeff")
+    content = normalize_backtick_latex(content)
     content = re.sub(r"\\\[(.*?)\\\]", r"$$\1$$", content, flags=re.DOTALL)
     content = re.sub(r"\\\((.*?)\\\)", r"$\1$", content, flags=re.DOTALL)
 
@@ -134,4 +163,3 @@ __all__ = [
     "clean_markdown_text",
     "normalize_paragraph_list_separation",
 ]
-

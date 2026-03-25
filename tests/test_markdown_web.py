@@ -54,3 +54,29 @@ def test_server_markdown_document_uses_root_relative_vendor_assets() -> None:
     assert "/vendor/katex/contrib/auto-render.min.js" in full_html
     assert "file:///" not in head_html
     assert "jsdelivr" not in head_html
+
+
+def test_server_markdown_document_keeps_blank_line_display_math_renderable() -> None:
+    markdown = """$$
+\\mathbf a(\\mathbf x,t)
+=
+\\frac{\\partial \\mathbf v}{\\partial t}
+
+
++
+(\\mathbf v\\cdot\\nabla)\\mathbf v.
+$$"""
+
+    normalized, _, body_html, _ = markdown_service._render_markdown_document(markdown)
+
+    assert "$$\n\\mathbf a(\\mathbf x,t)\n=\n\\frac{\\partial \\mathbf v}{\\partial t}\n+\n(\\mathbf v\\cdot\\nabla)\\mathbf v.\n$$" in normalized
+    assert body_html.count('class="arithmatex"') == 1
+    assert "</p>\n<p>+" not in body_html
+
+
+def test_server_markdown_document_converts_backtick_wrapped_latex_to_inline_math() -> None:
+    normalized, _, body_html, _ = markdown_service._render_markdown_document(r"Inline `\mathbf a` text")
+
+    assert r"Inline $\mathbf a$ text" == normalized
+    assert 'class="arithmatex"' in body_html
+    assert "<code>" not in body_html

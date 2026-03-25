@@ -224,3 +224,126 @@ def test_update_disabled_content_items_persists_sorted_unique_indexes(
 
     assert result == {"disabledContentItemIndexes": [2, 3, 4]}
     assert saved["disabled_content_item_indexes"] == [2, 3, 4]
+
+
+@pytest.mark.parametrize(
+    ("markdown_content", "expected_alias"),
+    [
+        ("# Heading\n\nBody", "Heading"),
+        ("###   Heading", "Heading"),
+        ("＃＃　中文标题", "中文标题"),
+        ("## Title  with  kept spaces", "Title  with  kept spaces"),
+        ("Plain title", "Plain title"),
+        ("##", ""),
+        ("", ""),
+        ("#  keep inner  spaces", "keep inner  spaces"),
+    ],
+)
+def test_extract_group_alias_from_markdown(
+    markdown_content: str,
+    expected_alias: str,
+) -> None:
+    assert asset_service._extract_group_alias_from_markdown(markdown_content) == expected_alias
+
+
+def test_merge_group_writes_group_alias_from_markdown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_dir = tmp_path / "asset"
+    group_dir = asset_dir / "group_data" / "7"
+    saved_block_data: dict[str, object] = {}
+
+    monkeypatch.setattr(asset_service, "_normalize_asset_name", lambda asset_name: asset_name)
+    monkeypatch.setattr(asset_service, "resolve_asset_dir", lambda _asset_name, *, must_exist=True: asset_dir)
+    monkeypatch.setattr(asset_service, "get_asset_pdf_path", lambda _asset_name: asset_dir / "raw.pdf")
+    monkeypatch.setattr(
+        asset_service,
+        "_load_fraction_block_data",
+        lambda _asset_name, _pdf_path: asset_service.BlockData(
+            blocks=[
+                asset_service.BlockRecord(
+                    block_id=3,
+                    page_index=0,
+                    rect=asset_service.BlockRect(x=0.1, y=0.2, width=0.3, height=0.4),
+                    group_idx=None,
+                )
+            ],
+            merge_order=[],
+            next_block_id=4,
+            coordinate_space=asset_service.COORDINATE_SPACE_PAGE_FRACTION,
+        ),
+    )
+    monkeypatch.setattr(
+        asset_service,
+        "create_group_record",
+        lambda _asset_name, block_ids, group_idx=None: type(
+            "GroupRecordStub",
+            (),
+            {"group_idx": 7, "block_ids": list(block_ids)},
+        )(),
+    )
+    monkeypatch.setattr(
+        asset_service,
+        "save_block_data",
+        lambda _asset_name, data: saved_block_data.update(
+            {
+                "merge_order": list(data.merge_order),
+                "group_idxs": [block.group_idx for block in data.blocks],
+            }
+        ),
+    )
+    monkeypatch.setattr(asset_service, "build_asset_state", lambda _asset_name: {"ok": True})
+
+    result = asset_service.merge_group("physics/ch1", block_ids=[3], markdown_content="##   Merged Title\n\nBody")
+
+    assert result == {"ok": True}
+    assert saved_block_data == {"merge_order": [], "group_idxs": [7]}
+    assert (group_dir / "content.md").read_text(encoding="utf-8") == "##   Merged Title\n\nBody"
+    assert (group_dir / "group.alias").read_text(encoding="utf-8") == "Merged Title"
+
+
+def test_merge_group_removes_group_alias_when_markdown_heading_is_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_dir = tmp_path / "asset"
+    group_dir = asset_dir / "group_data" / "5"
+    group_dir.mkdir(parents=True, exist_ok=True)
+    (group_dir / "group.alias").write_text("Old alias", encoding="utf-8")
+
+    monkeypatch.setattr(asset_service, "_normalize_asset_name", lambda asset_name: asset_name)
+    monkeypatch.setattr(asset_service, "resolve_asset_dir", lambda _asset_name, *, must_exist=True: asset_dir)
+    monkeypatch.setattr(asset_service, "get_asset_pdf_path", lambda _asset_name: asset_dir / "raw.pdf")
+    monkeypatch.setattr(
+        asset_service,
+        "_load_fraction_block_data",
+        lambda _asset_name, _pdf_path: asset_service.BlockData(
+            blocks=[
+                asset_service.BlockRecord(
+                    block_id=9,
+                    page_index=0,
+                    rect=asset_service.BlockRect(x=0.0, y=0.0, width=0.1, height=0.1),
+                    group_idx=None,
+                )
+            ],
+            merge_order=[],
+            next_block_id=10,
+            coordinate_space=asset_service.COORDINATE_SPACE_PAGE_FRACTION,
+        ),
+    )
+    monkeypatch.setattr(
+        asset_service,
+        "create_group_record",
+        lambda _asset_name, block_ids, group_idx=None: type(
+            "GroupRecordStub",
+            (),
+            {"group_idx": 5, "block_ids": list(block_ids)},
+        )(),
+    )
+    monkeypatch.setattr(asset_service, "save_block_data", lambda _asset_name, data: data)
+    monkeypatch.setattr(asset_service, "build_asset_state", lambda _asset_name: {"ok": True})
+
+    asset_service.merge_group("physics/ch1", block_ids=[9], markdown_content="###   \n\nBody")
+
+    assert not (group_dir / "group.alias").exists()

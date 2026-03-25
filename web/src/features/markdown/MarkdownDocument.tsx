@@ -57,6 +57,7 @@ export function MarkdownDocument({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const selectionRangeRef = useRef<Range | null>(null);
+  const scrollRestoreInProgressRef = useRef(false);
   const openMarkdownTab = useAppStore((state) => state.openMarkdownTab);
   const requestMarkdownContextMenu = useAppStore((state) => state.requestMarkdownContextMenu);
   const [selectionButton, setSelectionButton] = useState<{
@@ -67,6 +68,7 @@ export function MarkdownDocument({
   const [creatingTutorSession, setCreatingTutorSession] = useState(false);
   const contentKey = path ? `${path}:${renderVersion}:${hashHtml(html)}` : "empty";
   const canAskTutorFromSelection = isInlineTutorSelectionEnabled(path);
+  const hasRenderableHtml = Boolean(html.trim());
 
   useEffect(() => {
     const element = scrollRef.current;
@@ -75,6 +77,9 @@ export function MarkdownDocument({
     }
 
     const onScroll = () => {
+      if (scrollRestoreInProgressRef.current || loading || !hasRenderableHtml) {
+        return;
+      }
       const maxScroll = Math.max(0, element.scrollHeight - element.clientHeight);
       const fraction = maxScroll > 0 ? element.scrollTop / maxScroll : 0;
       useAppStore.getState().rememberMarkdownScroll(assetName, path, fraction);
@@ -84,7 +89,7 @@ export function MarkdownDocument({
     return () => {
       element.removeEventListener("scroll", onScroll);
     };
-  }, [assetName, path]);
+  }, [assetName, hasRenderableHtml, loading, path]);
 
   useLayoutEffect(() => {
     if (!contentRef.current || !html.trim()) {
@@ -123,22 +128,31 @@ export function MarkdownDocument({
 
   useEffect(() => {
     const element = scrollRef.current;
-    if (!element) {
+    if (!element || !assetName || !path || loading || !hasRenderableHtml) {
+      scrollRestoreInProgressRef.current = false;
       return;
     }
 
-    const savedFraction =
-      assetName && path
-        ? useAppStore.getState().markdownScrollFractionsByAsset[assetName]?.[path] ?? 0
-        : 0;
+    const savedFraction = useAppStore.getState().markdownScrollFractionsByAsset[assetName]?.[path] ?? 0;
+    let releaseFrame = 0;
+    scrollRestoreInProgressRef.current = true;
 
     const frame = requestAnimationFrame(() => {
       const maxScroll = Math.max(0, element.scrollHeight - element.clientHeight);
       element.scrollTop = maxScroll > 0 ? savedFraction * maxScroll : 0;
+      releaseFrame = requestAnimationFrame(() => {
+        scrollRestoreInProgressRef.current = false;
+      });
     });
 
-    return () => cancelAnimationFrame(frame);
-  }, [assetName, html, path]);
+    return () => {
+      scrollRestoreInProgressRef.current = false;
+      cancelAnimationFrame(frame);
+      if (releaseFrame) {
+        cancelAnimationFrame(releaseFrame);
+      }
+    };
+  }, [assetName, hasRenderableHtml, loading, path]);
 
   useEffect(() => {
     selectionRangeRef.current = null;

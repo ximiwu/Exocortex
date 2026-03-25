@@ -95,4 +95,28 @@ describe("app exocortex api wrapper", () => {
       html: "<article><h1>Topic</h1></article>",
     });
   });
+
+  it("preserves blank-line display math blocks for downstream KaTeX rendering", async () => {
+    const core = createCoreStub({
+      getMarkdownDocument: vi.fn().mockResolvedValue({
+        markdown: String.raw`$$
+\\mathbf a(\\mathbf x,t)
+=
+\\frac{\\partial \\mathbf v}{\\partial t}
+
+
++ 
+(\\mathbf v\\cdot\\nabla)\\mathbf v.
+$$`,
+      }),
+    });
+
+    const api = wrapCoreApi(core);
+    const result = await api.markdown.getContent("asset-a", "notes/topic.md");
+
+    expect(result.html).toContain("$$");
+    expect(result.html).toContain("\\frac{\\partial \\mathbf v}{\\partial t}");
+    expect(result.html).toContain("(\\mathbf v\\cdot\\nabla)\\mathbf v.");
+    expect(result.html).not.toContain("</p>\n<p>+");
+  });
 });

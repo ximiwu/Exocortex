@@ -236,12 +236,34 @@ function extractBodyHtml(value: string): string {
   return documentNode.body.innerHTML || value;
 }
 
+function normalizeMathMarkdown(value: string): string {
+  const blockPattern = /\$\$([\s\S]*?)\$\$/g;
+
+  return value.replace(blockPattern, (_match, mathBody: string) => {
+    const normalizedLines = mathBody
+      .split(/\r?\n/)
+      .map((line) =>
+        line
+          .trim()
+          .replace(/\u00A0/g, " ")
+          .replace(/\u3000/g, " ")
+          .replace(/\u200b/g, " ")
+          .replace(/\ufeff/g, " "),
+      )
+      .filter((line) => line.length > 0);
+
+    return `\n\n$$\n${normalizedLines.join("\n")}\n$$\n\n`;
+  });
+}
+
 function normalizeMarkdownContent(
   path: string,
   raw: { path?: string; title?: string; html?: string; bodyHtml?: string; markdown?: string },
 ): MarkdownContent {
   const rawValue = raw.bodyHtml ?? raw.html ?? raw.markdown ?? "";
-  const html = looksLikeHtml(rawValue) ? extractBodyHtml(rawValue) : (marked.parse(rawValue) as string);
+  const html = looksLikeHtml(rawValue)
+    ? extractBodyHtml(rawValue)
+    : (marked.parse(normalizeMathMarkdown(rawValue)) as string);
 
   return {
     path: raw.path ?? path,

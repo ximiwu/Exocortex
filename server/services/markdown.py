@@ -22,6 +22,7 @@ from exocortex_core.markdown_web import (
     normalize_math_content,
     normalize_paragraph_list_separation,
 )
+from exocortex_core.markdown import clean_markdown_text
 from exocortex_core.text import read_text_auto
 from server.domain.assets import asset_config_write_lock, get_asset_config, save_asset_config
 from server.errors import ApiError
@@ -157,7 +158,8 @@ def _render_markdown_body(content: str) -> tuple[str, str]:
     if not _ARITHMATEX_AVAILABLE:
         raise ApiError(500, "markdown_unavailable", "Missing 'pymdown-extensions' package.")
 
-    normalized = normalize_math_content(content.lstrip("\ufeff"))
+    normalized = clean_markdown_text(content)
+    normalized = normalize_math_content(normalized)
     normalized = normalize_details_markdown(normalized)
     normalized = normalize_paragraph_list_separation(normalized)
 

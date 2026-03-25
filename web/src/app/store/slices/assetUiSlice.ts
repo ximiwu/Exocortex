@@ -62,6 +62,8 @@ export const createAssetUiSlice: AppStoreSliceCreator<AssetUiSlice> = (set) => (
       const persistedOpenPaths = Array.isArray(state.uiState.openMarkdownPaths)
         ? state.uiState.openMarkdownPaths.filter((path): path is string => Boolean(path))
         : [];
+      const persistedMarkdownScrollFractions = state.uiState.markdownScrollFractions ?? {};
+      const localMarkdownScrollFractions = current.markdownScrollFractionsByAsset[assetName] ?? {};
       const nextOpenPaths = Array.from(
         new Set([...(nextPath ? [nextPath] : []), ...persistedOpenPaths]),
       );
@@ -103,7 +105,10 @@ export const createAssetUiSlice: AppStoreSliceCreator<AssetUiSlice> = (set) => (
         },
         markdownScrollFractionsByAsset: {
           ...current.markdownScrollFractionsByAsset,
-          [assetName]: state.uiState.markdownScrollFractions ?? {},
+          [assetName]: {
+            ...persistedMarkdownScrollFractions,
+            ...localMarkdownScrollFractions,
+          },
         },
         currentMarkdownPath: hasActivePathForAsset ? current.currentMarkdownPath : fallbackPath,
         sidebarWidthRatio: normalizePaneRatio(

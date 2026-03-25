@@ -1,12 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ExocortexApiProvider } from "../../../app/api/ExocortexApiContext";
+import { ExocortexApiProvider, useExocortexApi } from "../../../app/api/ExocortexApiContext";
 import type { ExocortexApi } from "../../../app/api/exocortexApi";
+import { queryKeys } from "../../../app/api/exocortexApi";
+import { useAssetStateQuery } from "../../../app/api/queries";
+import { useAssetUiStateSync } from "../../../app/hooks/useAssetUiStateSync";
 import { useAppStore } from "../../../app/store/appStore";
 import type { AppStoreState } from "../../../app/store/appStore";
-import type { AssetState, MarkdownTreeNode } from "../../../app/types";
+import type { AssetState, AssetSummary, MarkdownTreeNode } from "../../../app/types";
 import { ToastProvider } from "../../tasks/ToastProvider";
 import type { TaskDetail } from "../../../generated/contracts";
 import { useWorkflowTaskEffectsBridge } from "./useWorkflowTaskEffectsBridge";
@@ -106,6 +109,15 @@ function createAssetState(assetName: string): AssetState {
       sidebarWidthRatio: 0.2,
       rightRailWidthRatio: 0.25,
     },
+  };
+}
+
+function createAssetSummary(assetName: string): AssetSummary {
+  return {
+    name: assetName,
+    pageCount: 8,
+    hasReferences: true,
+    hasBlocks: false,
   };
 }
 
@@ -225,6 +237,35 @@ function BridgeHarness({
   return null;
 }
 
+function BridgeWithAssetUiStateSyncHarness({
+  assetName,
+  assets,
+  pendingImportIntent,
+  setPendingImportIntent = vi.fn(),
+}: {
+  assetName: string;
+  assets: AssetSummary[];
+  pendingImportIntent: PendingImportIntent | null;
+  setPendingImportIntent?: (intent: PendingImportIntent | null) => void;
+}) {
+  const api = useExocortexApi();
+  const assetStateQuery = useAssetStateQuery(assetName);
+
+  useAssetUiStateSync({
+    api,
+    assets,
+    assetState: assetStateQuery.data ?? null,
+  });
+  useWorkflowTaskEffectsBridge({
+    pendingImportIntent,
+    setPendingImportIntent,
+    setCompressPreview: vi.fn(),
+    feynman: null,
+    setFeynman: vi.fn(),
+  });
+  return null;
+}
+
 describe("useWorkflowTaskEffectsBridge", () => {
   beforeEach(() => {
     resetStore();
@@ -235,6 +276,7 @@ describe("useWorkflowTaskEffectsBridge", () => {
   });
 
   afterEach(() => {
+    cleanup();
     useAppStore.setState(INITIAL_STORE_STATE, true);
     vi.restoreAllMocks();
   });
@@ -302,6 +344,117 @@ describe("useWorkflowTaskEffectsBridge", () => {
       const openTab = useAppStore.getState().openTabs[0];
       expect(openTab?.path).toBe("group_data/1/tutor_data/1/ask_history/2.md");
       expect(openTab?.kind).toBe("ask");
+    });
+  });
+
+  it("preserves existing markdown scroll fractions when ask tutor refreshes asset state", async () => {
+    const assetName = "asset-a";
+    const focusPath = "group_data/1/tutor_data/1/focus.md";
+    const otherPath = "group_data/1/img_explainer_data/enhanced.md";
+    const askHistoryPath = "group_data/1/tutor_data/1/ask_history/2.md";
+    const task = createTaskDetail({
+      id: "task-ask-preserve-scroll",
+      kind: "ask_tutor",
+      status: "completed",
+      assetName,
+      artifactPath: askHistoryPath,
+    });
+    taskCenterState = {
+      tasks: [task],
+      tasksById: { [task.id]: task },
+    };
+
+    resetStore({
+      selectedAssetName: assetName,
+      currentMarkdownPath: focusPath,
+      openTabs: [
+        {
+          assetName,
+          path: focusPath,
+          title: "focus.md",
+          kind: "markdown",
+        },
+        {
+          assetName,
+          path: otherPath,
+          title: "enhanced.md",
+          kind: "markdown",
+        },
+      ],
+      markdownScrollFractionsByAsset: {
+        [assetName]: {
+          [focusPath]: 0.41,
+          [otherPath]: 0.76,
+        },
+      },
+    });
+
+    const initialAssetState = createAssetState(assetName);
+    initialAssetState.uiState.currentMarkdownPath = focusPath;
+    initialAssetState.uiState.openMarkdownPaths = [focusPath, otherPath];
+    initialAssetState.uiState.markdownScrollFractions = {
+      [focusPath]: 0.41,
+      [otherPath]: 0.76,
+    };
+
+    const staleAssetState = createAssetState(assetName);
+    staleAssetState.uiState.currentMarkdownPath = focusPath;
+    staleAssetState.uiState.openMarkdownPaths = [focusPath];
+    staleAssetState.uiState.markdownScrollFractions = {
+      [focusPath]: 0.05,
+    };
+
+    const api = createApi({ assetState: staleAssetState });
+    const getState = vi.fn(async () => staleAssetState);
+    api.assets.getState = getState;
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          staleTime: Number.POSITIVE_INFINITY,
+        },
+      },
+    });
+    await act(async () => {
+      queryClient.setQueryData(queryKeys.assetState(assetName), initialAssetState);
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <ExocortexApiProvider api={api}>
+            <ToastProvider>
+              <BridgeWithAssetUiStateSyncHarness
+                assetName={assetName}
+                assets={[createAssetSummary(assetName)]}
+                pendingImportIntent={null}
+              />
+            </ToastProvider>
+          </ExocortexApiProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    await waitFor(() => {
+      expect(getState).toHaveBeenCalledTimes(1);
+    });
+
+    await waitFor(() => {
+      expect(useAppStore.getState().openTabs).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            assetName,
+            path: askHistoryPath,
+            kind: "ask",
+          }),
+        ]),
+      );
+    });
+
+    await waitFor(() => {
+      expect(useAppStore.getState().markdownScrollFractionsByAsset[assetName]).toEqual({
+        [focusPath]: 0.41,
+        [otherPath]: 0.76,
+      });
     });
   });
 
