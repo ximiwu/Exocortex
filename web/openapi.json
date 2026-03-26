@@ -1501,6 +1501,47 @@
         }
       }
     },
+    "/api/tasks/flashcard": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Submit Flashcard",
+        "operationId": "submit_flashcard_api_tasks_flashcard_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupWorkflowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSummaryModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/tasks/ask-tutor": {
       "post": {
         "tags": [

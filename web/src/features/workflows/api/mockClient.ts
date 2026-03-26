@@ -11,6 +11,7 @@ import type {
   CreateTutorSessionPayload,
   DeleteQuestionPayload,
   DeleteTutorSessionInput,
+  FlashcardTaskPayload,
   GroupTaskPayload,
   ImportAssetPayload,
   MarkdownTreeNode,
@@ -231,7 +232,10 @@ class MockExocortexClient implements ExocortexApi {
 
   async revealAsset(assetName: string, path?: string | null): Promise<void> {
     const asset = this.requireAsset(assetName);
-    if (path && !asset.documents[path] && !asset.references[path.replace(/^references\//, "")]) {
+    if (path && !hasRevealTarget(asset, path)) {
+      if (/^group_data\/\d+\/flashcard\/apkg\/?$/i.test(path)) {
+        return;
+      }
       throw new Error(`Path not found: ${path}`);
     }
   }
@@ -482,6 +486,31 @@ class MockExocortexClient implements ExocortexApi {
         this.emit(taskId, "progress", "Drafting enhanced explanation...", 0.54);
         this.emit(taskId, "artifact", "Enhanced markdown available.", null, path);
         this.emit(taskId, "completed", `Group ${payload.groupIdx} enhanced.md updated.`, 1, path);
+      }
+    });
+  }
+
+  async submitFlashcard(payload: FlashcardTaskPayload): Promise<TaskSummary> {
+    return this.queueTask({
+      kind: "flashcard",
+      title: `Flashcard: group ${payload.groupIdx}`,
+      assetName: payload.assetName,
+      run: (taskId) => {
+        const asset = this.requireAsset(payload.assetName);
+        const flashcardPath = `group_data/${payload.groupIdx}/flashcard/md/card-1.md`;
+        const flashcardHtmlFrontPath = `group_data/${payload.groupIdx}/flashcard/html/card-1.front.html`;
+        const flashcardHtmlBackPath = `group_data/${payload.groupIdx}/flashcard/html/card-1.back.html`;
+        const flashcardApkgPath = `group_data/${payload.groupIdx}/flashcard/apkg/deck.apkg`;
+        asset.documents[flashcardPath] =
+          "question:\nWhat is the key takeaway?\nanswer:\nA mock flashcard generated from enhanced.md.";
+        asset.documents[flashcardHtmlFrontPath] = "<!DOCTYPE html><html><body><p>What is the key takeaway?</p></body></html>";
+        asset.documents[flashcardHtmlBackPath] =
+          "<!DOCTYPE html><html><body><p>A mock flashcard generated from enhanced.md.</p></body></html>";
+        asset.documents[flashcardApkgPath] = "mock apkg";
+        ensureGroupOtherMarkdownPath(asset, payload.groupIdx, flashcardPath);
+        this.emit(taskId, "started", `Generating flashcards for group ${payload.groupIdx}...`);
+        this.emit(taskId, "log", "Gathering enhanced.md and ask_history references.");
+        this.emit(taskId, "completed", "Flashcards saved.", 1, `group_data/${payload.groupIdx}/flashcard/md`);
       }
     });
   }
@@ -1141,6 +1170,81 @@ function ensureGroupDocument(
           path
         }
       : node
+  );
+}
+
+function hasRevealTarget(asset: MockAssetRecord, path: string): boolean {
+  if (asset.documents[path]) {
+    return true;
+  }
+  if (asset.references[path.replace(/^references\//, "")]) {
+    return true;
+  }
+  const normalized = path.replace(/\/+$/, "");
+  return Object.keys(asset.documents).some((candidate) => candidate.startsWith(`${normalized}/`));
+}
+
+function ensureGroupOtherMarkdownPath(
+  asset: MockAssetRecord,
+  groupIdx: number,
+  path: string,
+): void {
+  const groupNode = asset.tree.find((node) => node.id === `group:${groupIdx}`);
+  if (!groupNode) {
+    return;
+  }
+
+  let otherNode = groupNode.children.find((node) => node.id === `group:${groupIdx}:other`) ?? null;
+  if (!otherNode) {
+    otherNode = {
+      id: `group:${groupIdx}:other`,
+      kind: "folder",
+      title: "Other",
+      path: null,
+      children: [],
+    };
+    groupNode.children = [...groupNode.children, otherNode];
+  }
+
+  const relative = path.replace(`group_data/${groupIdx}/`, "");
+  const parts = relative.split("/").filter(Boolean);
+  const fileName = parts.pop();
+  if (!fileName) {
+    return;
+  }
+
+  let parent = otherNode;
+  let parentId = otherNode.id;
+  for (const part of parts) {
+    const folderId = `${parentId}/${part}`;
+    let folderNode = parent.children.find((child) => child.id === folderId) ?? null;
+    if (!folderNode) {
+      folderNode = {
+        id: folderId,
+        kind: "folder",
+        title: part,
+        path: null,
+        children: [],
+      };
+      parent.children = [...parent.children, folderNode].sort((left, right) =>
+        left.title.localeCompare(right.title, undefined, { numeric: true }),
+      );
+    }
+    parent = folderNode;
+    parentId = folderId;
+  }
+
+  const leafId = `${parentId}:${fileName}`;
+  const leafNode: MarkdownTreeNode = {
+    id: leafId,
+    kind: "markdown",
+    title: fileName,
+    path,
+    children: [],
+  };
+  const nextChildren = parent.children.filter((child) => child.id !== leafId && child.path !== path);
+  parent.children = [...nextChildren, leafNode].sort((left, right) =>
+    left.title.localeCompare(right.title, undefined, { numeric: true }),
   );
 }
 

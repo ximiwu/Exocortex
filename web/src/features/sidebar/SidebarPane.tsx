@@ -5,6 +5,8 @@ import { useExocortexApi } from "../../app/api/ExocortexApiContext";
 import { queryKeys } from "../../app/api/exocortexApi";
 import { AssetState, MarkdownTreeNode } from "../../app/types";
 import { useAppStore } from "../../app/store/appStore";
+import { useToasts } from "../tasks/ToastProvider";
+import { useTaskCenter } from "../tasks/TaskCenterContext";
 import { Modal } from "../shared/Modal";
 import { MarkdownTree } from "./MarkdownTree";
 import {
@@ -34,6 +36,8 @@ function clampFontSize(value: number): number {
 export function SidebarPane({ markdownTree, treeLoading, treeError }: SidebarPaneProps) {
   const api = useExocortexApi();
   const queryClient = useQueryClient();
+  const { pushToast } = useToasts();
+  const { isGroupTaskRunning, trackSubmittedTask } = useTaskCenter();
   const selectedAssetName = useAppStore((state) => state.selectedAssetName);
   const currentMarkdownPath = useAppStore((state) => state.currentMarkdownPath);
   const sidebarCollapsed = useAppStore((state) => state.sidebarCollapsed);
@@ -276,6 +280,48 @@ export function SidebarPane({ markdownTree, treeLoading, treeError }: SidebarPan
                 }
 
                 requestPdfNavigation(selectedAssetName, pageIndex + 1);
+              }}
+              onGenerateFlashcard={async (groupIdx) => {
+                if (!selectedAssetName) {
+                  return;
+                }
+                if (isGroupTaskRunning("flashcard", selectedAssetName, groupIdx)) {
+                  pushToast({
+                    title: "Flashcard already running",
+                    description: `Group ${groupIdx} is already in progress.`,
+                    tone: "warning",
+                  });
+                  return;
+                }
+
+                try {
+                  const task = await api.workflows.submitFlashcard({
+                    assetName: selectedAssetName,
+                    groupIdx,
+                  });
+                  trackSubmittedTask(task);
+                } catch (error) {
+                  if (error instanceof Error && error.message === "An equivalent task is already in progress.") {
+                    pushToast({
+                      title: "Flashcard already running",
+                      description: `Group ${groupIdx} is already in progress.`,
+                      tone: "warning",
+                    });
+                    return;
+                  }
+                  pushToast({
+                    title: "Flashcard failed",
+                    description: error instanceof Error ? error.message : "Unable to start flashcard generation.",
+                    tone: "danger",
+                  });
+                }
+              }}
+              onRevealFlashcard={async (groupIdx) => {
+                if (!selectedAssetName) {
+                  return;
+                }
+
+                await api.assets.revealAsset(selectedAssetName, `group_data/${groupIdx}/flashcard/apkg`);
               }}
               onDeleteGroup={async (groupIdx, node) => {
                 if (!selectedAssetName) {

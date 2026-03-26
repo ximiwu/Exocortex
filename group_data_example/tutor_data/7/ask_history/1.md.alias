@@ -1,0 +1,1 @@
+为啥物质导数本质上就是$\frac{D}{Dt}f(\mathbf{x},t) = \frac{d}{dt}f(\mathbf{x}(t),t), \qquad \text{其中 } \dot{\mathbf{x}}(t)=\mathbf{v}(\mathbf{x}(t),t).$

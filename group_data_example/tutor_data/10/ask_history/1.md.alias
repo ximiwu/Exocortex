@@ -1,0 +1,1 @@
+$$dV=d\mathbf{S}\cdot d\mathbf{L}, \qquad dv=d\mathbf{s}\cdot d\mathbf{l}, \qquad d\mathbf{l}=\mathbf{F}d\mathbf{L},$$最终推出$$d\mathbf{s}=J\mathbf{F}^{-T}d\mathbf{S},$$详细的推导过程？

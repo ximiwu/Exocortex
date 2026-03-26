@@ -15,6 +15,7 @@ from server.domain.workflows.contracts import (
     AssetInitCommand,
     BugFinderCommand,
     CompressCommand,
+    FlashcardCommand,
     FixLatexCommand,
     GroupDiveCommand,
     IntegrateCommand,
@@ -201,6 +202,32 @@ def submit_group_dive_task(manager: TaskManager, *, asset_name: str, group_idx: 
         asset_name=normalized,
         runner=_runner,
         dedupe_key=f"group_dive:{normalized}:{group_idx}",
+    )
+
+
+def submit_flashcard_task(manager: TaskManager, *, asset_name: str, group_idx: int) -> JsonObject:
+    normalized = normalize_asset_name(asset_name)
+    command = FlashcardCommand(asset_name=normalized, group_idx=group_idx)
+
+    def _runner(context: TaskContext) -> TaskResult:
+        context.log(f"Generating flashcards for group {group_idx}.")
+        output_path = orchestrator.flashcard(command, event_callback=_workflow_callback(context, normalized))
+        normalized_output_path = _normalize_asset_artifact_path(normalized, output_path)
+        return TaskResult(
+            message=f"Flashcard generation for group {group_idx} completed.",
+            artifact_path=normalized_output_path,
+            payload={
+                "groupIdx": group_idx,
+                "flashcardDir": normalized_output_path,
+            },
+        )
+
+    return manager.submit_task(
+        kind="flashcard",
+        title=f"Flashcard: group {group_idx}",
+        asset_name=normalized,
+        runner=_runner,
+        dedupe_key=f"flashcard:{normalized}:{group_idx}",
     )
 
 
@@ -532,6 +559,7 @@ __all__ = [
     "submit_bug_finder_task",
     "submit_compress_execute_task",
     "submit_compress_preview_task",
+    "submit_flashcard_task",
     "submit_fix_latex_task",
     "submit_group_dive_task",
     "submit_integrate_task",

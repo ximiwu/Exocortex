@@ -19,6 +19,8 @@
 
 如果涉及到计算相关的概念，增加数学latex语言的补充介绍；适当补充介绍我可能的”不知道自己不知道“的内容
 
+符号、公式的写法要遵循原文
+
 不要提及thesis.md，用“这段内容“代指thesis.md
 
 ## File I/O Protocol (UTF-8 Enforced)

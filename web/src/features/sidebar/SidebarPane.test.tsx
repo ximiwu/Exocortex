@@ -9,6 +9,9 @@ import { queryKeys } from "../../app/api/exocortexApi";
 import type { AppStoreState } from "../../app/store/appStore";
 import { useAppStore } from "../../app/store/appStore";
 import type { AssetState, MarkdownTreeNode } from "../../app/types";
+import type { TaskDetail, TaskSummary } from "../../generated/contracts";
+import { TaskCenterProvider } from "../tasks/TaskCenterContext";
+import { ToastProvider } from "../tasks/ToastProvider";
 import { SidebarPane } from "./SidebarPane";
 
 const DEFAULT_SYSTEM_CONFIG: AppSystemConfig = {
@@ -97,7 +100,37 @@ function resetStore(overrides: Partial<AppStoreState> = {}) {
   );
 }
 
-function createApi(): ExocortexApi {
+function createTaskSummary(overrides: Partial<TaskSummary> = {}): TaskSummary {
+  return {
+    id: "task-flashcard-1",
+    kind: "flashcard",
+    status: "queued",
+    title: "Flashcard: group 7",
+    assetName: "asset-a",
+    createdAt: "2026-03-26T12:00:00Z",
+    updatedAt: "2026-03-26T12:00:00Z",
+    ...overrides,
+  };
+}
+
+function createTaskDetail(overrides: Partial<TaskDetail> = {}): TaskDetail {
+  return {
+    ...createTaskSummary(overrides),
+    events: [],
+    latestEvent: null,
+    result: null,
+  };
+}
+
+function createApi(options: {
+  taskSummaries?: TaskSummary[];
+  taskDetails?: Record<string, TaskDetail>;
+  submitFlashcard?: ExocortexApi["workflows"]["submitFlashcard"];
+} = {}): ExocortexApi {
+  const taskDetails = options.taskDetails ?? {};
+  const submitFlashcard =
+    options.submitFlashcard ?? (vi.fn(async () => createTaskSummary()) as ExocortexApi["workflows"]["submitFlashcard"]);
+
   return {
     mode: "mock",
     capabilities: {
@@ -158,10 +191,8 @@ function createApi(): ExocortexApi {
       updateUiState: vi.fn(async () => ASSET_STATE),
     },
     tasks: {
-      list: vi.fn(async () => []),
-      get: vi.fn(async () => {
-        throw new Error("not implemented");
-      }),
+      list: vi.fn(async () => options.taskSummaries ?? []),
+      get: vi.fn(async (taskId: string) => taskDetails[taskId] ?? createTaskDetail({ id: taskId })),
       subscribe: vi.fn(() => () => undefined),
     },
     workflows: {
@@ -171,6 +202,7 @@ function createApi(): ExocortexApi {
       submitGroupDive: vi.fn(async () => {
         throw new Error("not implemented");
       }),
+      submitFlashcard,
       submitAskTutor: vi.fn(async () => {
         throw new Error("not implemented");
       }),
@@ -226,7 +258,11 @@ describe("SidebarPane locate-in-pdf", () => {
       render(
         <QueryClientProvider client={client}>
           <ExocortexApiProvider api={api}>
-            <SidebarPane markdownTree={TREE} treeLoading={false} treeError={null} />
+            <ToastProvider>
+              <TaskCenterProvider>
+                <SidebarPane markdownTree={TREE} treeLoading={false} treeError={null} />
+              </TaskCenterProvider>
+            </ToastProvider>
           </ExocortexApiProvider>
         </QueryClientProvider>,
       );
@@ -253,5 +289,138 @@ describe("SidebarPane locate-in-pdf", () => {
         }),
       );
     });
+  });
+
+  it("submits flashcard generation from the group context menu", async () => {
+    const submittedTask = createTaskSummary();
+    const submitFlashcard = vi.fn(async () => submittedTask);
+    const api = createApi({
+      submitFlashcard,
+      taskDetails: {
+        [submittedTask.id]: createTaskDetail({ id: submittedTask.id }),
+      },
+    });
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+
+    await act(async () => {
+      render(
+        <QueryClientProvider client={client}>
+          <ExocortexApiProvider api={api}>
+            <ToastProvider>
+              <TaskCenterProvider>
+                <SidebarPane markdownTree={TREE} treeLoading={false} treeError={null} />
+              </TaskCenterProvider>
+            </ToastProvider>
+          </ExocortexApiProvider>
+        </QueryClientProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    const groupButton = await screen.findByRole("button", { name: "Group 7" });
+    await act(async () => {
+      fireEvent.contextMenu(groupButton, { clientX: 32, clientY: 48 });
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByRole("menuitem", { name: "gen flashcard" }));
+      await Promise.resolve();
+    });
+
+    expect(submitFlashcard).toHaveBeenCalledWith({
+      assetName: "asset-a",
+      groupIdx: 7,
+    });
+  });
+
+  it("reveals the flashcard export directory from the group context menu", async () => {
+    const api = createApi();
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+
+    await act(async () => {
+      render(
+        <QueryClientProvider client={client}>
+          <ExocortexApiProvider api={api}>
+            <ToastProvider>
+              <TaskCenterProvider>
+                <SidebarPane markdownTree={TREE} treeLoading={false} treeError={null} />
+              </TaskCenterProvider>
+            </ToastProvider>
+          </ExocortexApiProvider>
+        </QueryClientProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    const groupButton = await screen.findByRole("button", { name: "Group 7" });
+    await act(async () => {
+      fireEvent.contextMenu(groupButton, { clientX: 32, clientY: 48 });
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByRole("menuitem", { name: "reveal flashcard" }));
+      await Promise.resolve();
+    });
+
+    expect(api.assets.revealAsset).toHaveBeenCalledWith("asset-a", "group_data/7/flashcard/apkg");
+  });
+
+  it("warns instead of submitting when flashcard generation is already running", async () => {
+    const runningTask = createTaskSummary({ id: "task-running", status: "running" });
+    const api = createApi({
+      taskSummaries: [runningTask],
+      taskDetails: {
+        "task-running": createTaskDetail({ id: "task-running", status: "running" }),
+      },
+      submitFlashcard: vi.fn(async () => createTaskSummary({ id: "task-should-not-run" })),
+    });
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+
+    await act(async () => {
+      render(
+        <QueryClientProvider client={client}>
+          <ExocortexApiProvider api={api}>
+            <ToastProvider>
+              <TaskCenterProvider>
+                <SidebarPane markdownTree={TREE} treeLoading={false} treeError={null} />
+              </TaskCenterProvider>
+            </ToastProvider>
+          </ExocortexApiProvider>
+        </QueryClientProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(api.tasks.list).toHaveBeenCalled();
+    });
+
+    const groupButton = await screen.findByRole("button", { name: "Group 7" });
+    await act(async () => {
+      fireEvent.contextMenu(groupButton, { clientX: 32, clientY: 48 });
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByRole("menuitem", { name: "gen flashcard" }));
+      await Promise.resolve();
+    });
+
+    expect(api.workflows.submitFlashcard).not.toHaveBeenCalled();
+    expect(await screen.findByText("Flashcard already running")).toBeInTheDocument();
   });
 });

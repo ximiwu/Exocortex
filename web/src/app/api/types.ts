@@ -105,6 +105,7 @@ export interface PreviewMergeMarkdownResponse {
 }
 
 export type GroupTaskInput = GroupWorkflowRequest;
+export type FlashcardTaskInput = GroupWorkflowRequest;
 export type TutorTaskInput = AskTutorWorkflowRequest;
 export type ReTutorTaskInput = ReTutorWorkflowRequest;
 export type IntegrateTaskInput = TutorWorkflowRequest;

@@ -112,6 +112,15 @@ def submit_group_dive(
     return TaskSummaryModel(**task)
 
 
+@router.post("/tasks/flashcard", response_model=TaskSummaryModel, status_code=status.HTTP_202_ACCEPTED)
+def submit_flashcard(
+    request: GroupWorkflowRequest,
+    task_manager: TaskManager = Depends(get_task_manager),
+) -> TaskSummaryModel:
+    task = workflows.submit_flashcard_task(task_manager, asset_name=request.assetName, group_idx=request.groupIdx)
+    return TaskSummaryModel(**task)
+
+
 @router.post("/tasks/ask-tutor", response_model=TaskSummaryModel, status_code=status.HTTP_202_ACCEPTED)
 def submit_ask_tutor(
     request: AskTutorWorkflowRequest,

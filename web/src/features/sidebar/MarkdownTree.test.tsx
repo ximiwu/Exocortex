@@ -54,6 +54,8 @@ function renderTree(options: {
   onOpenPaths?: ReturnType<typeof vi.fn>;
   onClosePaths?: ReturnType<typeof vi.fn>;
   onLocateInPdf?: ReturnType<typeof vi.fn>;
+  onGenerateFlashcard?: ReturnType<typeof vi.fn>;
+  onRevealFlashcard?: ReturnType<typeof vi.fn>;
   onDeleteGroup?: ReturnType<typeof vi.fn>;
   onDeleteTutor?: ReturnType<typeof vi.fn>;
   onDeleteAsk?: ReturnType<typeof vi.fn>;
@@ -64,6 +66,8 @@ function renderTree(options: {
   const onOpenPaths = options.onOpenPaths ?? vi.fn();
   const onClosePaths = options.onClosePaths ?? vi.fn();
   const onLocateInPdf = options.onLocateInPdf ?? vi.fn();
+  const onGenerateFlashcard = options.onGenerateFlashcard ?? vi.fn(async () => undefined);
+  const onRevealFlashcard = options.onRevealFlashcard ?? vi.fn(async () => undefined);
   const onDeleteGroup = options.onDeleteGroup ?? vi.fn(async () => undefined);
   const onDeleteTutor = options.onDeleteTutor ?? vi.fn(async () => undefined);
   const onDeleteAsk = options.onDeleteAsk ?? vi.fn(async () => undefined);
@@ -85,6 +89,8 @@ function renderTree(options: {
       onOpenPaths={onOpenPaths}
       onClosePaths={onClosePaths}
       onLocateInPdf={onLocateInPdf}
+      onGenerateFlashcard={onGenerateFlashcard}
+      onRevealFlashcard={onRevealFlashcard}
       onDeleteGroup={onDeleteGroup}
       onDeleteTutor={onDeleteTutor}
       onDeleteAsk={onDeleteAsk}
@@ -99,6 +105,8 @@ function renderTree(options: {
     onOpenPaths,
     onClosePaths,
     onLocateInPdf,
+    onGenerateFlashcard,
+    onRevealFlashcard,
     onDeleteGroup,
     onDeleteTutor,
     onDeleteAsk,
@@ -149,6 +157,8 @@ describe("MarkdownTree sidebar behavior", () => {
     expect(screen.getByRole("menuitem", { name: "rename alias" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "locate in pdf" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "history ask session" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "gen flashcard" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "reveal flashcard" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "delete" })).toBeInTheDocument();
 
     fireEvent.click(document.body);
@@ -183,6 +193,8 @@ describe("MarkdownTree sidebar behavior", () => {
         onOpenPaths={view.onOpenPaths}
         onClosePaths={view.onClosePaths}
         onLocateInPdf={view.onLocateInPdf}
+        onGenerateFlashcard={view.onGenerateFlashcard}
+        onRevealFlashcard={view.onRevealFlashcard}
         onDeleteGroup={view.onDeleteGroup}
         onDeleteTutor={view.onDeleteTutor}
         onDeleteAsk={view.onDeleteAsk}
@@ -192,6 +204,26 @@ describe("MarkdownTree sidebar behavior", () => {
     );
 
     expect(screen.getByRole("menuitem", { name: "history ask session" })).toBeInTheDocument();
+  });
+
+  it("runs flashcard generation from the group context menu", () => {
+    const { onGenerateFlashcard } = renderTree();
+
+    openContextMenu("Group 1");
+    fireEvent.click(screen.getByRole("menuitem", { name: "gen flashcard" }));
+
+    expect(onGenerateFlashcard).toHaveBeenCalledTimes(1);
+    expect(onGenerateFlashcard).toHaveBeenCalledWith(1);
+  });
+
+  it("reveals flashcard exports from the group context menu", () => {
+    const { onRevealFlashcard } = renderTree();
+
+    openContextMenu("Group 1");
+    fireEvent.click(screen.getByRole("menuitem", { name: "reveal flashcard" }));
+
+    expect(onRevealFlashcard).toHaveBeenCalledTimes(1);
+    expect(onRevealFlashcard).toHaveBeenCalledWith(1);
   });
 
   it("closes only open descendant tabs for the selected branch", () => {

@@ -8,6 +8,7 @@ from typing import Literal
 WorkflowKind = Literal[
     "asset_init",
     "group_dive",
+    "flashcard",
     "ask_tutor",
     "re_tutor",
     "integrate",
@@ -52,6 +53,16 @@ class GroupDiveCommand(WorkflowCommand):
 
     def __init__(self, *, asset_name: str, group_idx: int) -> None:
         object.__setattr__(self, "kind", "group_dive")
+        object.__setattr__(self, "asset_name", asset_name)
+        object.__setattr__(self, "group_idx", group_idx)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class FlashcardCommand(WorkflowCommand):
+    group_idx: int
+
+    def __init__(self, *, asset_name: str, group_idx: int) -> None:
+        object.__setattr__(self, "kind", "flashcard")
         object.__setattr__(self, "asset_name", asset_name)
         object.__setattr__(self, "group_idx", group_idx)
 
@@ -183,6 +194,7 @@ __all__ = [
     "AssetInitCommand",
     "BugFinderCommand",
     "CompressCommand",
+    "FlashcardCommand",
     "FixLatexCommand",
     "GroupDiveCommand",
     "IntegrateCommand",

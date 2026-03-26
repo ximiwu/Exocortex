@@ -10,6 +10,8 @@ import type { AppStoreState } from "../../app/store/appStore";
 import { useAppStore } from "../../app/store/appStore";
 import type { AssetState, MarkdownTreeNode } from "../../app/types";
 import { PdfPaneContainer } from "../pdf";
+import { TaskCenterProvider } from "../tasks/TaskCenterContext";
+import { ToastProvider } from "../tasks/ToastProvider";
 import { SidebarPane } from "./SidebarPane";
 
 const DEFAULT_SYSTEM_CONFIG: AppSystemConfig = {
@@ -188,6 +190,9 @@ function createApi(): ExocortexApi {
       submitGroupDive: vi.fn(async () => {
         throw new Error("not implemented");
       }),
+      submitFlashcard: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
       submitAskTutor: vi.fn(async () => {
         throw new Error("not implemented");
       }),
@@ -282,10 +287,14 @@ describe("SidebarPane locate-in-pdf integration", () => {
     const { container } = render(
       <QueryClientProvider client={client}>
         <ExocortexApiProvider api={api}>
-          <>
-            <SidebarPane markdownTree={TREE} treeLoading={false} treeError={null} />
-            <PdfPaneContainer assetName="asset-a" />
-          </>
+          <ToastProvider>
+            <TaskCenterProvider>
+              <>
+                <SidebarPane markdownTree={TREE} treeLoading={false} treeError={null} />
+                <PdfPaneContainer assetName="asset-a" />
+              </>
+            </TaskCenterProvider>
+          </ToastProvider>
         </ExocortexApiProvider>
       </QueryClientProvider>,
     );

@@ -66,7 +66,9 @@ def get_reference(asset_name: str, name: str) -> FileResponse:
 
 @router.post("/assets/{asset_name:path}/reveal", response_model=MessageResponse)
 def reveal_asset(asset_name: str, path: str | None = Query(None, min_length=1)) -> MessageResponse:
-    target = system_service.reveal_asset_file(asset_name, path) if path else system_service.reveal_asset(asset_name)
+    target = system_service.reveal_asset_path(asset_name, path) if path else system_service.reveal_asset(asset_name)
+    if target is None:
+        return MessageResponse(message="Reveal target does not exist.")
     return MessageResponse(message=f"Revealed {target}.")
 
 

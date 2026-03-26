@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
 import shutil
 import stat
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterable
+
+try:
+    import genanki
+except ImportError:  # pragma: no cover - dependency guard
+    genanki = None
 
 from exocortex_core.contracts import (
     AssetInitResult,
@@ -18,6 +26,7 @@ from exocortex_core.contracts import (
     COORDINATE_SPACE_PAGE_FRACTION,
 )
 from exocortex_core.fs import atomic_write_text
+from exocortex_core.markdown_viewer import anki_markdown_viewer_assets, render_markdown_viewer_document
 from exocortex_core.markdown_web import render_markdown_asset_to_pdf
 from exocortex_core.pdf_images import (
     crop_blocks_to_images,
@@ -35,6 +44,7 @@ from exocortex_core.settings import (
     CODEX_REASONING_XHIGH,
     ENHANCER_CODEX_PROMPT,
     EXTRACTOR_PROMPTS,
+    FLASHCARD_CODEX_PROMPT,
     GEMINI_MODEL,
     IMG2MD_GEMINI_PROMPT,
     IMG_EXPLAINER_CODEX_2_PROMPT,
@@ -385,6 +395,13 @@ def _normalize_reasoning_effort(reasoning_effort: str) -> str:
     }:
         return reasoning_effort
     return CODEX_REASONING_MEDIUM
+
+
+def _numeric_path_sort_key(path: Path) -> tuple[int, str]:
+    stem = path.stem
+    if stem.isdigit():
+        return int(stem), stem
+    return 1_000_000, stem.lower()
 
 
 def _safe_rmtree(path: Path) -> None:
@@ -1035,6 +1052,229 @@ def _resolve_img_explainer_markdown(img_explainer_dir: Path) -> Path:
     raise FileNotFoundError(f"No img_explainer markdown found under {img_explainer_dir}")
 
 
+def _build_flashcard_reference_markdown(group_dir: Path, *, target_path: Path) -> int:
+    tutor_root = group_dir / "tutor_data"
+    if not tutor_root.is_dir():
+        raise FileNotFoundError(f"tutor_data directory not found: {tutor_root}")
+
+    ask_history_files: list[Path] = []
+    for tutor_dir in sorted(
+        [path for path in tutor_root.iterdir() if path.is_dir() and path.name.isdigit()],
+        key=lambda path: int(path.name),
+    ):
+        ask_history_dir = tutor_dir / "ask_history"
+        if not ask_history_dir.is_dir():
+            continue
+        ask_history_files.extend(
+            sorted(
+                [path for path in ask_history_dir.glob("*.md") if path.is_file()],
+                key=_numeric_path_sort_key,
+            )
+        )
+
+    if not ask_history_files:
+        raise FileNotFoundError(f"No ask_history markdown files found under {tutor_root}")
+
+    segments = [path.read_text(encoding="utf-8").rstrip() for path in ask_history_files]
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text("\n\n".join(segment for segment in segments if segment) + "\n", encoding="utf-8", newline="\n")
+    return len(ask_history_files)
+
+
+def _stage_flashcard_reference_files(source_dir: Path, *, target_dir: Path) -> list[Path]:
+    if not source_dir.is_dir():
+        return []
+
+    staged_files: list[Path] = []
+    for source in sorted(
+        [path for path in source_dir.rglob("*") if path.is_file()],
+        key=lambda path: path.relative_to(source_dir).as_posix(),
+    ):
+        relative_path = source.relative_to(source_dir)
+        staged_path = target_dir / relative_path
+        staged_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, staged_path)
+        staged_files.append(staged_path)
+    return staged_files
+
+
+@dataclass(frozen=True)
+class _FlashcardExportRecord:
+    source_path: Path
+    asset_relative_path: str
+    front_markdown: str
+    back_markdown: str
+    front_html: str
+    back_html: str
+
+
+def _directory_uri(path: Path) -> str:
+    uri = path.resolve().as_uri()
+    return uri if uri.endswith("/") else f"{uri}/"
+
+
+def _clear_directory(path: Path) -> None:
+    if path.exists():
+        _safe_rmtree(path)
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def _extract_flashcard_sections(markdown: str) -> tuple[str, str]:
+    lines = markdown.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    question_idx: int | None = None
+    answer_idx: int | None = None
+
+    for index, line in enumerate(lines):
+        if line.strip() == "question:":
+            question_idx = index
+            break
+
+    if question_idx is not None:
+        for index in range(question_idx + 1, len(lines)):
+            if lines[index].strip() == "answer:":
+                answer_idx = index
+                break
+
+    if question_idx is None or answer_idx is None or answer_idx <= question_idx:
+        fallback = markdown.strip()
+        return fallback, fallback
+
+    front = "\n".join(lines[question_idx + 1 : answer_idx]).strip()
+    back = "\n".join(lines[answer_idx + 1 :]).strip()
+    if not front or not back:
+        fallback = markdown.strip()
+        return fallback, fallback
+    return front, back
+
+
+def _stable_anki_id(seed: str) -> int:
+    digest = hashlib.sha1(seed.encode("utf-8")).digest()[:8]
+    raw_value = int.from_bytes(digest, byteorder="big", signed=False)
+    return (raw_value % 2147483646) + 1
+
+
+def _flashcard_group_alias(group_dir: Path, *, group_idx: int) -> str:
+    alias_path = group_dir / "group.alias"
+    try:
+        group_alias = alias_path.read_text(encoding="utf-8").strip()
+    except Exception:
+        group_alias = ""
+    return group_alias or f"Group {group_idx}"
+
+
+def _flashcard_deck_name(asset_name: str, *, group_idx: int, group_dir: Path) -> str:
+    return f"{asset_name}::{_flashcard_group_alias(group_dir, group_idx=group_idx)}"
+
+
+def _iter_flashcard_markdown_files(asset_dir: Path, source_dir: Path) -> list[tuple[Path, str]]:
+    if not source_dir.is_dir():
+        return []
+    files = [path for path in source_dir.rglob("*.md") if path.is_file()]
+    ordered = sorted(
+        ((path, path.relative_to(asset_dir).as_posix()) for path in files),
+        key=lambda item: item[1],
+    )
+    return ordered
+
+
+def _export_flashcard_html(asset_dir: Path, source_dir: Path, *, target_dir: Path) -> list[_FlashcardExportRecord]:
+    _clear_directory(target_dir)
+    exports: list[_FlashcardExportRecord] = []
+    for source_path, asset_relative_path in _iter_flashcard_markdown_files(asset_dir, source_dir):
+        markdown = source_path.read_text(encoding="utf-8")
+        front_markdown, back_markdown = _extract_flashcard_sections(markdown)
+        front_document = render_markdown_viewer_document(front_markdown, base_url=_directory_uri(source_path.parent))
+        back_document = render_markdown_viewer_document(back_markdown, base_url=_directory_uri(source_path.parent))
+
+        relative_path = source_path.relative_to(source_dir)
+        target_parent = target_dir / relative_path.parent
+        target_parent.mkdir(parents=True, exist_ok=True)
+        front_path = target_parent / f"{source_path.stem}.front.html"
+        back_path = target_parent / f"{source_path.stem}.back.html"
+        front_path.write_text(front_document.full_html, encoding="utf-8", newline="\n")
+        back_path.write_text(back_document.full_html, encoding="utf-8", newline="\n")
+
+        exports.append(
+            _FlashcardExportRecord(
+                source_path=source_path,
+                asset_relative_path=asset_relative_path,
+                front_markdown=front_markdown,
+                back_markdown=back_markdown,
+                front_html=front_document.body_html,
+                back_html=back_document.body_html,
+            )
+        )
+
+    return exports
+
+
+def _build_flashcard_anki_package(
+    *,
+    asset_name: str,
+    group_idx: int,
+    group_dir: Path,
+    exports: list[_FlashcardExportRecord],
+    target_dir: Path,
+) -> Path:
+    if genanki is None:
+        raise RuntimeError("Missing 'genanki' package.")
+    if not exports:
+        raise FileNotFoundError("No flashcard markdown files found for APKG export.")
+
+    _clear_directory(target_dir)
+
+    viewer_assets = anki_markdown_viewer_assets()
+    group_alias = _flashcard_group_alias(group_dir, group_idx=group_idx)
+    deck_name = _flashcard_deck_name(asset_name, group_idx=group_idx, group_dir=group_dir)
+    deck_id = _stable_anki_id(f"exocortex|anki-deck|v1|{asset_name}|{group_alias}")
+    model_id = _stable_anki_id("exocortex|anki-model|v1")
+
+    model = genanki.Model(
+        model_id,
+        "Exocortex Flashcard",
+        fields=[
+            {"name": "SourcePath"},
+            {"name": "FrontHtml"},
+            {"name": "BackHtml"},
+        ],
+        templates=[
+            {
+                "name": "Card 1",
+                "qfmt": (
+                    '<div class="markdown-rendered card-face" data-source-path="{{SourcePath}}">{{FrontHtml}}</div>'
+                    f"{viewer_assets.scripts_html}"
+                ),
+                "afmt": (
+                    "{{FrontSide}}"
+                    '<hr id="answer">'
+                    '<div class="markdown-rendered card-face card-face--back">{{BackHtml}}</div>'
+                    f"{viewer_assets.scripts_html}"
+                ),
+            }
+        ],
+        css=(
+            viewer_assets.css
+            + "\n\n"
+            + "#answer { margin: 18px 0; border: none; border-top: 1px solid var(--border-default); }\n"
+            + ".card-face { min-height: 1px; }\n"
+        ),
+    )
+
+    deck = genanki.Deck(deck_id, deck_name)
+    for export in exports:
+        note = genanki.Note(
+            model=model,
+            fields=[export.asset_relative_path, export.front_html, export.back_html],
+            guid=genanki.guid_for("exocortex|anki-note|v1", asset_name, export.asset_relative_path),
+        )
+        deck.add_note(note)
+
+    package_path = target_dir / "deck.apkg"
+    package = genanki.Package(deck, media_files=[str(path) for path in viewer_assets.media_files])
+    package.write_to_file(str(package_path), timestamp=1.0)
+    return package_path
+
+
 def init_tutor(asset_name: str, group_idx: int, focus_markdown: str) -> Path:
     if not focus_markdown.strip():
         raise ValueError("Focus markdown is required.")
@@ -1061,6 +1301,107 @@ def init_tutor(asset_name: str, group_idx: int, focus_markdown: str) -> Path:
     except Exception as exc:  # pragma: no cover - best-effort UX
         logger.warning("Failed to write focus.md alias at %s: %s", focus_path, exc)
     return focus_path
+
+
+def flashcard(
+    asset_name: str,
+    group_idx: int,
+    *,
+    event_callback: WorkflowEventCallback | None = None,
+) -> Path:
+    _emit_asset_event(
+        event_callback,
+        "started",
+        f"Starting flashcard flow for asset '{asset_name}', group {group_idx}.",
+        payload=_asset_payload(asset_name, group_idx=group_idx),
+    )
+
+    group_dir = get_group_data_dir(asset_name) / str(group_idx)
+    if not group_dir.is_dir():
+        raise FileNotFoundError(
+            f"Group data directory not found for asset '{asset_name}', group {group_idx}: {group_dir}"
+        )
+
+    content_md = group_dir / "content.md"
+    if not content_md.is_file():
+        raise FileNotFoundError(f"content.md not found at {content_md}")
+
+    deliver_dir = group_dir / "flashcard" / "md"
+    html_dir = group_dir / "flashcard" / "html"
+    apkg_dir = group_dir / "flashcard" / "apkg"
+    temp_dir = Path(tempfile.mkdtemp(prefix="exocortex_flashcard_"))
+    try:
+        qa_path = temp_dir / "QA.md"
+        qa_count = _build_flashcard_reference_markdown(group_dir, target_path=qa_path)
+        staged_flashcard_references = _stage_flashcard_reference_files(
+            deliver_dir,
+            target_dir=temp_dir / "flashcards",
+        )
+        reference_files = [qa_path, *staged_flashcard_references]
+        reference_rename = {str(qa_path): "QA.md"}
+        for staged_path in staged_flashcard_references:
+            reference_rename[str(staged_path)] = (
+                Path("flashcards") / staged_path.relative_to(temp_dir / "flashcards")
+            ).as_posix()
+
+        job = AgentJob(
+            name="flashcard",
+            runners=[
+                RunnerConfig(
+                    runner="codex",
+                    prompt_path=FLASHCARD_CODEX_PROMPT,
+                    model=CODEX_MODEL,
+                    reasoning_effort=CODEX_REASONING_XHIGH,
+                    new_console=True,
+                )
+            ],
+            input_files=[content_md],
+            input_rename={content_md.name: "content.md"},
+            reference_files=reference_files,
+            reference_rename=reference_rename,
+            deliver_dir=_relative_to_repo(deliver_dir),
+            deliver_all_output_files=True,
+            preserve_existing_delivery=True,
+            clean_markdown=True,
+        )
+        run_agent_job(job, event_callback=event_callback)
+
+        delivered_files = [path for path in deliver_dir.rglob("*") if path.is_file()]
+        if not delivered_files:
+            raise FileNotFoundError(f"flashcard output not found under {deliver_dir}")
+        markdown_exports = _export_flashcard_html(get_asset_dir(asset_name), deliver_dir, target_dir=html_dir)
+        if not markdown_exports:
+            raise FileNotFoundError(f"flashcard markdown output not found under {deliver_dir}")
+        apkg_path = _build_flashcard_anki_package(
+            asset_name=asset_name,
+            group_idx=group_idx,
+            group_dir=group_dir,
+            exports=markdown_exports,
+            target_dir=apkg_dir,
+        )
+
+        _emit_asset_event(
+            event_callback,
+            "completed",
+            f"Completed flashcard flow for asset '{asset_name}', group {group_idx}.",
+            artifact_path=deliver_dir,
+            payload=_asset_payload(
+                asset_name,
+                group_idx=group_idx,
+                extra={
+                    "flashcard_dir": str(deliver_dir),
+                    "delivered_count": len(delivered_files),
+                    "qa_count": qa_count,
+                    "html_dir": str(html_dir),
+                    "apkg_dir": str(apkg_dir),
+                    "apkg_path": str(apkg_path),
+                    "card_count": len(markdown_exports),
+                },
+            ),
+        )
+        return deliver_dir
+    finally:
+        _safe_rmtree(temp_dir)
 
 
 def ask_tutor(

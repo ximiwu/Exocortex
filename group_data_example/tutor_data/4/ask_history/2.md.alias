@@ -1,0 +1,1 @@
+然后所以推前到欧拉空间后得到$$\mathbf{a}(\mathbf{x},t) = \frac{\partial \mathbf{v}}{\partial t}(\mathbf{x},t) + (\mathbf{v}\cdot \nabla)\mathbf{v}(\mathbf{x},t).$$这一步的详细推导？

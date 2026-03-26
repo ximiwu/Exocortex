@@ -181,6 +181,7 @@ function createApiMock(
     workflows: {
       createTutorSession: vi.fn(),
       submitGroupDive: vi.fn(),
+      submitFlashcard: vi.fn(),
       submitAskTutor: vi.fn(),
       submitReTutor: vi.fn(),
       submitIntegrate: vi.fn(),

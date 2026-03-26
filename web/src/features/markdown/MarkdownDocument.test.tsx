@@ -115,6 +115,9 @@ function createApi(): ExocortexApi {
       submitGroupDive: vi.fn(async () => {
         throw new Error("not implemented");
       }),
+      submitFlashcard: vi.fn(async () => {
+        throw new Error("not implemented");
+      }),
       submitAskTutor: vi.fn(async () => {
         throw new Error("not implemented");
       }),

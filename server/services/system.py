@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -13,11 +14,12 @@ from server.errors import ApiError
 from server.schemas import AppConfigModel
 from server.schemas.system import TutorReasoningEffort
 
-from .assets import resolve_asset_dir, resolve_relative_file
+from .assets import resolve_asset_dir, resolve_relative_file, resolve_relative_path
 
 APP_CONFIG_DIR_RELATIVE = Path("ximiwu_app") / "Exocortex"
 APP_CONFIG_FILENAME = "config.json"
 ThemeMode = Literal["light", "dark"]
+_FLASHCARD_APKG_DIR_PATTERN = re.compile(r"^group_data/\d+/flashcard/apkg/?$")
 
 
 def _app_config_path() -> Path:
@@ -163,9 +165,23 @@ def reveal_asset(asset_name: str) -> Path:
     return _reveal_path(asset_dir, select_file=False)
 
 
+def _is_optional_flashcard_reveal_path(raw_path: str) -> bool:
+    normalized = Path(raw_path.strip()).as_posix().strip("/")
+    return bool(_FLASHCARD_APKG_DIR_PATTERN.fullmatch(normalized))
+
+
+def reveal_asset_path(asset_name: str, raw_path: str) -> Path | None:
+    target = resolve_relative_path(asset_name, raw_path, must_exist=False)
+    if target.exists():
+        return _reveal_path(target, select_file=target.is_file())
+    if _is_optional_flashcard_reveal_path(raw_path):
+        return None
+    raise ApiError(404, "file_not_found", f"File not found: {raw_path}")
+
+
 def reveal_asset_file(asset_name: str, raw_path: str) -> Path:
     file_path = resolve_relative_file(asset_name, raw_path)
     return _reveal_path(file_path, select_file=True)
 
 
-__all__ = ["get_app_config", "reveal_asset", "reveal_asset_file", "update_app_config"]
+__all__ = ["get_app_config", "reveal_asset", "reveal_asset_file", "reveal_asset_path", "update_app_config"]

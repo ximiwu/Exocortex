@@ -243,7 +243,7 @@ def _copy_files(
     for source in sources:
         if not source.is_file():
             raise FileNotFoundError(f"Source file not found: {source}")
-        target_name = rename.get(source.name, source.name)
+        target_name = rename.get(str(source), rename.get(source.name, source.name))
         destination = destination_dir / target_name
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.unlink(missing_ok=True)
@@ -489,6 +489,8 @@ class AgentJob:
     output_rename: dict[str, str] = field(default_factory=dict)
     deliver_dir: Path | None = None
     deliver_rename: dict[str, str] = field(default_factory=dict)
+    deliver_all_output_files: bool = False
+    preserve_existing_delivery: bool = False
     clean_markdown: bool = True
     callbacks: AgentCallbacks | None = None
 
@@ -552,7 +554,7 @@ def _deliver_outputs(job: AgentJob, workspace: Path) -> list[Path]:
         return []
     output_dir = workspace / "output"
     if job.clean_markdown and output_dir.is_dir():
-        for path in output_dir.iterdir():
+        for path in output_dir.rglob("*"):
             if path.is_file() and path.suffix.lower() == ".md":
                 clean_markdown_file(path)
 
@@ -562,14 +564,50 @@ def _deliver_outputs(job: AgentJob, workspace: Path) -> list[Path]:
     deliver_dir.mkdir(parents=True, exist_ok=True)
 
     delivered: list[Path] = []
+    if job.deliver_all_output_files:
+        output_files = [path for path in output_dir.rglob("*") if path.is_file()]
+        if not output_files:
+            raise FileNotFoundError(f"No output files found under {output_dir}")
+        for source in output_files:
+            relative_path = source.relative_to(output_dir)
+            destination = deliver_dir / relative_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination = _resolve_delivery_destination(
+                destination,
+                preserve_existing=job.preserve_existing_delivery,
+            )
+            delivered.append(Path(shutil.move(str(source), destination)))
+        return delivered
+
     for src_name, target_name in (job.deliver_rename or {}).items():
         source = output_dir / src_name
         if not source.is_file():
             raise FileNotFoundError(f"Expected output not found: {source}")
         destination = deliver_dir / target_name
-        destination.unlink(missing_ok=True)
+        destination = _resolve_delivery_destination(
+            destination,
+            preserve_existing=job.preserve_existing_delivery,
+        )
         delivered.append(Path(shutil.move(str(source), destination)))
     return delivered
+
+
+def _resolve_delivery_destination(destination: Path, *, preserve_existing: bool) -> Path:
+    if not preserve_existing:
+        destination.unlink(missing_ok=True)
+        return destination
+    if not destination.exists():
+        return destination
+
+    stem = destination.stem
+    suffix = destination.suffix
+    parent = destination.parent
+    index = 1
+    while True:
+        candidate = parent / f"{stem}_{index}{suffix}"
+        if not candidate.exists():
+            return candidate
+        index += 1
 
 
 def _launch_runner(

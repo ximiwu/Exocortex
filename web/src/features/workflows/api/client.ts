@@ -19,6 +19,7 @@ import type {
   CreateTutorSessionPayload,
   DeleteQuestionPayload,
   DeleteTutorSessionInput,
+  FlashcardTaskPayload,
   FixLatexTaskPayload,
   GroupTaskPayload,
   ImportAssetPayload,
@@ -65,6 +66,7 @@ export interface ExocortexClient {
   getTask(taskId: string): Promise<TaskDetail>;
   subscribeToTaskEvents(listener: (event: TaskEvent) => void): () => void;
   submitGroupDive(payload: GroupTaskPayload): Promise<TaskSummary>;
+  submitFlashcard(payload: FlashcardTaskPayload): Promise<TaskSummary>;
   submitAskTutor(payload: TutorTaskPayload): Promise<TaskSummary>;
   submitReTutor(payload: TutorTaskPayload): Promise<TaskSummary>;
   submitIntegrate(payload: IntegrateTaskPayload): Promise<TaskSummary>;
@@ -354,6 +356,10 @@ class HttpExocortexClient implements ExocortexClient {
 
   submitGroupDive(payload: GroupTaskPayload): Promise<TaskSummary> {
     return this.submitJsonTask("/tasks/group-dive", payload);
+  }
+
+  submitFlashcard(payload: FlashcardTaskPayload): Promise<TaskSummary> {
+    return this.submitJsonTask("/tasks/flashcard", payload);
   }
 
   submitAskTutor(payload: TutorTaskPayload): Promise<TaskSummary> {

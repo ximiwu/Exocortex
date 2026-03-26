@@ -4,25 +4,7 @@ import re
 from pathlib import Path
 
 from exocortex_core.fs import atomic_write_text
-try:
-    import markdown as py_markdown
-except ImportError:  # pragma: no cover - dependency guard
-    py_markdown = None
-
-try:
-    import pymdownx.arithmatex  # type: ignore  # noqa: F401
-
-    _ARITHMATEX_AVAILABLE = True
-except ImportError:  # pragma: no cover - dependency guard
-    _ARITHMATEX_AVAILABLE = False
-
-from exocortex_core.markdown_web import (
-    katex_assets,
-    normalize_details_markdown,
-    normalize_math_content,
-    normalize_paragraph_list_separation,
-)
-from exocortex_core.markdown import clean_markdown_text
+from exocortex_core.markdown_viewer import render_markdown_viewer_document
 from exocortex_core.text import read_text_auto
 from server.domain.assets import asset_config_write_lock, get_asset_config, save_asset_config
 from server.errors import ApiError
@@ -153,44 +135,24 @@ def _find_tree_node(
 
 
 def _render_markdown_body(content: str) -> tuple[str, str]:
-    if py_markdown is None:
-        raise ApiError(500, "markdown_unavailable", "Missing 'markdown' package.")
-    if not _ARITHMATEX_AVAILABLE:
-        raise ApiError(500, "markdown_unavailable", "Missing 'pymdown-extensions' package.")
-
-    normalized = clean_markdown_text(content)
-    normalized = normalize_math_content(normalized)
-    normalized = normalize_details_markdown(normalized)
-    normalized = normalize_paragraph_list_separation(normalized)
-
-    extensions = ["extra", "sane_lists", "fenced_code", "tables", "pymdownx.arithmatex"]
-    extension_configs = {"pymdownx.arithmatex": {"generic": True}}
-    renderer = py_markdown.Markdown(extensions=extensions, extension_configs=extension_configs)
-    block_elements = renderer.block_level_elements
-    if isinstance(block_elements, set):
-        block_elements.update({"details", "summary"})
-    else:
-        for tag in ("details", "summary"):
-            if tag not in block_elements:
-                block_elements.append(tag)
-    body = renderer.convert(normalized)
-    return normalized, body
+    try:
+        rendered = render_markdown_viewer_document(content, katex_asset_root="/vendor/katex")
+    except RuntimeError as exc:
+        raise ApiError(500, "markdown_unavailable", str(exc)) from exc
+    return rendered.normalized_markdown, rendered.body_html
 
 
 def _render_markdown_document(content: str) -> tuple[str, str, str, str]:
-    normalized, body = _render_markdown_body(content)
-    assets = katex_assets(asset_root="/vendor/katex")
-    styles = (
-        "body { font-family: 'Times New Roman','Segoe UI',sans-serif; font-size: 16px; "
-        "line-height: 1.6; color: #333; padding: 16px; background: #fff; } "
-        "img { max-width: 100%; } pre { overflow-x: auto; } "
-        "details.note-container { background-color: #fff9e6; border-left: 5px solid #e6c200; "
-        "margin: 15px 0; padding: 12px 16px; border-radius: 0 4px 4px 0; } "
-        "details.note-container summary { font-weight: 700; color: #b38600; cursor: pointer; }"
+    try:
+        rendered = render_markdown_viewer_document(content, katex_asset_root="/vendor/katex")
+    except RuntimeError as exc:
+        raise ApiError(500, "markdown_unavailable", str(exc)) from exc
+    return (
+        rendered.normalized_markdown,
+        rendered.full_html,
+        rendered.body_html,
+        rendered.head_html,
     )
-    head_html = f"<meta charset='UTF-8'><style>{styles}</style>{assets}"
-    full_html = f"<!DOCTYPE html><html><head>{head_html}</head><body>{body}</body></html>"
-    return normalized, full_html, body, head_html
 
 
 def _markdown_leaf(asset_dir: Path, path: Path, *, node_id: str, title: str, kind: str = "markdown") -> MarkdownTreeNodeModel:

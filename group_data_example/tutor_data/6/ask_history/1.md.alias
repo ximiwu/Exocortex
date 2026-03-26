@@ -1,0 +1,1 @@
+$\frac{Df}{Dt} = \frac{\partial f}{\partial t} + \mathbf{v}\cdot \nabla f.$，为啥后面又变成$\frac{D\mathbf{f}}{Dt}=(\nabla \mathbf{v})\mathbf{f}.$了

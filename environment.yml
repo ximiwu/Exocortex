@@ -13,6 +13,7 @@ dependencies:
       - pillow>=11.3,<11.4
       - markdown>=3.8,<3.9
       - pymdown-extensions>=10.16,<10.17
+      - genanki>=0.13,<0.14
       - pywebview>=5.4,<5.5
       - playwright>=1.55,<1.56
       - nuitka>=2.7,<2.8

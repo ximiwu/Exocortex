@@ -31,6 +31,7 @@ MD_EXPLAINER_CODEX_2_PROMPT = prompt_path("md_explainer", "codex_2", "AGENTS.md"
 ENHANCER_CODEX_PROMPT = prompt_path("enhancer", "codex", "AGENTS.md")
 INTEGRATOR_CODEX_PROMPT = prompt_path("integrator", "codex", "AGENTS.md")
 TUTOR_CODEX_PROMPT = prompt_path("tutor", "codex", "AGENTS.md")
+FLASHCARD_CODEX_PROMPT = prompt_path("flashcard", "codex", "AGENTS.md")
 BUG_FINDER_GEMINI_PROMPT = prompt_path("bug_finder", "gemini", "GEMINI.md")
 RE_TUTOR_GEMINI_PROMPT = prompt_path("re_tutor", "gemini", "GEMINI.md")
 MANUSCRIPT_GEMINI_PROMPT = prompt_path("manuscript2md", "gemini", "GEMINI.md")
@@ -66,6 +67,7 @@ __all__ = [
     "CODEX_REASONING_XHIGH",
     "ENHANCER_CODEX_PROMPT",
     "EXTRACTOR_PROMPTS",
+    "FLASHCARD_CODEX_PROMPT",
     "GEMINI_MODEL",
     "IMG2MD_CODEX_PROMPT",
     "IMG2MD_GEMINI_PROMPT",

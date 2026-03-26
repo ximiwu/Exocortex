@@ -4,11 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AppStoreState } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
+import type { WorkflowCommandController } from "../../features/workflows/controllers/useWorkflowCommandController";
 import { WorkbenchShell } from "./WorkbenchShell";
 
-const workflowControllerMock: any = {
+const workflowControllerMock = {
+  apiMode: "mock",
   tutorAskVisible: false,
-  selectedAssetName: null,
+  selectedAssetName: null as string | null,
+  currentMarkdownPath: null,
+  markdownTree: [],
   effectiveGroupIdx: null,
   effectiveTutorIdx: null,
   questionText: "",
@@ -41,7 +45,7 @@ const workflowControllerMock: any = {
   handleImportSubmit: vi.fn(),
   closeConfirmation: vi.fn(),
   confirmAction: vi.fn(),
-};
+} satisfies WorkflowCommandController;
 
 vi.mock("../../features/sidebar/AssetPickerOverlay", () => ({
   AssetPickerOverlay: () => <div data-testid="asset-picker-overlay" />,

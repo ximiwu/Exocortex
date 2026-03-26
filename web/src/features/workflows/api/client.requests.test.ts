@@ -140,6 +140,33 @@ describe("workflow api client requests", () => {
     ]);
   });
 
+  it("serializes flashcard requests through the shared JSON request helper", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "task-3" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = createExocortexApi({ mode: "live" });
+    await client.submitFlashcard({
+      assetName: "course/unit 1",
+      groupIdx: 4,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/tasks/flashcard");
+    expect(init.method).toBe("POST");
+    expect(init.headers).toMatchObject({
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    });
+    expect(JSON.parse(String(init.body))).toEqual({
+      assetName: "course/unit 1",
+      groupIdx: 4,
+    });
+  });
+
   it("serializes PDF search requests through the shared JSON request helper", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

@@ -43,6 +43,8 @@ interface MarkdownTreeProps {
   onOpenPaths: (nodes: OpenableTreeNode[]) => void;
   onClosePaths: (paths: string[]) => void;
   onLocateInPdf: (groupIdx: number) => Promise<void> | void;
+  onGenerateFlashcard: (groupIdx: number) => Promise<void>;
+  onRevealFlashcard: (groupIdx: number) => Promise<void>;
   onDeleteGroup: (groupIdx: number, node: MarkdownTreeNode) => Promise<void>;
   onDeleteTutor: (groupIdx: number, tutorIdx: number, node: MarkdownTreeNode) => Promise<void>;
   onDeleteAsk: (groupIdx: number, tutorIdx: number, path: string) => Promise<void>;
@@ -104,6 +106,8 @@ export function MarkdownTree({
   onOpenPaths,
   onClosePaths,
   onLocateInPdf,
+  onGenerateFlashcard,
+  onRevealFlashcard,
   onDeleteGroup,
   onDeleteTutor,
   onDeleteAsk,
@@ -540,6 +544,26 @@ export function MarkdownTree({
               }}
             >
               history ask session
+            </button>
+            <button
+              className="markdown-contextMenu__item"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                void runContextAction(() => onGenerateFlashcard(activeContextGroupIdx));
+              }}
+            >
+              gen flashcard
+            </button>
+            <button
+              className="markdown-contextMenu__item"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                void runContextAction(() => onRevealFlashcard(activeContextGroupIdx));
+              }}
+            >
+              reveal flashcard
             </button>
             <button
               className="markdown-contextMenu__item markdown-contextMenu__item--danger"

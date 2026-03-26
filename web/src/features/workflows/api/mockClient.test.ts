@@ -69,6 +69,24 @@ describe("mock workflow client task artifacts", () => {
     unsubscribe();
   });
 
+  it("reveals flashcard export directories when the mock task created them", async () => {
+    const api = createMockExocortexApi();
+
+    await api.submitFlashcard({
+      assetName: "physics/paper_1",
+      groupIdx: 1,
+    });
+    await vi.advanceTimersByTimeAsync(250);
+
+    await expect(api.revealAsset("physics/paper_1", "group_data/1/flashcard/apkg")).resolves.toBeUndefined();
+  });
+
+  it("treats missing flashcard export directories as a silent no-op", async () => {
+    const api = createMockExocortexApi();
+
+    await expect(api.revealAsset("physics/paper_1", "group_data/999/flashcard/apkg")).resolves.toBeUndefined();
+  });
+
   it("generates markdown previews from contained unified content-list entries", async () => {
     const api = createMockExocortexApi();
 

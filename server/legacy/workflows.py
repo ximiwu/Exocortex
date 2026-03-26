@@ -8,6 +8,7 @@ from assets_manager import (
     asset_init as _asset_init,
     bug_finder as _bug_finder,
     create_student_note as _create_student_note,
+    flashcard as _flashcard,
     fix_latex as _fix_latex,
     group_dive_in as _group_dive_in,
     integrate as _integrate,
@@ -46,6 +47,19 @@ def group_dive_in(
         asset_name=asset_name,
         group_idx=group_idx,
         on_secondary_ready=on_secondary_ready,
+        event_callback=event_callback,
+    )
+
+
+def flashcard(
+    asset_name: str,
+    group_idx: int,
+    *,
+    event_callback: WorkflowEventCallback | None = None,
+) -> Path:
+    return _flashcard(
+        asset_name,
+        group_idx,
         event_callback=event_callback,
     )
 
@@ -150,6 +164,7 @@ __all__ = [
     "asset_init",
     "bug_finder",
     "create_student_note",
+    "flashcard",
     "fix_latex",
     "group_dive_in",
     "integrate",

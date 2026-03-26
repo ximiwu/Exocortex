@@ -22,6 +22,7 @@ export type {
   CreateTutorSessionInput as CreateTutorSessionPayload,
   DeleteQuestionInput as DeleteQuestionPayload,
   DeleteTutorSessionInput,
+  FlashcardTaskInput as FlashcardTaskPayload,
   FixLatexTaskInput as FixLatexTaskPayload,
   GroupTaskInput as GroupTaskPayload,
   ImportAssetInput as ImportAssetPayload,

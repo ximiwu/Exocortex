@@ -9,6 +9,7 @@ from server.legacy import workflows as legacy_workflows
 from .contracts import (
     AssetInitCommand,
     BugFinderCommand,
+    FlashcardCommand,
     FixLatexCommand,
     GroupDiveCommand,
     IntegrateCommand,
@@ -44,6 +45,14 @@ def group_dive_in(
         asset_name=command.asset_name,
         group_idx=command.group_idx,
         on_secondary_ready=on_secondary_ready,
+        event_callback=event_callback,
+    )
+
+
+def flashcard(command: FlashcardCommand, *, event_callback: WorkflowEventCallback | None = None) -> Path:
+    return legacy_workflows.flashcard(
+        command.asset_name,
+        command.group_idx,
         event_callback=event_callback,
     )
 
@@ -110,6 +119,7 @@ __all__ = [
     "asset_init",
     "bug_finder",
     "create_student_note",
+    "flashcard",
     "fix_latex",
     "group_dive_in",
     "integrate",

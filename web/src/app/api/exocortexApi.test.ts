@@ -38,6 +38,7 @@ function createCoreStub(overrides: Partial<CoreExocortexApi> = {}): CoreExocorte
     getTask: vi.fn(),
     subscribeToTaskEvents: vi.fn(),
     submitGroupDive: vi.fn(),
+    submitFlashcard: vi.fn(),
     submitAskTutor: vi.fn(),
     submitReTutor: vi.fn(),
     submitIntegrate: vi.fn(),

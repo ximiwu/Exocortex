@@ -115,7 +115,14 @@ def relative_to_assets_root(path: Path) -> str:
         return str(path)
 
 
-def resolve_relative_file(asset_name: str, raw_path: str) -> Path:
+def resolve_relative_path(
+    asset_name: str,
+    raw_path: str,
+    *,
+    must_exist: bool = True,
+    expect_file: bool = False,
+    expect_directory: bool = False,
+) -> Path:
     if not raw_path.strip():
         raise ApiError(400, "invalid_path", "Path is required.")
     asset_dir = resolve_asset_dir(asset_name)
@@ -128,8 +135,17 @@ def resolve_relative_file(asset_name: str, raw_path: str) -> Path:
         resolved.relative_to(asset_dir.resolve())
     except ValueError as exc:
         raise ApiError(400, "invalid_path", "Path must stay inside the asset directory.") from exc
-    if not resolved.is_file():
+    if must_exist and not resolved.exists():
         raise ApiError(404, "file_not_found", f"File not found: {raw_path}")
+    if expect_file and must_exist and not resolved.is_file():
+        raise ApiError(404, "file_not_found", f"File not found: {raw_path}")
+    if expect_directory and must_exist and not resolved.is_dir():
+        raise ApiError(404, "directory_not_found", f"Directory not found: {raw_path}")
+    return resolved
+
+
+def resolve_relative_file(asset_name: str, raw_path: str) -> Path:
+    resolved = resolve_relative_path(asset_name, raw_path, expect_file=True)
     return resolved
 
 
@@ -772,6 +788,7 @@ __all__ = [
     "relative_to_assets_root",
     "resolve_asset_dir",
     "resolve_reference_file",
+    "resolve_relative_path",
     "resolve_relative_file",
     "update_disabled_content_items",
     "update_selection",

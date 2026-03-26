@@ -29,6 +29,7 @@ import type {
   DeleteQuestionInput,
   DeleteTutorSessionInput,
   FixLatexTaskInput,
+  FlashcardTaskInput,
   GroupTaskInput,
   ImportAssetInput,
   IntegrateTaskInput,
@@ -90,6 +91,7 @@ export interface ExocortexApi {
   readonly workflows: {
     createTutorSession(input: CreateTutorSessionInput): Promise<TutorSession>;
     submitGroupDive(input: GroupTaskInput): Promise<TaskSummary>;
+    submitFlashcard(input: FlashcardTaskInput): Promise<TaskSummary>;
     submitAskTutor(input: TutorTaskInput): Promise<TaskSummary>;
     submitReTutor(input: ReTutorTaskInput): Promise<TaskSummary>;
     submitIntegrate(input: IntegrateTaskInput): Promise<TaskSummary>;
@@ -212,6 +214,7 @@ function createWorkflowApi(bind: BindCoreMethod): ExocortexApi["workflows"] {
   return {
     createTutorSession: bind("createTutorSession"),
     submitGroupDive: bind("submitGroupDive"),
+    submitFlashcard: bind("submitFlashcard"),
     submitAskTutor: bind("submitAskTutor"),
     submitReTutor: bind("submitReTutor"),
     submitIntegrate: bind("submitIntegrate"),

@@ -146,6 +146,7 @@ function createApi(): ExocortexApi {
     workflows: {
       createTutorSession: vi.fn(async () => ({ tutorIdx: 1, markdownPath: "group_data/1/tutor_data/1/focus.md" })),
       submitGroupDive: vi.fn(async () => QUEUED_TASK),
+      submitFlashcard: vi.fn(async () => QUEUED_TASK),
       submitAskTutor: vi.fn(async () => QUEUED_TASK),
       submitReTutor: vi.fn(async () => QUEUED_TASK),
       submitIntegrate: vi.fn(async () => QUEUED_TASK),
