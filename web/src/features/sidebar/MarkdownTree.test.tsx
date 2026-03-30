@@ -49,6 +49,7 @@ const TREE: MarkdownTreeNode[] = [
 
 function renderTree(options: {
   nodes?: MarkdownTreeNode[];
+  currentPath?: string | null;
   openPaths?: string[];
   onOpenPath?: ReturnType<typeof vi.fn>;
   onOpenPaths?: ReturnType<typeof vi.fn>;
@@ -73,14 +74,16 @@ function renderTree(options: {
   const onDeleteAsk = options.onDeleteAsk ?? vi.fn(async () => undefined);
   const onRenameAlias = options.onRenameAlias ?? vi.fn(async () => undefined);
   const onReorderSiblings = options.onReorderSiblings ?? vi.fn(async () => undefined);
+  const currentPath = options.currentPath ?? ASK_PATH_1;
+  const openPaths = options.openPaths ?? (currentPath ? [currentPath] : []);
 
   const view = render(
     <MarkdownTree
       hasAsset
       nodes={options.nodes ?? TREE}
       fullTree={options.nodes ?? TREE}
-      currentPath={ASK_PATH_1}
-      openPaths={options.openPaths ?? [ASK_PATH_1]}
+      currentPath={currentPath}
+      openPaths={openPaths}
       collapsedNodeIds={[]}
       sidebarTextLineClamp={1}
       sidebarFontSizePx={14}
@@ -129,6 +132,13 @@ function cloneTree(nodes: MarkdownTreeNode[]): MarkdownTreeNode[] {
     ...node,
     children: cloneTree(node.children),
   }));
+}
+
+function getSidebarRow(label: string): HTMLElement {
+  const rawTextNode = document.querySelector(`[data-raw-text="${label}"]`);
+  const row = rawTextNode?.closest(".sidebarTreeNode__header, .sidebarTreeLeaf");
+  expect(row).not.toBeNull();
+  return row as HTMLElement;
 }
 
 describe("MarkdownTree sidebar behavior", () => {
@@ -224,6 +234,209 @@ describe("MarkdownTree sidebar behavior", () => {
 
     expect(onRevealFlashcard).toHaveBeenCalledTimes(1);
     expect(onRevealFlashcard).toHaveBeenCalledWith(1);
+  });
+
+  it("emphasizes the active leaf path with separate direct-parent and ancestor states", () => {
+    renderTree({ openPaths: [ASK_PATH_1] });
+
+    expect(document.querySelectorAll(".sidebarTreeLeaf.is-active")).toHaveLength(1);
+    expect(document.querySelectorAll(".sidebarTreeNode__header.is-direct-ancestor")).toHaveLength(1);
+    expect(document.querySelectorAll(".sidebarTreeNode__header.is-ancestor")).toHaveLength(1);
+
+    expect(getSidebarRow("Question 1")).toHaveClass("is-active");
+    expect(getSidebarRow("Tutor 3 Focus")).toHaveClass("is-direct-ancestor");
+    expect(getSidebarRow("Tutor 3 Focus")).not.toHaveClass("is-ancestor");
+    expect(getSidebarRow("Group 1")).toHaveClass("is-ancestor");
+  });
+
+  it("keeps the direct parent emphasized in a two-level tree", () => {
+    const twoLevelTree: MarkdownTreeNode[] = [
+      {
+        id: "group:9",
+        kind: "group",
+        title: "Group 9",
+        path: "group_data/9/img_explainer_data/enhanced.md",
+        children: [
+          {
+            id: "group:9:summary",
+            kind: "summary",
+            title: "Summary",
+            path: "group_data/9/summary.md",
+            children: [],
+          },
+        ],
+      },
+    ];
+
+    renderTree({
+      nodes: twoLevelTree,
+      currentPath: "group_data/9/summary.md",
+      openPaths: ["group_data/9/summary.md"],
+    });
+
+    expect(getSidebarRow("Summary")).toHaveClass("is-active");
+    expect(getSidebarRow("Group 9")).toHaveClass("is-direct-ancestor");
+    expect(getSidebarRow("Group 9")).not.toHaveClass("is-ancestor");
+    expect(document.querySelectorAll(".sidebarTreeNode__header.is-direct-ancestor")).toHaveLength(1);
+    expect(document.querySelector(".sidebarTreeNode__header.is-ancestor")).toBeNull();
+  });
+
+  it("keeps the active branch emphasized when siblings sit between ancestor and selected descendant", () => {
+    const siblingBranchTree: MarkdownTreeNode[] = [
+      {
+        id: "group:11",
+        kind: "group",
+        title: "Group 11",
+        path: "group_data/11/img_explainer_data/enhanced.md",
+        children: [
+          {
+            id: "tutor:11:1:focus",
+            kind: "tutor",
+            title: "Tutor 1 Focus",
+            path: "group_data/11/tutor_data/1/focus.md",
+            children: [],
+          },
+          {
+            id: "tutor:11:2:focus",
+            kind: "tutor",
+            title: "Tutor 2 Focus",
+            path: "group_data/11/tutor_data/2/focus.md",
+            children: [
+              {
+                id: "tutor:11:2:history:1",
+                kind: "ask",
+                title: "Question 11",
+                path: "group_data/11/tutor_data/2/ask_history/1.md",
+                children: [],
+              },
+            ],
+          },
+          {
+            id: "tutor:11:3:focus",
+            kind: "tutor",
+            title: "Tutor 3 Focus",
+            path: "group_data/11/tutor_data/3/focus.md",
+            children: [],
+          },
+        ],
+      },
+    ];
+
+    renderTree({
+      nodes: siblingBranchTree,
+      currentPath: "group_data/11/tutor_data/2/ask_history/1.md",
+      openPaths: ["group_data/11/tutor_data/2/ask_history/1.md"],
+    });
+
+    expect(getSidebarRow("Question 11")).toHaveClass("is-active");
+    expect(getSidebarRow("Tutor 2 Focus")).toHaveClass("is-direct-ancestor");
+    expect(getSidebarRow("Group 11")).toHaveClass("is-ancestor");
+    expect(getSidebarRow("Tutor 1 Focus")).not.toHaveClass("is-direct-ancestor");
+    expect(getSidebarRow("Tutor 3 Focus")).not.toHaveClass("is-direct-ancestor");
+    expect(document.querySelector(".sidebarTreeNode__children.is-direct-ancestor")).toBeInTheDocument();
+    expect(document.querySelector(".sidebarTreeNode__children.is-ancestor")).toBeInTheDocument();
+  });
+
+  it("moves active-path emphasis to the newly selected branch", () => {
+    const multiBranchTree: MarkdownTreeNode[] = [
+      cloneTree(TREE)[0],
+      {
+        id: "group:2",
+        kind: "group",
+        title: "Group 2",
+        path: "group_data/2/img_explainer_data/enhanced.md",
+        children: [
+          {
+            id: "tutor:2:1:focus",
+            kind: "tutor",
+            title: "Tutor 1 Focus",
+            path: "group_data/2/tutor_data/1/focus.md",
+            children: [
+              {
+                id: "tutor:2:1:history:1",
+                kind: "ask",
+                title: "Question 3",
+                path: "group_data/2/tutor_data/1/ask_history/1.md",
+                children: [],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const view = render(
+      <MarkdownTree
+        hasAsset
+        nodes={multiBranchTree}
+        fullTree={multiBranchTree}
+        currentPath={ASK_PATH_1}
+        openPaths={[ASK_PATH_1, "group_data/2/tutor_data/1/ask_history/1.md"]}
+        collapsedNodeIds={[]}
+        sidebarTextLineClamp={1}
+        sidebarFontSizePx={14}
+        onToggleNode={vi.fn()}
+        onOpenPath={vi.fn()}
+        onOpenPaths={vi.fn()}
+        onClosePaths={vi.fn()}
+        onLocateInPdf={vi.fn()}
+        onGenerateFlashcard={vi.fn(async () => undefined)}
+        onRevealFlashcard={vi.fn(async () => undefined)}
+        onDeleteGroup={vi.fn(async () => undefined)}
+        onDeleteTutor={vi.fn(async () => undefined)}
+        onDeleteAsk={vi.fn(async () => undefined)}
+        onRenameAlias={vi.fn(async () => undefined)}
+        onReorderSiblings={vi.fn(async () => undefined)}
+      />,
+    );
+
+    expect(getSidebarRow("Tutor 3 Focus")).toHaveClass("is-direct-ancestor");
+    expect(getSidebarRow("Group 1")).toHaveClass("is-ancestor");
+    expect(getSidebarRow("Tutor 1 Focus")).not.toHaveClass("is-direct-ancestor");
+    expect(getSidebarRow("Group 2")).not.toHaveClass("is-ancestor");
+
+    view.rerender(
+      <MarkdownTree
+        hasAsset
+        nodes={multiBranchTree}
+        fullTree={multiBranchTree}
+        currentPath="group_data/2/tutor_data/1/ask_history/1.md"
+        openPaths={[ASK_PATH_1, "group_data/2/tutor_data/1/ask_history/1.md"]}
+        collapsedNodeIds={[]}
+        sidebarTextLineClamp={1}
+        sidebarFontSizePx={14}
+        onToggleNode={vi.fn()}
+        onOpenPath={vi.fn()}
+        onOpenPaths={vi.fn()}
+        onClosePaths={vi.fn()}
+        onLocateInPdf={vi.fn()}
+        onGenerateFlashcard={vi.fn(async () => undefined)}
+        onRevealFlashcard={vi.fn(async () => undefined)}
+        onDeleteGroup={vi.fn(async () => undefined)}
+        onDeleteTutor={vi.fn(async () => undefined)}
+        onDeleteAsk={vi.fn(async () => undefined)}
+        onRenameAlias={vi.fn(async () => undefined)}
+        onReorderSiblings={vi.fn(async () => undefined)}
+      />,
+    );
+
+    expect(getSidebarRow("Tutor 3 Focus")).not.toHaveClass("is-direct-ancestor");
+    expect(getSidebarRow("Group 1")).not.toHaveClass("is-ancestor");
+    expect(getSidebarRow("Tutor 1 Focus")).toHaveClass("is-direct-ancestor");
+    expect(getSidebarRow("Group 2")).toHaveClass("is-ancestor");
+    expect(getSidebarRow("Question 3")).toHaveClass("is-active");
+  });
+
+  it("does not apply ancestor emphasis when a parent node is selected directly", () => {
+    renderTree({
+      currentPath: "group_data/1/tutor_data/3/focus.md",
+      openPaths: ["group_data/1/tutor_data/3/focus.md"],
+    });
+
+    expect(getSidebarRow("Tutor 3 Focus")).toHaveClass("is-active");
+    expect(document.querySelector(".sidebarTreeNode__header.is-direct-ancestor")).toBeNull();
+    expect(document.querySelector(".sidebarTreeNode__header.is-ancestor")).toBeNull();
+    expect(getSidebarRow("Group 1")).not.toHaveClass("is-ancestor");
   });
 
   it("closes only open descendant tabs for the selected branch", () => {

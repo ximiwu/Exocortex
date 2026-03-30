@@ -100,19 +100,26 @@ export function flattenOpenableNodes(nodes: MarkdownTreeNode[]): OpenableTreeNod
   return result;
 }
 
-export function hasActiveDescendant(
-  node: MarkdownTreeNode,
-  currentPath: string | null,
-): boolean {
-  if (!currentPath) {
-    return false;
+export function findNodePathByPath(
+  nodes: MarkdownTreeNode[],
+  targetPath: string | null,
+): MarkdownTreeNode[] {
+  if (!targetPath) {
+    return [];
   }
 
-  if (node.path === currentPath) {
-    return true;
+  for (const node of nodes) {
+    if (node.path === targetPath) {
+      return [node];
+    }
+
+    const childPath = findNodePathByPath(node.children, targetPath);
+    if (childPath.length > 0) {
+      return [node, ...childPath];
+    }
   }
 
-  return node.children.some((child) => hasActiveDescendant(child, currentPath));
+  return [];
 }
 
 export function collectNodeOpenPaths(node: MarkdownTreeNode, openPaths: Set<string>): string[] {

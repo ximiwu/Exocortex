@@ -17,9 +17,9 @@ import {
   collectNodeOpenPaths,
   collectTutorAskEntries,
   findNodeById,
+  findNodePathByPath,
   findParentId,
   findSiblings,
-  hasActiveDescendant,
   parseAskContextFromNode,
   parseGroupIdxFromNode,
   parseTutorContextFromNode,
@@ -126,6 +126,20 @@ export function MarkdownTree({
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const renderNodes = useMemo(() => buildRenderTree(nodes, null, 0), [nodes]);
   const openPathSet = useMemo(() => new Set(openPaths), [openPaths]);
+  const activePathNodes = useMemo(() => findNodePathByPath(fullTree, currentPath), [fullTree, currentPath]);
+  const activeNodeId = activePathNodes.length > 0 ? activePathNodes[activePathNodes.length - 1].id : null;
+  const activeNodeHasChildren = activePathNodes.length > 0 ? activePathNodes[activePathNodes.length - 1].children.length > 0 : false;
+  const directAncestorNodeId =
+    !activeNodeHasChildren && activePathNodes.length > 1 ? activePathNodes[activePathNodes.length - 2].id : null;
+  const ancestorNodeIds = useMemo(
+    () =>
+      new Set(
+        activeNodeHasChildren
+          ? []
+          : activePathNodes.slice(0, Math.max(0, activePathNodes.length - 2)).map((node) => node.id),
+      ),
+    [activeNodeHasChildren, activePathNodes],
+  );
   const activeContextNode = contextMenu ? findNodeById(fullTree, contextMenu.nodeId) : null;
   const activeContextOpenPaths = activeContextNode
     ? collectNodeOpenPaths(activeContextNode, openPathSet)
@@ -360,8 +374,9 @@ export function MarkdownTree({
 
   function renderNode(node: TreeRenderNode) {
     const isLeaf = node.children.length === 0;
-    const isActive = node.path !== null && node.path === currentPath;
-    const isAncestor = !isActive && hasActiveDescendant(node, currentPath);
+    const isActive = node.id === activeNodeId;
+    const isDirectAncestor = node.id === directAncestorNodeId;
+    const isAncestor = ancestorNodeIds.has(node.id);
     const isExpanded = !collapsedNodeIds.includes(node.id);
     const isDragging = draggingNodeId === node.id;
     const isDropTarget = dragOver?.nodeId === node.id;
@@ -373,7 +388,7 @@ export function MarkdownTree({
     if (isLeaf && node.path) {
       return (
         <div
-          className={`sidebarTreeLeaf${isActive ? " is-active" : ""}${dragClass}`}
+          className={`sidebarTreeLeaf${isActive ? " is-active" : ""}${isDirectAncestor ? " is-direct-ancestor" : ""}${isAncestor ? " is-ancestor" : ""}${dragClass}`}
           key={node.id}
           data-sidebar-active={isActive ? "true" : undefined}
           data-sidebar-path={node.path}
@@ -397,12 +412,15 @@ export function MarkdownTree({
     }
 
     return (
-      <div className={`sidebarTreeNode${isExpanded ? "" : " is-collapsed"}`} key={node.id}>
+      <div
+        className={`sidebarTreeNode${isExpanded ? "" : " is-collapsed"}${isDirectAncestor || isAncestor ? " has-active-branch" : ""}${isDirectAncestor ? " is-direct-ancestor" : ""}${isAncestor ? " is-ancestor" : ""}`}
+        key={node.id}
+        style={indentStyle}
+      >
         <div
-          className={`sidebarTreeNode__header${isActive ? " is-active" : ""}${isAncestor ? " is-ancestor" : ""}${dragClass}`}
+          className={`sidebarTreeNode__header${isActive ? " is-active" : ""}${isDirectAncestor ? " is-direct-ancestor" : ""}${isAncestor ? " is-ancestor" : ""}${dragClass}`}
           data-sidebar-active={isActive ? "true" : undefined}
           data-sidebar-path={node.path ?? undefined}
-          style={indentStyle}
           onContextMenu={(event) => handleContextMenu(event, node)}
           {...rowDragProps(node)}
         >
@@ -444,7 +462,13 @@ export function MarkdownTree({
           )}
         </div>
 
-        {isExpanded ? <div className="sidebarTreeNode__children">{node.children.map((child) => renderNode(child))}</div> : null}
+        {isExpanded ? (
+          <div
+            className={`sidebarTreeNode__children${isDirectAncestor || isAncestor ? " is-active-branch" : ""}${isDirectAncestor ? " is-direct-ancestor" : ""}${isAncestor ? " is-ancestor" : ""}`}
+          >
+            {node.children.map((child) => renderNode(child))}
+          </div>
+        ) : null}
       </div>
     );
   }
