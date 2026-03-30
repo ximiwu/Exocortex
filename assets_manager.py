@@ -1054,29 +1054,30 @@ def _resolve_img_explainer_markdown(img_explainer_dir: Path) -> Path:
 
 def _build_flashcard_reference_markdown(group_dir: Path, *, target_path: Path) -> int:
     tutor_root = group_dir / "tutor_data"
-    if not tutor_root.is_dir():
-        raise FileNotFoundError(f"tutor_data directory not found: {tutor_root}")
-
     ask_history_files: list[Path] = []
-    for tutor_dir in sorted(
-        [path for path in tutor_root.iterdir() if path.is_dir() and path.name.isdigit()],
-        key=lambda path: int(path.name),
-    ):
-        ask_history_dir = tutor_dir / "ask_history"
-        if not ask_history_dir.is_dir():
-            continue
-        ask_history_files.extend(
-            sorted(
-                [path for path in ask_history_dir.glob("*.md") if path.is_file()],
-                key=_numeric_path_sort_key,
+
+    if tutor_root.is_dir():
+        for tutor_dir in sorted(
+            [path for path in tutor_root.iterdir() if path.is_dir() and path.name.isdigit()],
+            key=lambda path: int(path.name),
+        ):
+            ask_history_dir = tutor_dir / "ask_history"
+            if not ask_history_dir.is_dir():
+                continue
+            ask_history_files.extend(
+                sorted(
+                    [path for path in ask_history_dir.glob("*.md") if path.is_file()],
+                    key=_numeric_path_sort_key,
+                )
             )
-        )
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not ask_history_files:
-        raise FileNotFoundError(f"No ask_history markdown files found under {tutor_root}")
+        target_path.write_text("there is no QA record\n", encoding="utf-8", newline="\n")
+        return 0
 
     segments = [path.read_text(encoding="utf-8").rstrip() for path in ask_history_files]
-    target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text("\n\n".join(segment for segment in segments if segment) + "\n", encoding="utf-8", newline="\n")
     return len(ask_history_files)
 

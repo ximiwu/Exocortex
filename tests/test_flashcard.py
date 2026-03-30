@@ -244,12 +244,32 @@ def test_flashcard_requires_group_content_markdown(tmp_path: Path, monkeypatch) 
         assets_manager.flashcard("demo", 1)
 
 
-def test_flashcard_requires_ask_history_markdown(tmp_path: Path, monkeypatch) -> None:
-    _create_group_fixture(tmp_path, ask_history={})
+@pytest.mark.parametrize("ask_history", [None, {}], ids=["missing-tutor-data", "empty-ask-history"])
+def test_flashcard_allows_missing_qa_history_and_writes_placeholder(
+    tmp_path: Path,
+    monkeypatch,
+    ask_history: dict[tuple[int, str], str] | None,
+) -> None:
+    _create_group_fixture(tmp_path, ask_history=ask_history)
     monkeypatch.setattr(assets_manager, "ASSETS_ROOT", tmp_path)
 
-    with pytest.raises(FileNotFoundError, match="ask_history"):
-        assets_manager.flashcard("demo", 1)
+    captured: dict[str, str] = {}
+
+    def fake_run_agent_job(job, *, event_callback=None):
+        qa_reference = next(path for path in job.reference_files if path.name == "QA.md")
+        captured["reference_text"] = qa_reference.read_text(encoding="utf-8")
+        workspace = tmp_path / "workspace-no-qa"
+        output_dir = workspace / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "card-1.md").write_text("question:\nA\nanswer:\nB\n", encoding="utf-8", newline="\n")
+        agent_manager._deliver_outputs(job, workspace)
+
+    monkeypatch.setattr(assets_manager, "run_agent_job", fake_run_agent_job)
+
+    output_dir = assets_manager.flashcard("demo", 1)
+
+    assert output_dir == tmp_path / "demo" / "group_data" / "1" / "flashcard" / "md"
+    assert captured["reference_text"] == "there is no QA record\n"
 
 
 def test_flashcard_requires_agent_outputs(tmp_path: Path, monkeypatch) -> None:
