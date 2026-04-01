@@ -861,6 +861,17 @@ select {
 
 .sidebarTreeNode.has-active-branch {
   position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+}
+
+.sidebarTreeNode.is-direct-ancestor {
+  background: linear-gradient(180deg, var(--surface-accent-soft), transparent 86%);
+  box-shadow: inset 0 0 0 1px var(--border-accent-soft);
+}
+
+.sidebarTreeNode.is-ancestor {
+  background: linear-gradient(180deg, var(--surface-glass-soft), transparent 86%);
 }
 
 .sidebarTreeNode__header {
@@ -876,9 +887,10 @@ select {
   position: relative;
   overflow: hidden;
   transition:
-    background-color 140ms ease,
+    background 140ms ease,
     border-color 140ms ease,
     box-shadow 140ms ease,
+    transform 140ms ease,
     color 140ms ease;
 }
 
@@ -887,23 +899,28 @@ select {
 }
 
 .sidebarTreeNode__header.is-active {
-  background: var(--surface-accent);
-  border-color: var(--border-accent);
+  background: linear-gradient(135deg, var(--surface-accent), var(--bg-panel-strong));
+  border-color: var(--border-accent-strong);
   box-shadow:
-    inset 3px 0 0 var(--accent-strong),
-    var(--ring-accent);
+    inset 4px 0 0 var(--accent-strong),
+    0 0 0 1px var(--border-accent-soft),
+    var(--ring-accent),
+    var(--shadow-soft);
+  transform: translateX(4px);
+  z-index: 1;
 }
 
 .sidebarTreeNode__header.is-direct-ancestor {
-  background: var(--surface-accent);
-  border-color: var(--border-accent);
+  background: linear-gradient(135deg, var(--surface-accent-soft), var(--surface-glass-strong));
+  border-color: var(--border-accent-strong);
   box-shadow:
-    inset 3px 0 0 var(--accent-strong),
-    inset 0 0 0 1px var(--border-accent-soft);
+    inset 4px 0 0 var(--accent-strong),
+    0 0 0 1px var(--border-accent-soft);
 }
 
 .sidebarTreeNode__header.is-ancestor {
   background: var(--surface-glass-muted);
+  border-color: var(--border-subtle);
   box-shadow: inset 2px 0 0 var(--border-accent);
 }
 
@@ -912,6 +929,14 @@ select {
 .sidebarTreeNode__header.is-direct-ancestor .sidebarTreeNode__title,
 .sidebarTreeNode__header.is-direct-ancestor .sidebarTreeNode__toggle {
   color: var(--accent-strong);
+}
+
+.sidebarTreeNode__header.is-active .sidebarTreeNode__title {
+  font-weight: 700;
+}
+
+.sidebarTreeNode__header.is-direct-ancestor .sidebarTreeNode__title {
+  font-weight: 650;
 }
 
 .sidebarTreeNode__header.is-ancestor .sidebarTreeNode__title {
@@ -986,24 +1011,40 @@ select {
 }
 
 .sidebarTreeNode__children.is-active-branch {
-  background-image: linear-gradient(
-    to right,
-    transparent calc(var(--sidebar-node-indent, 0px) + 13px),
-    var(--border-accent) calc(var(--sidebar-node-indent, 0px) + 13px),
-    var(--border-accent) calc(var(--sidebar-node-indent, 0px) + 14px),
-    transparent calc(var(--sidebar-node-indent, 0px) + 14px)
-  );
+  background-image:
+    linear-gradient(
+      to right,
+      transparent calc(var(--sidebar-node-indent, 0px) + 9px),
+      var(--surface-accent-soft) calc(var(--sidebar-node-indent, 0px) + 9px),
+      var(--surface-accent-soft) calc(var(--sidebar-node-indent, 0px) + 18px),
+      transparent calc(var(--sidebar-node-indent, 0px) + 18px)
+    ),
+    linear-gradient(
+      to right,
+      transparent calc(var(--sidebar-node-indent, 0px) + 12px),
+      var(--border-accent) calc(var(--sidebar-node-indent, 0px) + 12px),
+      var(--border-accent) calc(var(--sidebar-node-indent, 0px) + 14px),
+      transparent calc(var(--sidebar-node-indent, 0px) + 14px)
+    );
   background-repeat: no-repeat;
 }
 
 .sidebarTreeNode__children.is-direct-ancestor {
-  background-image: linear-gradient(
-    to right,
-    transparent calc(var(--sidebar-node-indent, 0px) + 12px),
-    var(--border-accent-strong) calc(var(--sidebar-node-indent, 0px) + 12px),
-    var(--border-accent-strong) calc(var(--sidebar-node-indent, 0px) + 14px),
-    transparent calc(var(--sidebar-node-indent, 0px) + 14px)
-  );
+  background-image:
+    linear-gradient(
+      to right,
+      transparent calc(var(--sidebar-node-indent, 0px) + 8px),
+      var(--surface-accent) calc(var(--sidebar-node-indent, 0px) + 8px),
+      var(--surface-accent) calc(var(--sidebar-node-indent, 0px) + 19px),
+      transparent calc(var(--sidebar-node-indent, 0px) + 19px)
+    ),
+    linear-gradient(
+      to right,
+      transparent calc(var(--sidebar-node-indent, 0px) + 11px),
+      var(--accent-strong) calc(var(--sidebar-node-indent, 0px) + 11px),
+      var(--accent-strong) calc(var(--sidebar-node-indent, 0px) + 14px),
+      transparent calc(var(--sidebar-node-indent, 0px) + 14px)
+    );
 }
 
 .sidebarTreeLeaf {
@@ -1021,39 +1062,47 @@ select {
   position: relative;
   overflow: hidden;
   transition:
-    background-color 140ms ease,
+    background 140ms ease,
     border-color 140ms ease,
     box-shadow 140ms ease,
+    transform 140ms ease,
     color 140ms ease;
 }
 
 .sidebarTreeLeaf.is-active {
   border-color: var(--border-accent-strong);
-  background: var(--surface-accent);
+  background: linear-gradient(135deg, var(--surface-accent), var(--bg-panel-strong));
   box-shadow:
-    inset 3px 0 0 var(--accent-strong),
-    var(--ring-accent);
+    inset 4px 0 0 var(--accent-strong),
+    0 0 0 1px var(--border-accent-soft),
+    var(--ring-accent),
+    var(--shadow-soft);
+  transform: translateX(4px);
+  z-index: 1;
 }
 
 .sidebarTreeLeaf.is-direct-ancestor {
-  border-color: var(--border-accent);
-  background: var(--surface-accent);
+  border-color: var(--border-accent-strong);
+  background: linear-gradient(135deg, var(--surface-accent-soft), var(--surface-glass-strong));
   box-shadow:
-    inset 3px 0 0 var(--accent-strong),
-    inset 0 0 0 1px var(--border-accent-soft);
+    inset 4px 0 0 var(--accent-strong),
+    0 0 0 1px var(--border-accent-soft);
 }
 
 .sidebarTreeLeaf.is-ancestor {
   background: var(--surface-glass-muted);
+  border-color: var(--border-subtle);
   box-shadow: inset 2px 0 0 var(--border-accent);
 }
 
 .sidebarTreeLeaf.is-active .sidebarTreeLeaf__title {
   color: var(--accent-strong);
+  font-weight: 700;
 }
 
 .sidebarTreeLeaf.is-direct-ancestor .sidebarTreeLeaf__title {
   color: var(--accent-strong);
+  font-weight: 650;
 }
 
 .sidebarTreeLeaf.is-ancestor .sidebarTreeLeaf__title {

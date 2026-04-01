@@ -427,16 +427,63 @@ describe("MarkdownTree sidebar behavior", () => {
     expect(getSidebarRow("Question 3")).toHaveClass("is-active");
   });
 
-  it("does not apply ancestor emphasis when a parent node is selected directly", () => {
+  it("keeps ancestor emphasis when a parent node is selected directly", () => {
     renderTree({
       currentPath: "group_data/1/tutor_data/3/focus.md",
       openPaths: ["group_data/1/tutor_data/3/focus.md"],
     });
 
     expect(getSidebarRow("Tutor 3 Focus")).toHaveClass("is-active");
-    expect(document.querySelector(".sidebarTreeNode__header.is-direct-ancestor")).toBeNull();
+    expect(getSidebarRow("Group 1")).toHaveClass("is-direct-ancestor");
     expect(document.querySelector(".sidebarTreeNode__header.is-ancestor")).toBeNull();
     expect(getSidebarRow("Group 1")).not.toHaveClass("is-ancestor");
+  });
+
+  it("derives active-path states correctly for a non-leaf selection at deeper nesting", () => {
+    const deepTree: MarkdownTreeNode[] = [
+      {
+        id: "group:20",
+        kind: "group",
+        title: "Group 20",
+        path: "group_data/20/img_explainer_data/enhanced.md",
+        children: [
+          {
+            id: "tutor:20:1:focus",
+            kind: "tutor",
+            title: "Tutor 1 Focus",
+            path: "group_data/20/tutor_data/1/focus.md",
+            children: [
+              {
+                id: "topic:20:1:outline",
+                kind: "topic",
+                title: "Outline",
+                path: "group_data/20/tutor_data/1/outline.md",
+                children: [
+                  {
+                    id: "topic:20:1:note",
+                    kind: "note",
+                    title: "Detail Note",
+                    path: "group_data/20/tutor_data/1/detail-note.md",
+                    children: [],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    renderTree({
+      nodes: deepTree,
+      currentPath: "group_data/20/tutor_data/1/outline.md",
+      openPaths: ["group_data/20/tutor_data/1/outline.md"],
+    });
+
+    expect(getSidebarRow("Outline")).toHaveClass("is-active");
+    expect(getSidebarRow("Tutor 1 Focus")).toHaveClass("is-direct-ancestor");
+    expect(getSidebarRow("Tutor 1 Focus")).not.toHaveClass("is-ancestor");
+    expect(getSidebarRow("Group 20")).toHaveClass("is-ancestor");
   });
 
   it("closes only open descendant tabs for the selected branch", () => {

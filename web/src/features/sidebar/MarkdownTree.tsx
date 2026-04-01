@@ -128,17 +128,10 @@ export function MarkdownTree({
   const openPathSet = useMemo(() => new Set(openPaths), [openPaths]);
   const activePathNodes = useMemo(() => findNodePathByPath(fullTree, currentPath), [fullTree, currentPath]);
   const activeNodeId = activePathNodes.length > 0 ? activePathNodes[activePathNodes.length - 1].id : null;
-  const activeNodeHasChildren = activePathNodes.length > 0 ? activePathNodes[activePathNodes.length - 1].children.length > 0 : false;
-  const directAncestorNodeId =
-    !activeNodeHasChildren && activePathNodes.length > 1 ? activePathNodes[activePathNodes.length - 2].id : null;
+  const directAncestorNodeId = activePathNodes.length > 1 ? activePathNodes[activePathNodes.length - 2].id : null;
   const ancestorNodeIds = useMemo(
-    () =>
-      new Set(
-        activeNodeHasChildren
-          ? []
-          : activePathNodes.slice(0, Math.max(0, activePathNodes.length - 2)).map((node) => node.id),
-      ),
-    [activeNodeHasChildren, activePathNodes],
+    () => new Set(activePathNodes.slice(0, Math.max(0, activePathNodes.length - 2)).map((node) => node.id)),
+    [activePathNodes],
   );
   const activeContextNode = contextMenu ? findNodeById(fullTree, contextMenu.nodeId) : null;
   const activeContextOpenPaths = activeContextNode
