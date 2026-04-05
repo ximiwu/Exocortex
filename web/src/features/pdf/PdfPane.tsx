@@ -338,6 +338,9 @@ export function PdfPane({
         onZoomReset={() => {
           interactions.applyZoom(1);
         }}
+        onZoomCommit={(nextZoom) => {
+          interactions.applyZoom(nextZoom);
+        }}
         pageCount={interactions.pageCount}
         searchBusy={contentSearch.loading}
         searchError={Boolean(contentSearch.error && normalizedSearchQuery)}

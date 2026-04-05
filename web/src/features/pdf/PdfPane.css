@@ -55,6 +55,27 @@
   color: var(--pdf-meta);
 }
 
+.pdf-pane__zoom-button {
+  border: 0;
+  background: transparent;
+  padding: 0.2rem 0.32rem;
+  color: var(--pdf-meta);
+  font-size: 0.84rem;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  line-height: 1.1;
+  cursor: text;
+}
+
+.pdf-pane__zoom-button:hover {
+  color: var(--ink-body);
+}
+
+.pdf-pane__zoom-button:focus-visible {
+  outline: 1px solid var(--pdf-input-border);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
 .pdf-pane__page-input {
   width: 4rem;
   border: 1px solid var(--pdf-input-border);
@@ -62,6 +83,18 @@
   background: var(--pdf-input-surface);
   padding: 0.28rem 0.62rem;
   color: inherit;
+}
+
+.pdf-pane__zoom-input {
+  width: 4.75rem;
+  border: 1px solid var(--pdf-input-border);
+  border-radius: 999px;
+  background: var(--pdf-input-surface);
+  padding: 0.28rem 0.62rem;
+  color: inherit;
+  font-size: 0.84rem;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  text-align: center;
 }
 
 .pdf-pane__searchField {

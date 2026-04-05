@@ -406,4 +406,82 @@ describe("PdfPane", () => {
 
     expect(getByText("0 / 2")).toBeTruthy();
   });
+
+  it("opens zoom editing on click and applies the new zoom only after Enter", () => {
+    const interactions = createInteractions();
+    vi.mocked(usePdfPaneInteractions).mockReturnValue(interactions);
+    vi.mocked(usePdfPageTextBoxes).mockReturnValue({
+      textBoxesByPage: new Map(),
+      loading: false,
+      error: null,
+    });
+    vi.mocked(usePdfJsDocument).mockReturnValue({
+      pdfDocument: null,
+      loading: false,
+      error: null,
+    });
+    vi.mocked(usePdfContentSearch).mockReturnValue({
+      query: "",
+      matches: [],
+      loading: false,
+      error: null,
+    });
+
+    const { getByLabelText, getByRole } = render(
+      <PdfPane
+        assetName="asset-a"
+        assetState={ASSET_STATE}
+        metadata={METADATA}
+      />,
+    );
+
+    fireEvent.click(getByRole("button", { name: "100%" }));
+
+    const zoomInput = getByLabelText("Zoom percentage") as HTMLInputElement;
+    expect(zoomInput.value).toBe("100");
+
+    fireEvent.change(zoomInput, { target: { value: "175" } });
+    expect(interactions.applyZoom).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(zoomInput, { key: "Enter" });
+    expect(interactions.applyZoom).toHaveBeenCalledWith(1.75);
+  });
+
+  it("applies the edited zoom when the input loses focus", () => {
+    const interactions = createInteractions();
+    vi.mocked(usePdfPaneInteractions).mockReturnValue(interactions);
+    vi.mocked(usePdfPageTextBoxes).mockReturnValue({
+      textBoxesByPage: new Map(),
+      loading: false,
+      error: null,
+    });
+    vi.mocked(usePdfJsDocument).mockReturnValue({
+      pdfDocument: null,
+      loading: false,
+      error: null,
+    });
+    vi.mocked(usePdfContentSearch).mockReturnValue({
+      query: "",
+      matches: [],
+      loading: false,
+      error: null,
+    });
+
+    const { getByLabelText, getByRole } = render(
+      <PdfPane
+        assetName="asset-a"
+        assetState={ASSET_STATE}
+        metadata={METADATA}
+      />,
+    );
+
+    fireEvent.click(getByRole("button", { name: "100%" }));
+
+    const zoomInput = getByLabelText("Zoom percentage") as HTMLInputElement;
+    fireEvent.change(zoomInput, { target: { value: "225%" } });
+    expect(interactions.applyZoom).not.toHaveBeenCalled();
+
+    fireEvent.blur(zoomInput);
+    expect(interactions.applyZoom).toHaveBeenCalledWith(2.25);
+  });
 });
